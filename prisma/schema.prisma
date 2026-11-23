@@ -1,0 +1,131 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Profile {
+  id                  String   @id @db.Uuid
+  email               String?
+  fullName            String?  @map("full_name")
+  avatarUrl           String?  @map("avatar_url")
+  avatarGradient      String?  @map("avatar_gradient")
+  instagramHandle     String?  @map("instagram_handle")
+  niche               String?  @map("niche")
+  onboardingCompleted Boolean  @default(false) @map("onboarding_completed")
+  heardFrom           String?  @map("heard_from")
+  switchingFrom       String?  @map("switching_from")
+  primaryGoal         String?  @map("primary_goal")
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  ownedWorkspaces  Workspace[]       @relation("WorkspaceOwner")
+  workspaceMembers WorkspaceMember[]
+
+  @@map("profiles")
+}
+
+model Workspace {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String
+  ownerId   String   @map("owner_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  owner             Profile            @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members           WorkspaceMember[]
+  automations       Automation[]
+  instagramAccounts InstagramAccount[]
+  dmLogs            DmLog[]
+
+  @@map("workspaces")
+}
+
+model WorkspaceMember {
+  id          String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String        @map("workspace_id") @db.Uuid
+  userId      String        @map("user_id") @db.Uuid
+  role        WorkspaceRole @default(MEMBER)
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      Profile   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId], name: "uq_workspace_member")
+  @@map("workspace_members")
+}
+
+model Automation {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId         String   @map("workspace_id") @db.Uuid
+  name                String
+  goal                String?
+  postScope           String?  @default("ANY_POST") @map("post_scope")
+  postId              String?  @map("post_id")
+  postThumbnailUrl    String?  @map("post_thumbnail_url")
+  postCaption         String?  @map("post_caption")
+  triggerKeywords     String[] @default([]) @map("trigger_keywords")
+  dmMessage           String   @map("dm_message")
+  buttonText          String?  @map("button_text")
+  buttonUrl           String?  @map("button_url")
+  publicReplyEnabled  Boolean  @default(false) @map("public_reply_enabled")
+  publicReplyMessages String[] @default([]) @map("public_reply_messages")
+  followGateEnabled   Boolean  @default(false) @map("follow_gate_enabled")
+  active              Boolean  @default(true)
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  dmLogs    DmLog[]
+
+  @@map("automations")
+}
+
+model InstagramAccount {
+  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId          String    @map("workspace_id") @db.Uuid
+  instagramId          String    @unique @map("instagram_id")
+  username             String
+  name                 String?
+  accessToken          String?   @map("access_token")
+  tokenExpiresAt       DateTime? @map("token_expires_at") @db.Timestamptz(6)
+  webhookSubscribed    Boolean   @default(false) @map("webhook_subscribed")
+  fallbackReplyEnabled Boolean   @default(false) @map("fallback_reply_enabled")
+  fallbackReplyMessage String?   @map("fallback_reply_message")
+  connectedAt          DateTime  @default(now()) @map("connected_at") @db.Timestamptz(6)
+  updatedAt            DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  dmLogs    DmLog[]
+
+  @@map("instagram_accounts")
+}
+
+model DmLog {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId        String   @map("workspace_id") @db.Uuid
+  instagramAccountId String?  @map("instagram_account_id") @db.Uuid
+  automationId       String?  @map("automation_id") @db.Uuid
+  recipientId        String   @map("recipient_id")
+  recipientUsername  String?  @map("recipient_username")
+  triggerKeyword     String?  @map("trigger_keyword")
+  dmMessage          String?  @map("dm_message")
+  status             String   @default("SENT")
+  sentAt             DateTime @default(now()) @map("sent_at") @db.Timestamptz(6)
+
+  workspace        Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  instagramAccount InstagramAccount? @relation(fields: [instagramAccountId], references: [id], onDelete: SetNull)
+  automation       Automation?       @relation(fields: [automationId], references: [id], onDelete: SetNull)
+
+  @@map("dm_logs")
+}
+
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
