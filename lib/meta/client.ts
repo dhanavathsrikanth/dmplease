@@ -42,24 +42,33 @@ export interface InstagramMedia {
   comments_count?: number;
 }
 
+export interface VerifiedOAuthState {
+  userId: string;
+  nextUrl?: string;
+}
+
 /**
- * Signs an OAuth state string with user ID and 10-minute expiry
+ * Signs an OAuth state string with user ID, optional next URL, and 10-minute expiry
  */
-export function signOAuthState(userId: string): string {
+export function signOAuthState(userId: string, nextUrl?: string): string {
   const secret =
     process.env.TOKEN_VAULT_SECRET ||
     "a8b3e9447c231791a826477bfa9c338290eef219a5c814df39c4a8563a45c291";
   const payload = Buffer.from(
-    JSON.stringify({ userId, expiresAt: Date.now() + 10 * 60 * 1000 })
+    JSON.stringify({
+      userId,
+      nextUrl: nextUrl || "/dashboard/settings",
+      expiresAt: Date.now() + 10 * 60 * 1000,
+    })
   ).toString("base64url");
   const signature = createHmac("sha256", secret).update(payload).digest("hex");
   return `${payload}.${signature}`;
 }
 
 /**
- * Validates and extracts userId from OAuth state
+ * Validates and extracts userId and nextUrl from OAuth state
  */
-export function verifyOAuthState(state: string): string | null {
+export function verifyOAuthState(state: string): VerifiedOAuthState | null {
   const secret =
     process.env.TOKEN_VAULT_SECRET ||
     "a8b3e9447c231791a826477bfa9c338290eef219a5c814df39c4a8563a45c291";
@@ -81,9 +90,9 @@ export function verifyOAuthState(state: string): string | null {
   try {
     const data = JSON.parse(
       Buffer.from(payload, "base64url").toString("utf8")
-    ) as { userId?: string; expiresAt?: number };
+    ) as { userId?: string; nextUrl?: string; expiresAt?: number };
     return data.userId && Number(data.expiresAt) > Date.now()
-      ? data.userId
+      ? { userId: data.userId, nextUrl: data.nextUrl }
       : null;
   } catch {
     return null;

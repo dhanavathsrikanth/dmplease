@@ -17,7 +17,6 @@ export async function GET(request: NextRequest) {
     process.env.APP_URL ||
     request.nextUrl.origin;
   const redirectUri = `${origin.replace(/\/$/, "")}/api/auth/meta/callback`;
-  const settingsUrl = new URL("/dashboard/settings", request.url);
 
   const searchParams = request.nextUrl.searchParams;
   const code = searchParams.get("code");
@@ -25,27 +24,32 @@ export async function GET(request: NextRequest) {
   const errorDescription = searchParams.get("error_description");
   const stateParam = searchParams.get("state");
 
+  const verifiedState = stateParam ? verifyOAuthState(stateParam) : null;
+  const nextTarget = verifiedState?.nextUrl || "/dashboard/settings";
+  const targetUrl = new URL(nextTarget, origin);
+
   if (error) {
-    settingsUrl.searchParams.set("error", errorDescription || error);
-    return NextResponse.redirect(settingsUrl);
+    targetUrl.searchParams.set("error", errorDescription || error);
+    return NextResponse.redirect(targetUrl);
   }
 
   if (!code) {
-    settingsUrl.searchParams.set(
+    targetUrl.searchParams.set(
       "error",
       "No authorization code returned from Meta"
     );
-    return NextResponse.redirect(settingsUrl);
+    return NextResponse.redirect(targetUrl);
   }
 
-  const userId = stateParam ? verifyOAuthState(stateParam) : null;
-  if (!userId) {
-    settingsUrl.searchParams.set(
+  if (!verifiedState || !verifiedState.userId) {
+    targetUrl.searchParams.set(
       "error",
       "The connection link expired. Please try again."
     );
-    return NextResponse.redirect(settingsUrl);
+    return NextResponse.redirect(targetUrl);
   }
+
+  const userId = verifiedState.userId;
 
   try {
     // 1. Exchange code for short-lived token
@@ -63,11 +67,11 @@ export async function GET(request: NextRequest) {
     const accounts = await fetchInstagramAccountsForToken(longLivedToken);
 
     if (accounts.length === 0) {
-      settingsUrl.searchParams.set(
+      targetUrl.searchParams.set(
         "error",
         "No Instagram Professional or Creator account was found linked to your Facebook pages."
       );
-      return NextResponse.redirect(settingsUrl);
+      return NextResponse.redirect(targetUrl);
     }
 
     const primaryAccount = accounts[0];
@@ -87,14 +91,28 @@ export async function GET(request: NextRequest) {
       })
       .eq("id", userId);
 
-    // Get user's primary workspace
+    // Get user's primary workspace (or create one if onboarding hasn't finished yet)
     const { data: workspaces } = await supabase
       .from("workspaces")
       .select("id")
       .eq("owner_id", userId)
       .limit(1);
 
-    const workspaceId = workspaces?.[0]?.id;
+    let workspaceId = workspaces?.[0]?.id;
+
+    if (!workspaceId) {
+      const { data: newWs } = await supabase
+        .from("workspaces")
+        .insert({
+          name: `${primaryAccount.displayName || primaryAccount.username}'s Workspace`,
+          owner_id: userId,
+        })
+        .select("id")
+        .single();
+      if (newWs) {
+        workspaceId = newWs.id;
+      }
+    }
 
     // 5. Store in Supabase instagram_accounts table
     if (workspaceId) {
@@ -154,15 +172,15 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    settingsUrl.searchParams.set("status", "connected");
-    settingsUrl.searchParams.set("account", primaryAccount.username);
-    return NextResponse.redirect(settingsUrl);
+    targetUrl.searchParams.set("status", "connected");
+    targetUrl.searchParams.set("account", primaryAccount.username);
+    return NextResponse.redirect(targetUrl);
   } catch (err: any) {
     console.error("[Meta OAuth Callback Error]:", err);
-    settingsUrl.searchParams.set(
+    targetUrl.searchParams.set(
       "error",
       err instanceof Error ? err.message : "Failed to connect Instagram account"
     );
-    return NextResponse.redirect(settingsUrl);
+    return NextResponse.redirect(targetUrl);
   }
 }

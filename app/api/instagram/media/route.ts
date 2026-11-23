@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
+import { connection } from "next/server";
 import { getCurrentProfile } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
 import { decryptToken } from "@/lib/meta/vault";
 
 export async function GET() {
+  await connection();
   try {
     const profile = await getCurrentProfile();
     const supabase = await createClient();

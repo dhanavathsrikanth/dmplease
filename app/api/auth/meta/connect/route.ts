@@ -3,10 +3,11 @@ import { getCurrentUser } from "@/lib/profile";
 import { signOAuthState } from "@/lib/meta/client";
 
 export async function GET(request: NextRequest) {
+  const nextParam = request.nextUrl.searchParams.get("next") || "/dashboard/settings";
   const user = await getCurrentUser();
   if (!user) {
     const loginUrl = new URL("/auth/login", request.url);
-    loginUrl.searchParams.set("next", "/dashboard/settings");
+    loginUrl.searchParams.set("next", nextParam);
     return NextResponse.redirect(loginUrl);
   }
 
@@ -17,7 +18,7 @@ export async function GET(request: NextRequest) {
     request.nextUrl.origin;
 
   const redirectUri = `${origin.replace(/\/$/, "")}/api/auth/meta/callback`;
-  const state = signOAuthState(user.id);
+  const state = signOAuthState(user.id, nextParam);
   const appId = process.env.META_APP_ID || "1122753620356066";
 
   const configId = process.env.META_CONFIG_ID || "1823845298825302";

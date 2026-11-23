@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { connection } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { decryptToken, encryptToken } from "@/lib/meta/vault";
 import { refreshLongLivedToken } from "@/lib/meta/client";
@@ -7,6 +8,7 @@ import { refreshLongLivedToken } from "@/lib/meta/client";
  * Scheduled Cron: Refresh 60-day Instagram access tokens expiring within 14 days
  */
 export async function GET() {
+  await connection();
   const dbUrl = process.env.DATABASE_URL || "";
   const hasDb = dbUrl && !dbUrl.includes("[YOUR-PASSWORD]");
 

@@ -6,10 +6,16 @@ import { useRouter } from "next/navigation";
 import {
   Check,
   Search,
+  Instagram,
+  CheckCircle2,
+  AlertCircle,
+  ShieldCheck,
+  Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import { submitOnboarding, OnboardingPayload } from "@/app/onboarding/actions";
 import { ThemeSwitcher } from "@/components/theme-switcher";
 
@@ -20,16 +26,23 @@ interface OnboardingWizardProps {
     fullName?: string | null;
     avatarUrl?: string | null;
   };
+  initialConnectedAccount?: {
+    id?: string;
+    username: string;
+  } | null;
+  connectionStatus?: string;
+  connectionError?: string;
+  initialAccountParam?: string;
 }
 
 const ROLES = [
-  { id: "designer", title: "Product designer", icon: "✏️" },
-  { id: "founder", title: "Founder", icon: "🚀" },
-  { id: "pm", title: "Product manager", icon: "🧭" },
-  { id: "developer", title: "Developer", icon: "⌨️" },
+  { id: "creator", title: "Creator / Influencer", icon: "📱" },
+  { id: "founder", title: "Founder / Entrepreneur", icon: "🚀" },
   { id: "marketer", title: "Marketer", icon: "📣" },
-  { id: "agency", title: "Agency or freelancer", icon: "🧳" },
-  { id: "student", title: "Student", icon: "🎓" },
+  { id: "agency", title: "Agency or Freelancer", icon: "🧳" },
+  { id: "ecommerce", title: "E-Commerce / DTC", icon: "🛍️" },
+  { id: "coach", title: "Coach / Consultant", icon: "💡" },
+  { id: "developer", title: "Developer", icon: "⌨️" },
   { id: "other", title: "Other", icon: "✨" },
 ];
 
@@ -86,26 +99,50 @@ const AUTOMATION_GOALS = [
 
 const ATTRIBUTION_OPTIONS = [
   "Google",
+  "Instagram",
   "X / Twitter",
   "LinkedIn",
   "Friend or colleague",
   "Newsletter",
   "Product Hunt",
-  "AI assistant",
   "Other",
 ];
 
-export function OnboardingWizard({ initialUser }: OnboardingWizardProps) {
+export function OnboardingWizard({
+  initialUser,
+  initialConnectedAccount,
+  connectionStatus,
+  connectionError,
+  initialAccountParam,
+}: OnboardingWizardProps) {
   const router = useRouter();
 
-  // Steps: 1 (Name), 2 (Role), 3 (Automation), 4 (Attribution), 5 (All Set celebration)
-  const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
+  // If user just connected their account via OAuth, start on Step 2 to show success!
+  const hasConnectedAccount = Boolean(
+    initialConnectedAccount ||
+      connectionStatus === "connected" ||
+      initialAccountParam
+  );
+
+  const [connectedAccount] = useState<{ username: string } | null>(
+    initialConnectedAccount ||
+      (initialAccountParam
+        ? { username: initialAccountParam.replace(/^@/, "") }
+        : null)
+  );
+
+  // Steps: 1 (Name & Role), 2 (Connect Instagram), 3 (Automation), 4 (Attribution), 5 (All Set celebration)
+  const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(
+    connectionStatus === "connected" ? 2 : 1
+  );
 
   // Profile data
   const rawNames = (initialUser.fullName || "").trim().split(" ");
   const [firstName, setFirstName] = useState(rawNames[0] || "");
   const [lastName, setLastName] = useState(rawNames.slice(1).join(" ") || "");
-  const [instagramHandle, setInstagramHandle] = useState("");
+  const [instagramHandle, setInstagramHandle] = useState(
+    connectedAccount?.username || ""
+  );
 
   // Role
   const [selectedRole, setSelectedRole] = useState("creator");
@@ -118,7 +155,7 @@ export function OnboardingWizard({ initialUser }: OnboardingWizardProps) {
   const [dmMessage, setDmMessage] = useState(
     "Hey! Here is your free training guide: https://trydmplease.com/guide. Enjoy! 🙌"
   );
-  const [switchingFrom, setSwitchingFrom] = useState("none");
+  const [switchingFrom] = useState("none");
 
   // Attribution
   const [heardFrom, setHeardFrom] = useState("Google");
@@ -143,11 +180,15 @@ export function OnboardingWizard({ initialUser }: OnboardingWizardProps) {
     setIsSubmitting(true);
     setErrorMsg(null);
 
-    const fullComputedName = [firstName.trim(), lastName.trim()].filter(Boolean).join(" ") || "Creator";
+    const fullComputedName =
+      [firstName.trim(), lastName.trim()].filter(Boolean).join(" ") || "Creator";
+
+    const finalHandle =
+      connectedAccount?.username || instagramHandle.trim() || undefined;
 
     const payload: OnboardingPayload = {
       fullName: fullComputedName,
-      instagramHandle: instagramHandle.trim() || undefined,
+      instagramHandle: finalHandle,
       niche: selectedRole,
       primaryGoal: selectedGoal,
       triggerKeyword: triggerKeyword.trim() || "GUIDE",
@@ -167,9 +208,11 @@ export function OnboardingWizard({ initialUser }: OnboardingWizardProps) {
     }
   };
 
+  const effectiveHandle = connectedAccount?.username || instagramHandle || "yourbrand";
+
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col justify-between bg-dot-grid relative">
-      {/* ── Top Navigation Bar (SaaSFrame Reference Design) ── */}
+      {/* ── Top Navigation Bar ── */}
       <nav className="w-full border-b border-neutral-200/80 dark:border-neutral-800 bg-background/90 backdrop-blur-md px-4 sm:px-8 py-3 flex items-center justify-between z-30">
         <div className="flex items-center gap-6">
           <Link href="/" className="flex items-center gap-2 group">
@@ -197,7 +240,6 @@ export function OnboardingWizard({ initialUser }: OnboardingWizardProps) {
           </div>
         </div>
 
-        {/* Center Search Pill (Visual Reference) */}
         <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50/80 dark:bg-neutral-900/60 text-xs text-neutral-500 w-64 justify-between">
           <span className="flex items-center gap-1.5">
             <Search className="size-3.5 text-neutral-400" />
@@ -220,10 +262,9 @@ export function OnboardingWizard({ initialUser }: OnboardingWizardProps) {
         </div>
       </nav>
 
-      {/* ── Main Single-Card Viewport (Strictly Fits in Screen, Zero Overflow) ── */}
+      {/* ── Main Single-Card Viewport ── */}
       <main className="flex-1 flex items-center justify-center p-4 sm:p-6 overflow-hidden">
-        {/* UNIFIED CARD CONTAINER: Identical dimensions & rounded style across all steps */}
-        <div className="w-full max-w-[580px] min-h-[480px] bg-white dark:bg-neutral-900 rounded-[28px] border border-neutral-200/90 dark:border-neutral-800 p-7 sm:p-9 shadow-xl shadow-neutral-900/5 flex flex-col justify-between transition-all duration-300">
+        <div className="w-full max-w-[580px] min-h-[500px] bg-white dark:bg-neutral-900 rounded-[28px] border border-neutral-200/90 dark:border-neutral-800 p-7 sm:p-9 shadow-xl shadow-neutral-900/5 flex flex-col justify-between transition-all duration-300">
           
           {/* Top Card Bar: Pill Stepper & "Skip for now" */}
           {step <= 4 && (
@@ -246,13 +287,13 @@ export function OnboardingWizard({ initialUser }: OnboardingWizardProps) {
                 onClick={() => router.push("/dashboard")}
                 className="text-xs sm:text-sm font-medium text-neutral-500 hover:text-neutral-900 dark:hover:text-white underline underline-offset-4 transition-colors"
               >
-                Skip for now
+                Skip to Dashboard
               </button>
             </div>
           )}
 
           {/* ═══════════════════════════════════════════════════════════ */}
-          {/* SCREEN 1: Welcome to dmplease (Exact Match to Image 5)     */}
+          {/* SCREEN 1: Welcome & Profile (Step 1 of 4)                   */}
           {/* ═══════════════════════════════════════════════════════════ */}
           {step === 1 && (
             <div className="flex-1 flex flex-col justify-between animate-in fade-in duration-200">
@@ -261,10 +302,10 @@ export function OnboardingWizard({ initialUser }: OnboardingWizardProps) {
                   Welcome to dmplease
                 </h1>
                 <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-1.5 leading-relaxed">
-                  Four quick questions to tailor your setup. Takes 20 seconds.
+                  Let&apos;s personalize your setup. Takes about 30 seconds.
                 </p>
 
-                <div className="mt-8 space-y-4">
+                <div className="mt-6 space-y-4">
                   <div className="grid grid-cols-2 gap-3.5">
                     <div className="space-y-1.5">
                       <Label htmlFor="firstName" className="text-xs font-semibold text-neutral-700 dark:text-neutral-300">
@@ -272,10 +313,10 @@ export function OnboardingWizard({ initialUser }: OnboardingWizardProps) {
                       </Label>
                       <Input
                         id="firstName"
-                        placeholder="Element"
+                        placeholder="Alex"
                         value={firstName}
                         onChange={(e) => setFirstName(e.target.value)}
-                        className="rounded-xl border-neutral-200 dark:border-neutral-700 h-11 px-3.5 text-sm font-medium focus-visible:ring-neutral-900 dark:focus-visible:ring-white"
+                        className="rounded-xl border-neutral-200 dark:border-neutral-700 h-10 px-3.5 text-sm font-medium focus-visible:ring-neutral-900 dark:focus-visible:ring-white"
                       />
                     </div>
                     <div className="space-y-1.5">
@@ -284,29 +325,39 @@ export function OnboardingWizard({ initialUser }: OnboardingWizardProps) {
                       </Label>
                       <Input
                         id="lastName"
-                        placeholder="of code"
+                        placeholder="Rivera"
                         value={lastName}
                         onChange={(e) => setLastName(e.target.value)}
-                        className="rounded-xl border-neutral-200 dark:border-neutral-700 h-11 px-3.5 text-sm font-medium focus-visible:ring-neutral-900 dark:focus-visible:ring-white"
+                        className="rounded-xl border-neutral-200 dark:border-neutral-700 h-10 px-3.5 text-sm font-medium focus-visible:ring-neutral-900 dark:focus-visible:ring-white"
                       />
                     </div>
                   </div>
 
                   <div className="space-y-1.5">
-                    <Label htmlFor="handle" className="text-xs font-semibold text-neutral-700 dark:text-neutral-300">
-                      Instagram handle <span className="text-neutral-400 font-normal">optional</span>
+                    <Label className="text-xs font-semibold text-neutral-700 dark:text-neutral-300">
+                      What best describes you?
                     </Label>
-                    <div className="relative">
-                      <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-neutral-400 font-semibold text-sm">
-                        @
-                      </span>
-                      <Input
-                        id="handle"
-                        placeholder="yourbrand"
-                        value={instagramHandle}
-                        onChange={(e) => setInstagramHandle(e.target.value.replace(/^@/, ""))}
-                        className="rounded-xl border-neutral-200 dark:border-neutral-700 h-11 pl-8 text-sm font-medium focus-visible:ring-neutral-900 dark:focus-visible:ring-white"
-                      />
+                    <div className="grid grid-cols-2 gap-2">
+                      {ROLES.slice(0, 4).map((r) => {
+                        const isSelected = selectedRole === r.id;
+                        return (
+                          <button
+                            key={r.id}
+                            type="button"
+                            onClick={() => setSelectedRole(r.id)}
+                            className={`rounded-xl border p-2.5 flex items-center gap-2.5 transition-all text-left ${
+                              isSelected
+                                ? "border-neutral-900 dark:border-white ring-1 ring-neutral-900 dark:ring-white bg-neutral-50 dark:bg-neutral-800"
+                                : "border-neutral-200/90 dark:border-neutral-700/80 bg-white dark:bg-neutral-850 hover:bg-neutral-50/60"
+                            }`}
+                          >
+                            <span className="text-sm shrink-0">{r.icon}</span>
+                            <span className="font-semibold text-xs text-neutral-900 dark:text-neutral-100 truncate">
+                              {r.title}
+                            </span>
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
 
@@ -329,43 +380,105 @@ export function OnboardingWizard({ initialUser }: OnboardingWizardProps) {
           )}
 
           {/* ═══════════════════════════════════════════════════════════ */}
-          {/* SCREEN 2: What best describes you? (Exact Match to Image 4) */}
+          {/* SCREEN 2: Connect your Instagram Account (Step 2 of 4)      */}
           {/* ═══════════════════════════════════════════════════════════ */}
           {step === 2 && (
             <div className="flex-1 flex flex-col justify-between animate-in fade-in duration-200">
               <div>
                 <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-neutral-900 dark:text-neutral-100">
-                  What best describes you?
+                  Connect your Instagram
                 </h1>
                 <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-1.5 leading-relaxed">
-                  We&apos;ll tailor your trigger words and DM templates for your work.
+                  Link your Instagram Business or Creator account to activate real-time comment listening and zero-latency DMs.
                 </p>
 
-                {/* 2-Column Options Grid (Image 4 exact style) */}
-                <div className="grid grid-cols-2 gap-2.5 mt-6">
-                  {ROLES.map((r) => {
-                    const isSelected = selectedRole === r.id;
-                    return (
-                      <button
-                        key={r.id}
-                        type="button"
-                        onClick={() => setSelectedRole(r.id)}
-                        className={`rounded-2xl border p-3 flex items-center gap-3 transition-all text-left ${
-                          isSelected
-                            ? "border-neutral-900 dark:border-white ring-1 ring-neutral-900 dark:ring-white bg-neutral-50 dark:bg-neutral-800 shadow-xs"
-                            : "border-neutral-200/90 dark:border-neutral-700/80 bg-white dark:bg-neutral-850 hover:border-neutral-400 dark:hover:border-neutral-500 hover:bg-neutral-50/60"
-                        }`}
-                      >
-                        <div className="size-8 rounded-xl bg-neutral-100 dark:bg-neutral-700/60 flex items-center justify-center shrink-0 text-base">
-                          {r.icon}
+                {connectionError && (
+                  <div className="mt-4 p-3 rounded-xl border border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400 text-xs flex items-center gap-2">
+                    <AlertCircle className="size-4 shrink-0" />
+                    <span>{connectionError}</span>
+                  </div>
+                )}
+
+                {/* State A: Account Connected Successfully */}
+                {connectedAccount ? (
+                  <div className="mt-6 p-5 rounded-2xl border border-emerald-500/30 bg-emerald-500/5 dark:bg-emerald-950/20 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="size-11 rounded-xl bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-600 flex items-center justify-center text-white shadow-sm shrink-0">
+                          <Instagram className="size-6" />
                         </div>
-                        <span className="font-semibold text-xs sm:text-sm text-neutral-900 dark:text-neutral-100 truncate">
-                          {r.title}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-sm sm:text-base text-foreground">
+                              @{connectedAccount.username}
+                            </span>
+                            <Badge
+                              variant="outline"
+                              className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 text-[10px] font-semibold gap-1"
+                            >
+                              <CheckCircle2 className="size-3" /> Connected
+                            </Badge>
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            Meta Graph API v21.0 &bull; Webhooks Active
+                          </p>
+                        </div>
+                      </div>
+
+                      <a
+                        href="/api/auth/meta/connect?next=/onboarding"
+                        className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-4 shrink-0"
+                      >
+                        Switch
+                      </a>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 pt-3 border-t border-emerald-500/20 text-xs text-neutral-600 dark:text-neutral-400">
+                      <div className="flex items-center gap-1.5">
+                        <Check className="size-3.5 text-emerald-600 shrink-0" />
+                        <span>Comment Webhooks Ready</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <Check className="size-3.5 text-emerald-600 shrink-0" />
+                        <span>60-Day Vault Encryption</span>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  /* State B: Not Connected Yet */
+                  <div className="mt-6 space-y-4">
+                    <div className="p-5 rounded-2xl border border-neutral-200/90 dark:border-neutral-800 bg-neutral-50/70 dark:bg-neutral-850 space-y-4">
+                      <div className="flex items-start gap-3.5">
+                        <div className="size-10 rounded-xl bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-600 flex items-center justify-center text-white shrink-0 shadow-xs mt-0.5">
+                          <Instagram className="size-5" />
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                            Meta Graph API Unified OAuth
+                          </p>
+                          <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed">
+                            One-click authorization linking your Instagram Business or Creator account. Enables real-time webhook ingestion.
+                          </p>
+                        </div>
+                      </div>
+
+                      <Button
+                        asChild
+                        className="w-full h-11 rounded-xl bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-950 font-semibold text-sm shadow-sm gap-2"
+                      >
+                        <a href="/api/auth/meta/connect?next=/onboarding">
+                          <Instagram className="size-4" />
+                          Connect with Facebook / Meta
+                        </a>
+                      </Button>
+                    </div>
+
+                    <div className="flex items-center gap-2 px-1 text-[11px] text-neutral-400 dark:text-neutral-500">
+                      <ShieldCheck className="size-3.5 text-emerald-600 shrink-0" />
+                      <span>Official Meta Graph API v21.0 &bull; AES-256 Vault &bull; Instant disconnect anytime</span>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Bottom bar */}
@@ -377,31 +490,42 @@ export function OnboardingWizard({ initialUser }: OnboardingWizardProps) {
                 >
                   Back
                 </Button>
-                <Button
-                  onClick={() => setStep(3)}
-                  className="rounded-xl bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-950 font-semibold px-7 h-10 text-sm shadow-sm"
-                >
-                  Continue
-                </Button>
+
+                <div className="flex items-center gap-3">
+                  {!connectedAccount && (
+                    <button
+                      type="button"
+                      onClick={() => setStep(3)}
+                      className="text-xs font-medium text-neutral-500 hover:text-neutral-900 dark:hover:text-white underline underline-offset-4 transition-colors"
+                    >
+                      I&apos;ll connect later
+                    </button>
+                  )}
+                  <Button
+                    onClick={() => setStep(3)}
+                    className="rounded-xl bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-950 font-semibold px-7 h-10 text-sm shadow-sm"
+                  >
+                    {connectedAccount ? "Continue" : "Skip & Continue"}
+                  </Button>
+                </div>
               </div>
             </div>
           )}
 
           {/* ═══════════════════════════════════════════════════════════ */}
-          {/* SCREEN 3: What are you looking for? (Exact Match Image 3)  */}
+          {/* SCREEN 3: Automation Goals & Trigger (Step 3 of 4)          */}
           {/* ═══════════════════════════════════════════════════════════ */}
           {step === 3 && (
             <div className="flex-1 flex flex-col justify-between animate-in fade-in duration-200">
               <div>
                 <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-neutral-900 dark:text-neutral-100">
-                  What are you looking for?
+                  Configure your first trigger
                 </h1>
                 <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-1.5 leading-relaxed">
-                  Pick as many as you like. We&apos;ll configure your triggers.
+                  Choose what followers comment on your posts, and what automated DM they receive.
                 </p>
 
-                {/* 2-Column Options with Icons and Rounded Checkboxes (Image 3 exact style) */}
-                <div className="grid grid-cols-2 gap-2.5 mt-5">
+                <div className="grid grid-cols-2 gap-2 mt-4">
                   {AUTOMATION_GOALS.map((g) => {
                     const isSelected = selectedGoal === g.id;
                     return (
@@ -409,14 +533,14 @@ export function OnboardingWizard({ initialUser }: OnboardingWizardProps) {
                         key={g.id}
                         type="button"
                         onClick={() => handleGoalSelect(g.id)}
-                        className={`rounded-2xl border p-3 flex items-center justify-between transition-all text-left ${
+                        className={`rounded-2xl border p-2.5 sm:p-3 flex items-center justify-between transition-all text-left ${
                           isSelected
                             ? "border-neutral-900 dark:border-white ring-1 ring-neutral-900 dark:ring-white bg-neutral-50 dark:bg-neutral-800 shadow-xs"
-                            : "border-neutral-200/90 dark:border-neutral-700/80 bg-white dark:bg-neutral-850 hover:border-neutral-400 dark:hover:border-neutral-500 hover:bg-neutral-50/60"
+                            : "border-neutral-200/90 dark:border-neutral-700/80 bg-white dark:bg-neutral-850 hover:border-neutral-400 hover:bg-neutral-50/60"
                         }`}
                       >
-                        <div className="flex items-center gap-2.5 truncate">
-                          <div className="size-8 rounded-xl bg-neutral-100 dark:bg-neutral-800 flex items-center justify-center shrink-0 text-base">
+                        <div className="flex items-center gap-2 truncate">
+                          <div className="size-7 sm:size-8 rounded-xl bg-neutral-100 dark:bg-neutral-800 flex items-center justify-center shrink-0 text-sm sm:text-base">
                             {g.icon}
                           </div>
                           <span className="font-semibold text-xs sm:text-sm text-neutral-900 dark:text-neutral-100 truncate">
@@ -424,17 +548,31 @@ export function OnboardingWizard({ initialUser }: OnboardingWizardProps) {
                           </span>
                         </div>
                         <div
-                          className={`size-4 sm:size-5 rounded-md border flex items-center justify-center shrink-0 transition-colors ml-2 ${
+                          className={`size-4 rounded-md border flex items-center justify-center shrink-0 transition-colors ml-1.5 ${
                             isSelected
                               ? "bg-neutral-900 dark:bg-white border-neutral-900 dark:border-white text-white dark:text-neutral-900"
                               : "border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800"
                           }`}
                         >
-                          {isSelected && <Check className="size-3 sm:size-3.5 stroke-[3]" />}
+                          {isSelected && <Check className="size-3 stroke-[3]" />}
                         </div>
                       </button>
                     );
                   })}
+                </div>
+
+                <div className="mt-4 p-3.5 rounded-xl border border-neutral-200 dark:border-neutral-700 bg-neutral-50/60 dark:bg-neutral-850 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-neutral-700 dark:text-neutral-300">
+                      Trigger Keyword
+                    </span>
+                    <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-primary/10 text-primary font-bold">
+                      {triggerKeyword}
+                    </span>
+                  </div>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400 line-clamp-2">
+                    &ldquo;{dmMessage}&rdquo;
+                  </p>
                 </div>
               </div>
 
@@ -458,7 +596,7 @@ export function OnboardingWizard({ initialUser }: OnboardingWizardProps) {
           )}
 
           {/* ═══════════════════════════════════════════════════════════ */}
-          {/* SCREEN 4: How did you hear about us? (Exact Match Image 2) */}
+          {/* SCREEN 4: Attribution (Step 4 of 4)                         */}
           {/* ═══════════════════════════════════════════════════════════ */}
           {step === 4 && (
             <div className="flex-1 flex flex-col justify-between animate-in fade-in duration-200">
@@ -467,7 +605,7 @@ export function OnboardingWizard({ initialUser }: OnboardingWizardProps) {
                   How did you hear about us?
                 </h1>
                 <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-1.5 leading-relaxed">
-                  It helps a small team know what works.
+                  Helps our team know what works.
                 </p>
 
                 {errorMsg && (
@@ -476,7 +614,6 @@ export function OnboardingWizard({ initialUser }: OnboardingWizardProps) {
                   </div>
                 )}
 
-                {/* 2-Column Options Grid (Image 2 exact style) */}
                 <div className="grid grid-cols-2 gap-2.5 mt-6">
                   {ATTRIBUTION_OPTIONS.map((opt) => {
                     const isSelected = heardFrom === opt;
@@ -485,13 +622,11 @@ export function OnboardingWizard({ initialUser }: OnboardingWizardProps) {
                         key={opt}
                         type="button"
                         disabled={isSubmitting}
-                        onClick={() => {
-                          setHeardFrom(opt);
-                        }}
+                        onClick={() => setHeardFrom(opt)}
                         className={`rounded-2xl border p-3.5 text-xs sm:text-sm font-semibold transition-all text-left flex items-center justify-between ${
                           isSelected
                             ? "border-neutral-900 dark:border-white ring-1 ring-neutral-900 dark:ring-white bg-neutral-50 dark:bg-neutral-800 text-neutral-900 dark:text-white shadow-xs"
-                            : "border-neutral-200/90 dark:border-neutral-700/80 bg-white dark:bg-neutral-850 text-neutral-800 dark:text-neutral-200 hover:border-neutral-400 dark:hover:border-neutral-500 hover:bg-neutral-50/60"
+                            : "border-neutral-200/90 dark:border-neutral-700/80 bg-white dark:bg-neutral-850 text-neutral-800 dark:text-neutral-200 hover:border-neutral-400 hover:bg-neutral-50/60"
                         }`}
                       >
                         <span>{opt}</span>
@@ -517,20 +652,19 @@ export function OnboardingWizard({ initialUser }: OnboardingWizardProps) {
                   onClick={() => handleFinish()}
                   className="rounded-xl bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-950 font-semibold px-7 h-10 text-sm shadow-sm"
                 >
-                  {isSubmitting ? "Launching..." : "Finish"}
+                  {isSubmitting ? "Launching..." : "Finish Setup"}
                 </Button>
               </div>
             </div>
           )}
 
           {/* ═══════════════════════════════════════════════════════════ */}
-          {/* SCREEN 5: You're all set (Exact Match to Image 1)          */}
+          {/* SCREEN 5: Celebration / All Set                             */}
           {/* ═══════════════════════════════════════════════════════════ */}
           {step === 5 && (
             <div className="flex-1 flex flex-col justify-between text-center animate-in fade-in duration-300">
               <div>
-                {/* Soft Green Check Badge (Image 1) */}
-                <div className="size-14 rounded-2xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mx-auto mb-4">
+                <div className="size-14 rounded-2xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mx-auto mb-4 shadow-sm">
                   <Check className="size-7 stroke-[2.5]" />
                 </div>
 
@@ -538,10 +672,9 @@ export function OnboardingWizard({ initialUser }: OnboardingWizardProps) {
                   You&apos;re all set, {firstName || "Creator"}.
                 </h1>
                 <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-2 max-w-md mx-auto leading-relaxed">
-                  Start with your automation: when followers comment on your Instagram posts, they will instantly receive your DM.
+                  Your automation is armed! When followers comment on your posts, they will instantly receive your DM.
                 </p>
 
-                {/* Two Action Buttons side by side (Image 1) */}
                 <div className="flex items-center justify-center gap-3 mt-6">
                   <Button
                     onClick={() => {
@@ -550,31 +683,36 @@ export function OnboardingWizard({ initialUser }: OnboardingWizardProps) {
                     }}
                     className="rounded-xl bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-950 font-semibold px-6 h-11 text-sm shadow-sm"
                   >
-                    Start exploring
+                    Go to Dashboard
                   </Button>
                   <Button
                     variant="outline"
                     onClick={() => {
-                      router.push("/dashboard");
+                      router.push("/dashboard/campaigns");
                       router.refresh();
                     }}
                     className="rounded-xl border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-700 font-semibold px-6 h-11 text-sm"
                   >
-                    See Pro plans
+                    View Campaigns
                   </Button>
                 </div>
 
-                {/* Bottom Nested Promo/Status Card (Image 1) */}
+                {/* Status Card */}
                 <div className="mt-8 rounded-2xl bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200/80 dark:border-neutral-700/80 p-4 text-left space-y-2.5">
-                  <div className="flex items-center gap-2 text-xs font-semibold text-purple-600 dark:text-purple-400">
-                    <div className="size-4 rounded-md bg-purple-100 dark:bg-purple-950/60 flex items-center justify-center text-[10px]">
-                      ⚡
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-xs font-semibold text-purple-600 dark:text-purple-400">
+                      <Sparkles className="size-3.5" />
+                      <span>Live Trigger Active</span>
                     </div>
-                    <span>From the engine of dmplease</span>
+                    {connectedAccount && (
+                      <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+                        @{connectedAccount.username}
+                      </span>
+                    )}
                   </div>
 
                   <p className="text-xs sm:text-sm font-semibold text-neutral-900 dark:text-neutral-100">
-                    Live trigger active: Comment &ldquo;{triggerKeyword}&rdquo; on your Instagram posts.
+                    Comment &ldquo;{triggerKeyword}&rdquo; on your Instagram posts &rarr; Instant DM.
                   </p>
 
                   <div className="flex items-center gap-2">
@@ -591,10 +729,6 @@ export function OnboardingWizard({ initialUser }: OnboardingWizardProps) {
                       Check status
                     </Button>
                   </div>
-
-                  <p className="text-[11px] text-neutral-400 dark:text-neutral-500">
-                    Live analytics by dmplease: comment logs, delivery speed, and conversion rates.
-                  </p>
                 </div>
               </div>
 
