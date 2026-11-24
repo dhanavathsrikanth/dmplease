@@ -36,13 +36,6 @@ export async function GET() {
       }
     }
 
-    // Fallback only if no DB account and dev token is set
-    if (!accessToken && process.env.INSTAGRAM_ACCESS_TOKEN) {
-      accessToken = process.env.INSTAGRAM_ACCESS_TOKEN;
-      accountId = process.env.INSTAGRAM_ACCOUNT_ID || "17841428039856434";
-      username = profile?.instagramHandle || null;
-    }
-
     if (!accessToken || !accountId) {
       return NextResponse.json({
         success: true,

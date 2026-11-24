@@ -4,17 +4,17 @@ import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  LayoutGrid,
-  BarChart3,
-  MessageSquare,
-  Megaphone,
-  Bot,
-  History,
-  Settings,
-  Activity,
-  ChevronsUpDown,
-  Check,
-} from "lucide-react";
+  IconLayoutDashboard,
+  IconDeviceAnalytics,
+  IconMessages,
+  IconSpeakerphone,
+  IconRobot,
+  IconTimeline,
+  IconAdjustmentsHorizontal,
+  IconActivityHeartbeat,
+  IconSelector,
+  IconCheck,
+} from "@tabler/icons-react";
 import { cn } from "@/lib/utils";
 import { useWorkspace } from "@/lib/workspace-context";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -38,24 +38,24 @@ const navSections = [
   {
     label: "Workspace",
     items: [
-      { label: "Dashboard", href: "/dashboard", icon: LayoutGrid },
-      { label: "Overview", href: "/dashboard/overview", icon: BarChart3 },
-      { label: "Inbox", href: "/dashboard/inbox", icon: MessageSquare },
+      { label: "Dashboard", href: "/dashboard", icon: IconLayoutDashboard },
+      { label: "Overview", href: "/dashboard/overview", icon: IconDeviceAnalytics },
+      { label: "Direct Inbox", href: "/dashboard/inbox", icon: IconMessages },
     ],
   },
   {
     label: "Automation",
     items: [
-      { label: "Campaigns", href: "/dashboard/campaigns", icon: Megaphone },
-      { label: "Inbox Automations", href: "/dashboard/inbox-automations", icon: Bot },
-      { label: "DM Logs", href: "/dashboard/logs", icon: History },
+      { label: "Campaigns", href: "/dashboard/campaigns", icon: IconSpeakerphone },
+      { label: "Inbox Automations", href: "/dashboard/inbox-automations", icon: IconRobot },
+      { label: "DM Logs", href: "/dashboard/logs", icon: IconTimeline },
     ],
   },
   {
-    label: "System",
+    label: "Platform",
     items: [
-      { label: "Settings", href: "/dashboard/settings", icon: Settings },
-      { label: "Diagnostics", href: "/dashboard/diagnostics", icon: Activity },
+      { label: "Settings", href: "/dashboard/settings", icon: IconAdjustmentsHorizontal },
+      { label: "Diagnostics", href: "/dashboard/diagnostics", icon: IconActivityHeartbeat },
     ],
   },
 ];
@@ -76,23 +76,24 @@ export function AppSidebar({
   const { currentWorkspace, workspaces, switchWorkspace } = useWorkspace();
 
   const sidebarContent = (
-    <div className="flex h-full flex-col justify-between bg-card text-card-foreground border-r border-border/80 select-none">
-      {/* ── Brand Header ── */}
-      <div className="h-14 flex items-center px-4 border-b border-border/80">
+    <div className="flex h-full flex-col justify-between bg-card text-card-foreground border-r border-border/80 select-none antialiased">
+      {/* ── Miro Chrome Brand Header ── */}
+      <div className="h-14 flex items-center px-4 border-b border-[#e0e2e8] dark:border-border/80">
         <Link
           href="/dashboard"
           className="flex items-center gap-2.5 group overflow-hidden w-full"
         >
-          <div className="size-8 rounded-lg bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 flex items-center justify-center font-bold text-xs shrink-0 shadow-sm group-hover:scale-105 transition-transform">
+          <div className="size-8 rounded-lg bg-[#ffd02f] text-[#1c1c1e] flex items-center justify-center font-bold text-xs shrink-0 shadow-xs">
             dm
           </div>
           {!collapsed && (
-            <div className="flex items-center gap-1.5 truncate">
-              <span className="font-bold text-base tracking-tight text-foreground truncate">
+            <div className="flex items-center gap-2 truncate">
+              <span className="font-semibold text-sm tracking-tight text-foreground truncate flex items-center">
                 dmplease
+                <span className="inline-block size-1.5 rounded-full bg-[#ffd02f] ml-1.5" />
               </span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-lime-500/10 text-lime-700 dark:text-lime-400 font-semibold border border-lime-500/20">
-                PRO
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#fff8e0] text-[#746019] font-semibold border border-[#ffd02f]/40 dark:bg-[#746019]/30 dark:text-[#ffd02f]">
+                CANVAS
               </span>
             </div>
           )}
@@ -100,11 +101,11 @@ export function AppSidebar({
       </div>
 
       {/* ── Navigation Sections ── */}
-      <div className="flex-1 overflow-y-auto py-4 px-2 space-y-6">
+      <div className="flex-1 overflow-y-auto py-3 px-2 space-y-5">
         {navSections.map((section) => (
           <div key={section.label} className="space-y-1">
             {!collapsed && (
-              <p className="px-3 text-[11px] font-semibold text-muted-foreground/70 uppercase tracking-wider mb-2">
+              <p className="px-2.5 text-[10px] font-mono font-medium text-muted-foreground/80 uppercase tracking-wider mb-1.5">
                 {section.label}
               </p>
             )}
@@ -122,18 +123,19 @@ export function AppSidebar({
                     onClick={onCloseMobile}
                     title={collapsed ? item.label : undefined}
                     className={cn(
-                      "flex items-center gap-3 px-3 py-2 rounded-xl text-xs sm:text-sm font-medium transition-all group",
+                      "flex items-center gap-2.5 px-3 py-2 rounded-full text-xs font-medium transition-all group relative",
                       isActive
-                        ? "bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-950 shadow-xs font-semibold"
-                        : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
+                        ? "bg-[#1c1c1e] text-white font-semibold shadow-xs liquid-sheen dark:bg-white dark:text-[#1c1c1e]"
+                        : "text-[#555a6a] dark:text-muted-foreground hover:text-foreground hover:bg-[#f7f8fa] dark:hover:bg-muted/50"
                     )}
                   >
                     <Icon
+                      stroke={1.8}
                       className={cn(
-                        "size-4 shrink-0 transition-transform group-hover:scale-110",
+                        "size-4 shrink-0 transition-colors",
                         isActive
-                          ? "text-white dark:text-neutral-950"
-                          : "text-muted-foreground group-hover:text-foreground"
+                          ? "text-[#ffd02f] dark:text-[#1c1c1e]"
+                          : "text-[#6b6f7e] dark:text-muted-foreground group-hover:text-foreground"
                       )}
                     />
                     {!collapsed && <span className="truncate">{item.label}</span>}
@@ -145,13 +147,13 @@ export function AppSidebar({
         ))}
       </div>
 
-      {/* ── Workspace Switcher Footer ── */}
-      <div className="p-3 border-t border-border/80">
+      {/* ── Workspace Switcher Footer (Miro Style) ── */}
+      <div className="p-3 border-t border-[#e0e2e8] dark:border-border/80">
         <DropdownMenu>
-          <DropdownMenuTrigger className="w-full flex items-center justify-between p-2 rounded-xl hover:bg-muted/70 transition-colors text-left outline-none group">
+          <DropdownMenuTrigger className="w-full flex items-center justify-between p-2 rounded-xl hover:bg-[#f7f8fa] dark:hover:bg-muted/60 transition-colors text-left outline-none group border border-transparent hover:border-[#e0e2e8]">
             <div className="flex items-center gap-2.5 truncate">
-              <Avatar className="size-8 rounded-lg bg-neutral-900/10 dark:bg-neutral-100/10 text-foreground">
-                <AvatarFallback className="text-xs font-bold">
+              <Avatar className="size-7 rounded-lg bg-[#fff8e0] text-[#746019] border border-[#ffd02f]/40 dark:bg-[#746019]/30 dark:text-[#ffd02f]">
+                <AvatarFallback className="text-[10px] font-bold">
                   {getWorkspaceInitials(currentWorkspace?.name || "My Workspace")}
                 </AvatarFallback>
               </Avatar>
@@ -160,23 +162,23 @@ export function AppSidebar({
                   <p className="text-xs font-semibold text-foreground truncate">
                     {currentWorkspace?.name || "Personal Workspace"}
                   </p>
-                  <p className="text-[10px] text-muted-foreground truncate capitalize">
+                  <p className="text-[10px] text-[#6b6f7e] truncate capitalize font-medium">
                     {currentWorkspace?.role?.toLowerCase() || "Owner"}
                   </p>
                 </div>
               )}
             </div>
             {!collapsed && (
-              <ChevronsUpDown className="size-3.5 text-muted-foreground shrink-0 ml-1 group-hover:text-foreground" />
+              <IconSelector stroke={1.8} className="size-3.5 text-muted-foreground shrink-0 ml-1 group-hover:text-foreground" />
             )}
           </DropdownMenuTrigger>
 
           <DropdownMenuContent
             align="start"
             side="top"
-            className="w-56 rounded-xl border border-border shadow-lg p-1.5"
+            className="w-56 rounded-2xl border border-[#e0e2e8] dark:border-border shadow-modal p-1.5 bg-card"
           >
-            <DropdownMenuLabel className="text-[11px] text-muted-foreground font-semibold px-2 py-1">
+            <DropdownMenuLabel className="text-[10px] font-semibold text-[#6b6f7e] px-2 py-1 uppercase tracking-wider">
               Workspaces ({workspaces.length})
             </DropdownMenuLabel>
             <DropdownMenuSeparator className="my-1" />
@@ -187,17 +189,17 @@ export function AppSidebar({
                 <DropdownMenuItem
                   key={ws.id}
                   onClick={() => switchWorkspace(ws.id)}
-                  className="flex items-center justify-between px-2 py-2 rounded-lg cursor-pointer text-xs font-medium"
+                  className="flex items-center justify-between px-2.5 py-1.5 rounded-lg cursor-pointer text-xs font-medium"
                 >
                   <div className="flex items-center gap-2 truncate">
-                    <Avatar className="size-6 rounded-md">
-                      <AvatarFallback className="text-[10px] font-bold">
+                    <Avatar className="size-5 rounded-md">
+                      <AvatarFallback className="text-[9px] font-bold">
                         {getWorkspaceInitials(ws.name)}
                       </AvatarFallback>
                     </Avatar>
                     <span className="truncate">{ws.name}</span>
                   </div>
-                  {isSelected && <Check className="size-3.5 text-primary shrink-0" />}
+                  {isSelected && <IconCheck stroke={2.5} className="size-3.5 text-[#00b473] shrink-0" />}
                 </DropdownMenuItem>
               );
             })}
@@ -213,7 +215,7 @@ export function AppSidebar({
       <aside
         className={cn(
           "hidden md:block shrink-0 sticky top-0 h-dvh transition-[width] duration-200 z-30",
-          collapsed ? "w-16" : "w-64"
+          collapsed ? "w-14" : "w-60"
         )}
       >
         {sidebarContent}
@@ -230,7 +232,7 @@ export function AppSidebar({
       {/* Mobile Drawer */}
       <div
         className={cn(
-          "fixed inset-y-0 left-0 w-64 z-50 md:hidden transition-transform duration-300 shadow-2xl",
+          "fixed inset-y-0 left-0 w-60 z-50 md:hidden transition-transform duration-300 shadow-2xl",
           mobileOpen ? "translate-x-0" : "-translate-x-full"
         )}
       >

@@ -14,16 +14,16 @@ function BuilderSkeleton() {
     <div className="space-y-6 animate-pulse">
       <div className="flex items-center justify-between pb-4 border-b">
         <Skeleton className="h-8 w-64 rounded-xl" />
-        <Skeleton className="h-9 w-32 rounded-xl" />
+        <Skeleton className="h-8 w-32 rounded-lg" />
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        <div className="lg:col-span-7 space-y-6">
-          <Skeleton className="h-44 rounded-2xl" />
-          <Skeleton className="h-44 rounded-2xl" />
-          <Skeleton className="h-56 rounded-2xl" />
+        <div className="lg:col-span-7 space-y-4">
+          <Skeleton className="h-44 rounded-xl" />
+          <Skeleton className="h-44 rounded-xl" />
+          <Skeleton className="h-56 rounded-xl" />
         </div>
         <div className="lg:col-span-5 flex justify-center">
-          <Skeleton className="w-[320px] h-[610px] rounded-[44px]" />
+          <Skeleton className="w-[320px] h-[610px] rounded-[36px]" />
         </div>
       </div>
     </div>

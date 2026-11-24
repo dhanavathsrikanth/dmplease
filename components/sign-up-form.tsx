@@ -15,7 +15,11 @@ import { OAuthButtons } from "@/components/auth/oauth-buttons";
 export function SignUpForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get("callbackUrl") || searchParams.get("next") || "/onboarding";
+  const nextTarget = searchParams.get("next") || searchParams.get("callbackUrl");
+  const callbackUrl = nextTarget || "/onboarding";
+  const signInUrl = nextTarget
+    ? `/auth/login?next=${encodeURIComponent(nextTarget)}`
+    : "/auth/login";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -243,7 +247,8 @@ export function SignUpForm() {
         <div className="pt-2 text-center text-sm text-muted-foreground">
           Already have an account?{" "}
           <Link
-            href="/auth/login"
+            href={signInUrl}
+            suppressHydrationWarning
             className="font-medium text-foreground underline underline-offset-4 hover:text-primary transition-colors"
           >
             Sign in

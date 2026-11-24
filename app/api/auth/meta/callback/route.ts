@@ -3,8 +3,10 @@ import {
   verifyOAuthState,
   exchangeOAuthCode,
   exchangeForLongLivedToken,
+  getLongLivedToken,
   fetchInstagramAccountsForToken,
-  subscribeAccountToWebhooks,
+  fetchMetaUserEmail,
+  subscribeInstagramAccountToWebhooks,
 } from "@/lib/meta/client";
 import { encryptToken } from "@/lib/meta/vault";
 import { createClient } from "@/lib/supabase/server";
@@ -50,17 +52,26 @@ export async function GET(request: NextRequest) {
   }
 
   const userId = verifiedState.userId;
+  const authProvider = verifiedState.provider || "facebook";
 
   try {
-    // 1. Exchange code for short-lived token
-    const shortTokenData = await exchangeOAuthCode(code, redirectUri);
+    // 1. Exchange code for short-lived token (supports both Direct Instagram Login & Facebook Login)
+    const shortTokenData = await exchangeOAuthCode(code, redirectUri, authProvider);
 
     // 2. Exchange for 60-day long-lived token
-    const longTokenData = await exchangeForLongLivedToken(
-      shortTokenData.access_token
-    );
-    const longLivedToken = longTokenData.access_token;
-    const expiresSeconds = longTokenData.expires_in || 60 * 24 * 3600;
+    let longLivedToken: string;
+    let expiresSeconds: number;
+
+    if (authProvider === "instagram") {
+      const igLong = await getLongLivedToken(shortTokenData.access_token);
+      longLivedToken = igLong.accessToken;
+      expiresSeconds = igLong.expiresIn;
+    } else {
+      const fbLong = await exchangeForLongLivedToken(shortTokenData.access_token);
+      longLivedToken = fbLong.access_token;
+      expiresSeconds = fbLong.expires_in || 60 * 24 * 3600;
+    }
+
     const tokenExpiresAt = new Date(Date.now() + expiresSeconds * 1000);
 
     // 3. Query linked Instagram Accounts
@@ -69,59 +80,128 @@ export async function GET(request: NextRequest) {
     if (accounts.length === 0) {
       targetUrl.searchParams.set(
         "error",
-        "No Instagram Professional or Creator account was found linked to your Facebook pages."
+        "No Instagram Professional or Creator account was found linked to your Meta account."
       );
       return NextResponse.redirect(targetUrl);
     }
 
+    // 4. Sync profile email (if returned via `email` scope) and primary IG handle
     const primaryAccount = accounts[0];
-    const encryptedToken = encryptToken(
-      primaryAccount.pageToken || longLivedToken
-    );
+    const metaEmail =
+      authProvider === "facebook"
+        ? await fetchMetaUserEmail(longLivedToken)
+        : null;
 
-    // 4. Update Profile & Workspace in DB
     const supabase = await createClient();
+    const { data: existingProfile } = await supabase
+      .from("profiles")
+      .select("email")
+      .eq("id", userId)
+      .single();
 
-    // Update Profile with Instagram handle
     await supabase
       .from("profiles")
       .update({
         instagram_handle: primaryAccount.username,
+        ...(metaEmail && !existingProfile?.email ? { email: metaEmail } : {}),
         updated_at: new Date().toISOString(),
       })
       .eq("id", userId);
 
-    // Get user's primary workspace (or create one if onboarding hasn't finished yet)
-    const { data: workspaces } = await supabase
+    // 5. Ensure EVERY connected account gets its own dedicated workspace
+    const { data: userWorkspaces } = await supabase
       .from("workspaces")
-      .select("id")
+      .select("id, name")
       .eq("owner_id", userId)
-      .limit(1);
+      .order("created_at", { ascending: true });
 
-    let workspaceId = workspaces?.[0]?.id;
+    const ownedWorkspaceIds = (userWorkspaces || []).map((w) => w.id);
 
-    if (!workspaceId) {
-      const { data: newWs } = await supabase
-        .from("workspaces")
-        .insert({
-          name: `${primaryAccount.displayName || primaryAccount.username}'s Workspace`,
-          owner_id: userId,
-        })
-        .select("id")
-        .single();
-      if (newWs) {
-        workspaceId = newWs.id;
+    // Map existing Instagram accounts already linked to any of this user's workspaces
+    const existingAccountWorkspaceByIgId = new Map<string, string>();
+    const occupiedWorkspaceIds = new Set<string>();
+
+    if (ownedWorkspaceIds.length > 0) {
+      const { data: existingIgAccounts } = await supabase
+        .from("instagram_accounts")
+        .select("instagram_id, workspace_id")
+        .in("workspace_id", ownedWorkspaceIds);
+
+      for (const row of existingIgAccounts || []) {
+        existingAccountWorkspaceByIgId.set(row.instagram_id, row.workspace_id);
+        occupiedWorkspaceIds.add(row.workspace_id);
       }
     }
 
-    // 5. Store in Supabase instagram_accounts table
-    if (workspaceId) {
+    const dbUrl = process.env.DATABASE_URL || "";
+    const hasDb = dbUrl && !dbUrl.includes("[YOUR-PASSWORD]");
+    let primaryWorkspaceId: string | undefined;
+
+    for (const account of accounts) {
+      const accountWorkspaceLabel = `@${account.username}`;
+      let workspaceId = existingAccountWorkspaceByIgId.get(
+        account.instagramBusinessId
+      );
+
+      // Check if an empty placeholder workspace (e.g., created on initial signup) can be claimed
+      if (!workspaceId) {
+        const emptyWorkspace = (userWorkspaces || []).find(
+          (w) => !occupiedWorkspaceIds.has(w.id)
+        );
+        if (emptyWorkspace) {
+          const matchedWsId = emptyWorkspace.id;
+          workspaceId = matchedWsId;
+          occupiedWorkspaceIds.add(matchedWsId);
+          await supabase
+            .from("workspaces")
+            .update({
+              name: accountWorkspaceLabel,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", matchedWsId);
+        }
+      }
+
+      // Otherwise create a brand new workspace for this Instagram account
+      if (!workspaceId) {
+        const { data: newWs } = await supabase
+          .from("workspaces")
+          .insert({
+            name: accountWorkspaceLabel,
+            owner_id: userId,
+          })
+          .select("id")
+          .single();
+
+        if (newWs?.id) {
+          const createdWsId = newWs.id;
+          workspaceId = createdWsId;
+          occupiedWorkspaceIds.add(createdWsId);
+          await supabase.from("workspace_members").upsert(
+            {
+              workspace_id: createdWsId,
+              user_id: userId,
+              role: "OWNER",
+            },
+            { onConflict: "workspace_id,user_id" }
+          );
+        }
+      }
+
+      if (!workspaceId) continue;
+      if (!primaryWorkspaceId) {
+        primaryWorkspaceId = workspaceId;
+      }
+
+      const rawAccountToken = account.pageToken || longLivedToken;
+      const encryptedToken = encryptToken(rawAccountToken);
+
       await supabase.from("instagram_accounts").upsert(
         {
           workspace_id: workspaceId,
-          instagram_id: primaryAccount.instagramBusinessId,
-          username: primaryAccount.username,
-          name: primaryAccount.displayName || primaryAccount.username,
+          instagram_id: account.instagramBusinessId,
+          username: account.username,
+          name: account.displayName || account.username,
           access_token: encryptedToken,
           token_expires_at: tokenExpiresAt.toISOString(),
           webhook_subscribed: true,
@@ -131,51 +211,58 @@ export async function GET(request: NextRequest) {
         },
         { onConflict: "instagram_id" }
       );
-    }
 
-    // Optional Prisma upsert if database direct connection available
-    const dbUrl = process.env.DATABASE_URL || "";
-    const hasDb = dbUrl && !dbUrl.includes("[YOUR-PASSWORD]");
-
-    if (hasDb && workspaceId) {
-      try {
-        await prisma.instagramAccount.upsert({
-          where: { instagramId: primaryAccount.instagramBusinessId },
-          create: {
-            workspaceId,
-            instagramId: primaryAccount.instagramBusinessId,
-            username: primaryAccount.username,
-            name: primaryAccount.displayName || primaryAccount.username,
-            accessToken: encryptedToken,
-            tokenExpiresAt,
-            webhookSubscribed: true,
-          },
-          update: {
-            username: primaryAccount.username,
-            name: primaryAccount.displayName || primaryAccount.username,
-            accessToken: encryptedToken,
-            tokenExpiresAt,
-            webhookSubscribed: true,
-            updatedAt: new Date(),
-          },
-        });
-      } catch (e) {
-        console.warn("[OAuth] Prisma upsert fallback:", e);
+      if (hasDb) {
+        try {
+          await prisma.instagramAccount.upsert({
+            where: { instagramId: account.instagramBusinessId },
+            create: {
+              workspaceId,
+              instagramId: account.instagramBusinessId,
+              username: account.username,
+              name: account.displayName || account.username,
+              accessToken: encryptedToken,
+              tokenExpiresAt,
+              webhookSubscribed: true,
+            },
+            update: {
+              workspaceId,
+              username: account.username,
+              name: account.displayName || account.username,
+              accessToken: encryptedToken,
+              tokenExpiresAt,
+              webhookSubscribed: true,
+              updatedAt: new Date(),
+            },
+          });
+        } catch (e) {
+          console.warn("[OAuth] Prisma upsert fallback:", e);
+        }
       }
-    }
 
-    // 5. Auto-subscribe Facebook Page to Webhooks
-    if (primaryAccount.facebookPageId && primaryAccount.pageToken) {
-      await subscribeAccountToWebhooks(
-        primaryAccount.facebookPageId,
-        primaryAccount.pageToken
-      );
+      // 6. Auto-subscribe either Facebook Page or direct Instagram Account to Webhooks
+      const subscribeTargetId = account.facebookPageId || account.instagramBusinessId;
+      if (subscribeTargetId && rawAccountToken) {
+        await subscribeInstagramAccountToWebhooks(subscribeTargetId, rawAccountToken);
+      }
     }
 
     targetUrl.searchParams.set("status", "connected");
     targetUrl.searchParams.set("account", primaryAccount.username);
-    return NextResponse.redirect(targetUrl);
-  } catch (err: any) {
+    if (primaryWorkspaceId) {
+      targetUrl.searchParams.set("workspace", primaryWorkspaceId);
+    }
+
+    const response = NextResponse.redirect(targetUrl);
+    if (primaryWorkspaceId) {
+      response.cookies.set("active_workspace_id", primaryWorkspaceId, {
+        path: "/",
+        maxAge: 60 * 60 * 24 * 365,
+        sameSite: "lax",
+      });
+    }
+    return response;
+  } catch (err: unknown) {
     console.error("[Meta OAuth Callback Error]:", err);
     targetUrl.searchParams.set(
       "error",

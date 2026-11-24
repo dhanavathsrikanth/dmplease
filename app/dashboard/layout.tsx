@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { connection } from "next/server";
+import { cookies } from "next/headers";
 import { getCurrentProfile, getCurrentUser } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
 import { DashboardShell } from "@/components/dashboard/dashboard-shell";
@@ -53,19 +54,40 @@ async function AuthenticatedDashboardShell({
           },
         ];
 
+  const cookieStore = await cookies();
+  const activeCookieId = cookieStore.get("active_workspace_id")?.value;
+  const activeWorkspace =
+    workspaces.find((w) => w.id === activeCookieId) || workspaces[0];
+
   const supabase = await createClient();
-  const workspaceIds = workspaces.map((w) => w.id);
   let connectedUsername: string | null = null;
 
-  if (workspaceIds.length > 0) {
-    const { data: accounts } = await supabase
+  // First check Instagram account specifically for the active workspace
+  if (activeWorkspace) {
+    const { data: activeAccounts } = await supabase
       .from("instagram_accounts")
       .select("username")
-      .in("workspace_id", workspaceIds)
+      .eq("workspace_id", activeWorkspace.id)
       .limit(1);
 
-    if (accounts && accounts.length > 0) {
-      connectedUsername = accounts[0].username;
+    if (activeAccounts && activeAccounts.length > 0) {
+      connectedUsername = activeAccounts[0].username;
+    }
+  }
+
+  // Fallback across any user workspace if not found
+  if (!connectedUsername) {
+    const allIds = workspaces.map((w) => w.id);
+    if (allIds.length > 0) {
+      const { data: accounts } = await supabase
+        .from("instagram_accounts")
+        .select("username")
+        .in("workspace_id", allIds)
+        .limit(1);
+
+      if (accounts && accounts.length > 0) {
+        connectedUsername = accounts[0].username;
+      }
     }
   }
 
@@ -75,7 +97,7 @@ async function AuthenticatedDashboardShell({
   return (
     <DashboardShell
       workspaces={workspaces}
-      activeWorkspaceId={workspaces[0]?.id}
+      activeWorkspaceId={activeWorkspace?.id}
       instagramUsername={instagramUsername}
       instagramAccountCount={instagramAccountCount}
       userEmail={user.email}

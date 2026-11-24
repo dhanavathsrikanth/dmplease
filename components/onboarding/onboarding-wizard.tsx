@@ -5,20 +5,57 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Check,
-  Search,
   Instagram,
   CheckCircle2,
   AlertCircle,
   ShieldCheck,
+  ArrowRight,
   Sparkles,
+  MessageCircle,
+  Zap,
+  Phone,
+  Layers,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { submitOnboarding, OnboardingPayload } from "@/app/onboarding/actions";
-import { ThemeSwitcher } from "@/components/theme-switcher";
 
+// ── Meta (Infinity symbol) logo SVG ───────────────────────────────────────────
+function MetaInfinityIcon({ className = "size-7" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg" className={className}>
+      <path
+        d="M26.4 11.2C24.1 11.2 22.1 12.3 20.8 14C19 11.6 16.4 10.4 13.5 10.4C8.7 10.4 4.8 14.3 4.8 19.1C4.8 23.9 8.7 27.8 13.5 27.8C16.5 27.8 19.1 26.5 20.9 24.1C22.2 25.8 24.2 26.9 26.5 26.9C31 26.9 34.6 23.3 34.6 18.8C34.5 14.4 30.9 11.2 26.4 11.2ZM13.5 24.4C10.6 24.4 8.2 22 8.2 19.1C8.2 16.2 10.6 13.8 13.5 13.8C15.8 13.8 17.8 15.3 18.5 17.4C18.6 17.8 18.6 18.2 18.6 18.6C18.4 21.8 16.2 24.4 13.5 24.4ZM26.5 23.5C23.9 23.5 21.8 21.4 21.8 18.8C21.8 18.4 21.8 18 21.9 17.6C22.6 15.5 24.4 14.1 26.5 14.1C29.1 14.1 31.2 16.2 31.2 18.8C31.2 21.4 29.1 23.5 26.5 23.5Z"
+        fill="#0866FF"
+      />
+    </svg>
+  );
+}
+
+// ── Instagram gradient logo SVG ──────────────────────────────────────────────
+function InstagramLogoIcon({ className = "size-7" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg" className={className}>
+      <defs>
+        <radialGradient id="ig-grad-onb" cx="30%" cy="107%" r="150%">
+          <stop offset="0%" stopColor="#ffd600" />
+          <stop offset="30%" stopColor="#ff7a00" />
+          <stop offset="55%" stopColor="#ff0069" />
+          <stop offset="80%" stopColor="#d300c5" />
+          <stop offset="100%" stopColor="#7638fa" />
+        </radialGradient>
+      </defs>
+      <rect width="36" height="36" rx="9" fill="url(#ig-grad-onb)" />
+      <rect x="9.5" y="9.5" width="17" height="17" rx="4.5" stroke="white" strokeWidth="2.2" fill="none"/>
+      <circle cx="18" cy="18" r="4.2" stroke="white" strokeWidth="2.2" fill="none"/>
+      <circle cx="23.6" cy="12.4" r="1.3" fill="white"/>
+    </svg>
+  );
+}
+
+// ── Types ────────────────────────────────────────────────────────────────────
 interface OnboardingWizardProps {
   initialUser: {
     id: string;
@@ -26,74 +63,44 @@ interface OnboardingWizardProps {
     fullName?: string | null;
     avatarUrl?: string | null;
   };
-  initialConnectedAccount?: {
-    id?: string;
-    username: string;
-  } | null;
+  initialConnectedAccount?: { id?: string; username: string } | null;
   connectionStatus?: string;
   connectionError?: string;
   initialAccountParam?: string;
 }
 
-const ROLES = [
-  { id: "creator", title: "Creator / Influencer", icon: "📱" },
-  { id: "founder", title: "Founder / Entrepreneur", icon: "🚀" },
-  { id: "marketer", title: "Marketer", icon: "📣" },
-  { id: "agency", title: "Agency or Freelancer", icon: "🧳" },
-  { id: "ecommerce", title: "E-Commerce / DTC", icon: "🛍️" },
-  { id: "coach", title: "Coach / Consultant", icon: "💡" },
-  { id: "developer", title: "Developer", icon: "⌨️" },
-  { id: "other", title: "Other", icon: "✨" },
-];
-
 const AUTOMATION_GOALS = [
   {
     id: "lead_magnet",
     title: "Lead Magnet / Freebie",
-    subtitle: "Guide, checklist, or template",
+    subtitle: "Guide, checklist or resource",
     icon: "📖",
     trigger: "GUIDE",
-    dm: "Hey! Here is your free training guide: https://trydmplease.com/guide. Enjoy! 🙌",
+    dm: "Hey {username}! Here is your free guide: https://trydmplease.com/guide. Enjoy! 🙌",
   },
   {
     id: "discount",
     title: "Discounts & Store Links",
-    subtitle: "Coupons, flash sales & merch",
+    subtitle: "Coupons, drops & merch",
     icon: "🏷️",
     trigger: "VIP",
-    dm: "Here's your 20% off code: VIP20. Shop here: https://trydmplease.com/shop 🛍️",
+    dm: "Here's your 20% off VIP code: VIP20. Shop here: https://trydmplease.com/shop 🛍️",
   },
   {
     id: "booking",
     title: "Bookings & Calls",
-    subtitle: "Calendly link & consultations",
+    subtitle: "Calendly link & appointments",
     icon: "📅",
     trigger: "CALL",
-    dm: "Would love to chat! Pick a time on my calendar: https://calendly.com/your-call 📅",
-  },
-  {
-    id: "custom",
-    title: "Custom Keyword Reply",
-    subtitle: "Secret keyword / power users",
-    icon: "⚡",
-    trigger: "START",
-    dm: "Thanks for commenting! Here is your exclusive link: https://trydmplease.com/access 🚀",
+    dm: "Would love to chat with you {username}! Pick a time here: https://calendly.com/your-call 📅",
   },
   {
     id: "launch",
     title: "Product Launch / Waitlist",
-    subtitle: "Beta access & drops",
+    subtitle: "Early beta access & drops",
     icon: "🚀",
     trigger: "LAUNCH",
-    dm: "You're on the early-access list! Join here: https://trydmplease.com/beta 🎉",
-  },
-  {
-    id: "support",
-    title: "FAQ & Instant Help",
-    subtitle: "Quick answers to common questions",
-    icon: "💬",
-    trigger: "HELP",
-    dm: "Hey! Here are the answers to our most common questions: https://trydmplease.com/faq 💡",
+    dm: "You're on the early-access list {username}! Join here: https://trydmplease.com/beta 🎉",
   },
 ] as const;
 
@@ -101,10 +108,10 @@ const ATTRIBUTION_OPTIONS = [
   "Google",
   "Instagram",
   "X / Twitter",
-  "LinkedIn",
   "Friend or colleague",
   "Newsletter",
   "Product Hunt",
+  "YouTube",
   "Other",
 ];
 
@@ -117,56 +124,32 @@ export function OnboardingWizard({
 }: OnboardingWizardProps) {
   const router = useRouter();
 
-  // If user just connected their account via OAuth, start on Step 2 to show success!
-  const hasConnectedAccount = Boolean(
-    initialConnectedAccount ||
-      connectionStatus === "connected" ||
-      initialAccountParam
-  );
-
   const [connectedAccount] = useState<{ username: string } | null>(
     initialConnectedAccount ||
-      (initialAccountParam
-        ? { username: initialAccountParam.replace(/^@/, "") }
-        : null)
+      (initialAccountParam ? { username: initialAccountParam.replace(/^@/, "") } : null)
   );
 
-  // Steps: 1 (Name & Role), 2 (Connect Instagram), 3 (Automation), 4 (Attribution), 5 (All Set celebration)
-  const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(
-    connectionStatus === "connected" ? 2 : 1
+  // Steps: 0=Channel Picker (Zorcha two-option UI), 1=Profile, 2=Automation Goal, 3=Attribution, 4=All Set
+  const [step, setStep] = useState<0 | 1 | 2 | 3 | 4>(
+    connectionStatus === "connected" ? 1 : 0
   );
 
-  // Profile data
   const rawNames = (initialUser.fullName || "").trim().split(" ");
   const [firstName, setFirstName] = useState(rawNames[0] || "");
   const [lastName, setLastName] = useState(rawNames.slice(1).join(" ") || "");
-  const [instagramHandle, setInstagramHandle] = useState(
-    connectedAccount?.username || ""
-  );
 
-  // Role
-  const [selectedRole, setSelectedRole] = useState("creator");
-
-  // Automation Goal
   const [selectedGoal, setSelectedGoal] = useState<
-    "lead_magnet" | "discount" | "booking" | "custom" | "launch" | "support"
+    "lead_magnet" | "discount" | "booking" | "launch"
   >("lead_magnet");
   const [triggerKeyword, setTriggerKeyword] = useState("GUIDE");
   const [dmMessage, setDmMessage] = useState(
-    "Hey! Here is your free training guide: https://trydmplease.com/guide. Enjoy! 🙌"
+    "Hey {username}! Here is your free training guide: https://trydmplease.com/guide. Enjoy! 🙌"
   );
-  const [switchingFrom] = useState("none");
-
-  // Attribution
-  const [heardFrom, setHeardFrom] = useState("Google");
-
-  // Loading & Error
+  const [heardFrom, setHeardFrom] = useState("Instagram");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const handleGoalSelect = (
-    goalId: "lead_magnet" | "discount" | "booking" | "custom" | "launch" | "support"
-  ) => {
+  const handleGoalSelect = (goalId: typeof selectedGoal) => {
     setSelectedGoal(goalId);
     const preset = AUTOMATION_GOALS.find((g) => g.id === goalId);
     if (preset) {
@@ -175,573 +158,501 @@ export function OnboardingWizard({
     }
   };
 
-  const handleFinish = async (chosenHeardFrom?: string) => {
-    const finalHeard = chosenHeardFrom || heardFrom;
+  const handleFinish = async (chosen?: string) => {
     setIsSubmitting(true);
     setErrorMsg(null);
-
-    const fullComputedName =
-      [firstName.trim(), lastName.trim()].filter(Boolean).join(" ") || "Creator";
-
-    const finalHandle =
-      connectedAccount?.username || instagramHandle.trim() || undefined;
-
+    const fullName = [firstName.trim(), lastName.trim()].filter(Boolean).join(" ") || "Creator";
     const payload: OnboardingPayload = {
-      fullName: fullComputedName,
-      instagramHandle: finalHandle,
-      niche: selectedRole,
+      fullName,
+      instagramHandle: connectedAccount?.username,
+      niche: "creator",
       primaryGoal: selectedGoal,
       triggerKeyword: triggerKeyword.trim() || "GUIDE",
       dmMessage: dmMessage.trim(),
-      switchingFrom,
-      heardFrom: finalHeard,
+      switchingFrom: "none",
+      heardFrom: chosen || heardFrom,
     };
-
     const res = await submitOnboarding(payload);
-
-    if (res.success) {
-      setIsSubmitting(false);
-      setStep(5); // Show celebration "You're all set" screen
-    } else {
-      setIsSubmitting(false);
-      setErrorMsg(res.error || "Failed to save settings. Please try again.");
-    }
+    setIsSubmitting(false);
+    if (res.success) setStep(4);
+    else setErrorMsg(res.error || "Failed to save. Please try again.");
   };
 
-  const effectiveHandle = connectedAccount?.username || instagramHandle || "yourbrand";
+  const totalSteps = 3;
+  const progressStep = step;
 
   return (
-    <div className="min-h-screen bg-background text-foreground flex flex-col justify-between bg-dot-grid relative">
-      {/* ── Top Navigation Bar ── */}
-      <nav className="w-full border-b border-neutral-200/80 dark:border-neutral-800 bg-background/90 backdrop-blur-md px-4 sm:px-8 py-3 flex items-center justify-between z-30">
-        <div className="flex items-center gap-6">
-          <Link href="/" className="flex items-center gap-2 group">
-            <div className="size-8 rounded-lg bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 flex items-center justify-center font-bold text-sm tracking-tighter shadow-sm">
-              dm
-            </div>
-            <span className="font-bold text-lg tracking-tight text-neutral-900 dark:text-white">
-              dmplease
-            </span>
-          </Link>
-
-          <div className="hidden md:flex items-center gap-4 text-xs font-medium text-neutral-600 dark:text-neutral-400">
-            <span className="cursor-pointer hover:text-neutral-900 dark:hover:text-white transition-colors">
-              Automations
-            </span>
-            <span className="cursor-pointer hover:text-neutral-900 dark:hover:text-white transition-colors">
-              Templates
-            </span>
-            <span className="cursor-pointer hover:text-neutral-900 dark:hover:text-white transition-colors">
-              Integrations
-            </span>
-            <span className="cursor-pointer hover:text-neutral-900 dark:hover:text-white transition-colors">
-              Analytics
-            </span>
+    <div className="min-h-screen flex flex-col justify-between bg-[#f4f5f9] dark:bg-[#09090b] text-[#1c1c1e] dark:text-[#f4f4f5] antialiased selection:bg-purple-100 selection:text-purple-900 font-sans">
+      
+      {/* ── Top Center Logo Header (exact Zorcha style) ── */}
+      <header className="w-full pt-8 pb-4 flex flex-col items-center justify-center">
+        <Link href="/" className="inline-flex items-center gap-2.5 group">
+          <div className="size-8 rounded-xl bg-gradient-to-tr from-[#6c47ff] to-[#4262ff] flex items-center justify-center text-white font-black text-sm shadow-md group-hover:scale-105 transition-transform">
+            dm
           </div>
-        </div>
-
-        <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50/80 dark:bg-neutral-900/60 text-xs text-neutral-500 w-64 justify-between">
-          <span className="flex items-center gap-1.5">
-            <Search className="size-3.5 text-neutral-400" />
-            Search triggers, templates...
+          <span className="font-rubik font-bold text-xl tracking-tight text-[#1a1a2e] dark:text-white">
+            dmplease
           </span>
-          <kbd className="px-1.5 py-0.5 rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-[10px] font-mono">
-            ⌘ K
-          </kbd>
-        </div>
+        </Link>
+      </header>
 
-        <div className="flex items-center gap-3">
-          <ThemeSwitcher />
-          <Button
-            asChild
-            size="sm"
-            className="rounded-xl bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 hover:bg-neutral-800 dark:hover:bg-neutral-100 font-semibold text-xs px-4"
-          >
-            <Link href="/dashboard">Dashboard</Link>
-          </Button>
-        </div>
-      </nav>
+      {/* ── Main Container (Expansive Glassmorphism Card) ── */}
+      <main className="flex-1 flex items-center justify-center px-4 py-4 sm:py-6">
+        <div
+          className="w-full max-w-4xl rounded-[32px] overflow-hidden bg-white/85 dark:bg-zinc-900/80 backdrop-blur-2xl border border-white/90 dark:border-zinc-800 shadow-[0_20px_70px_rgba(108,71,255,0.08),0_1px_3px_rgba(0,0,0,0.05)] transition-all"
+        >
+          {/* Progress bar for steps 1-3 */}
+          {step >= 1 && step <= 3 && (
+            <div className="h-1 w-full bg-zinc-100 dark:bg-zinc-800">
+              <div
+                className="h-full rounded-full transition-all duration-500 bg-gradient-to-r from-[#6c47ff] to-[#4262ff]"
+                style={{ width: `${(progressStep / totalSteps) * 100}%` }}
+              />
+            </div>
+          )}
 
-      {/* ── Main Single-Card Viewport ── */}
-      <main className="flex-1 flex items-center justify-center p-4 sm:p-6 overflow-hidden">
-        <div className="w-full max-w-[580px] min-h-[500px] bg-white dark:bg-neutral-900 rounded-[28px] border border-neutral-200/90 dark:border-neutral-800 p-7 sm:p-9 shadow-xl shadow-neutral-900/5 flex flex-col justify-between transition-all duration-300">
-          
-          {/* Top Card Bar: Pill Stepper & "Skip for now" */}
-          {step <= 4 && (
-            <div className="flex items-center justify-between mb-6">
-              <div className="flex items-center gap-1.5">
-                {[1, 2, 3, 4].map((s) => (
-                  <div
-                    key={s}
-                    className={`h-1.5 w-8 rounded-full transition-all duration-300 ${
-                      s <= step
-                        ? "bg-neutral-900 dark:bg-white"
-                        : "bg-neutral-200 dark:bg-neutral-800"
-                    }`}
+          {/* ═════════════════════════════════════════════════════════════════ */}
+          {/* STEP 0: Channel Selector (Exact Zorcha Two-Option Parity)         */}
+          {/* ═════════════════════════════════════════════════════════════════ */}
+          {step === 0 && (
+            <div className="flex flex-col md:flex-row items-stretch min-h-[500px]">
+              {/* Left Column: Form & Channels */}
+              <div className="w-full md:w-[54%] p-8 sm:p-12 flex flex-col justify-between space-y-8">
+                <div className="space-y-6">
+                  {/* Headline following Figma scale: H2 40-48px */}
+                  <div>
+                    <h1 className="font-rubik text-3xl sm:text-[2.5rem] leading-[1.12] font-extrabold tracking-tight text-[#111827] dark:text-white">
+                      Let&apos;s Kick{" "}
+                      <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#6c47ff] to-[#8b5cf6]">
+                        Things Off!
+                      </span>
+                    </h1>
+                    <p className="mt-3 text-[15px] sm:text-[16px] text-[#6b7280] dark:text-zinc-400 font-normal leading-relaxed">
+                      Start with any channel you like — <br className="hidden sm:inline" />
+                      you can connect more later.
+                    </p>
+                  </div>
+
+                  {connectionError && (
+                    <div className="p-3.5 rounded-2xl border border-red-200 bg-red-50 text-red-700 text-xs font-medium flex items-center gap-2.5">
+                      <AlertCircle className="size-4 shrink-0" />
+                      <span>{connectionError}</span>
+                    </div>
+                  )}
+
+                  {/* Connected state */}
+                  {connectedAccount ? (
+                    <div className="rounded-2xl p-5 bg-gradient-to-br from-[#6c47ff] to-[#4262ff] text-white shadow-lg space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <InstagramLogoIcon className="size-9" />
+                          <div>
+                            <p className="font-bold text-sm">@{connectedAccount.username}</p>
+                            <p className="text-violet-200 text-xs">Meta Graph API &bull; Webhooks Subscribed</p>
+                          </div>
+                        </div>
+                        <CheckCircle2 className="size-6 text-emerald-300" />
+                      </div>
+                      <Button
+                        onClick={() => setStep(1)}
+                        className="w-full h-11 rounded-xl font-semibold text-sm bg-white text-[#6c47ff] hover:bg-violet-50 shadow-sm"
+                      >
+                        Continue Workspace Setup
+                        <ArrowRight className="size-4 ml-2" />
+                      </Button>
+                    </div>
+                  ) : (
+                    /* The 2 Channel Buttons matching Zorcha layout */
+                    <div className="space-y-3 pt-1">
+                      {/* Option 1: Instagram Direct */}
+                      <a
+                        href="/api/auth/meta/connect?provider=instagram&next=/onboarding"
+                        className="group flex items-center justify-between w-full px-5 py-4 rounded-2xl border border-zinc-200/90 dark:border-zinc-800 bg-white/90 dark:bg-zinc-800/60 hover:border-[#6c47ff]/60 hover:bg-[#faf9ff] dark:hover:bg-zinc-800 transition-all shadow-xs cursor-pointer"
+                      >
+                        <div className="flex items-center gap-3.5">
+                          <InstagramLogoIcon className="size-8 shrink-0 group-hover:scale-105 transition-transform" />
+                          <div className="text-left">
+                            <p className="font-semibold text-sm text-[#111827] dark:text-zinc-100">
+                              Instagram
+                            </p>
+                            <p className="text-[11px] text-[#6b7280] dark:text-zinc-400">
+                              Comment-to-DM &amp; reel automation
+                            </p>
+                          </div>
+                        </div>
+                        <span className="text-[#6c47ff] font-bold text-base group-hover:translate-x-0.5 transition-transform">
+                          &rarr;
+                        </span>
+                      </a>
+
+                      {/* Option 2: Facebook Messenger */}
+                      <a
+                        href="/api/auth/meta/connect?next=/onboarding"
+                        className="group flex items-center justify-between w-full px-5 py-4 rounded-2xl border border-zinc-200/90 dark:border-zinc-800 bg-white/90 dark:bg-zinc-800/60 hover:border-[#0866FF]/60 hover:bg-[#f2f7ff] dark:hover:bg-zinc-800 transition-all shadow-xs cursor-pointer"
+                      >
+                        <div className="flex items-center gap-3.5">
+                          <MetaInfinityIcon className="size-8 shrink-0 group-hover:scale-105 transition-transform" />
+                          <div className="text-left">
+                            <p className="font-semibold text-sm text-[#111827] dark:text-zinc-100">
+                              Facebook Messenger
+                            </p>
+                            <p className="text-[11px] text-[#6b7280] dark:text-zinc-400">
+                              Pages, business inbox &amp; ad triggers
+                            </p>
+                          </div>
+                        </div>
+                        <span className="text-[#0866FF] font-bold text-base group-hover:translate-x-0.5 transition-transform">
+                          &rarr;
+                        </span>
+                      </a>
+                    </div>
+                  )}
+                </div>
+
+                {/* Bottom Meta Certification Badge (Exact Zorcha format) */}
+                <div className="pt-4 border-t border-zinc-100 dark:border-zinc-800/80 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 text-xs font-bold">
+                      <MetaInfinityIcon className="size-4" />
+                      <span>Meta</span>
+                    </div>
+                    <span className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">
+                      Tech Provider
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#6b7280] dark:text-zinc-400 leading-relaxed">
+                    dmplease operates on official Meta Graph API v21.0 with end-to-end OAuth token encryption.
+                  </p>
+                </div>
+              </div>
+
+              {/* Right Column: Visual Creator Portrait Panel (Zorcha visual parity) */}
+              <div className="hidden md:flex md:w-[46%] relative overflow-hidden bg-gradient-to-tr from-[#fbcfe8] via-[#fed7aa] to-[#f472b6] p-8 flex-col justify-between rounded-r-[32px]">
+                {/* Background decorative glow elements */}
+                <div className="absolute top-10 right-10 size-48 rounded-full bg-amber-400/40 blur-3xl" />
+                <div className="absolute bottom-10 left-10 size-48 rounded-full bg-violet-500/30 blur-3xl" />
+
+                <div className="relative z-10 space-y-2">
+                  <Badge className="bg-white/90 text-zinc-800 dark:bg-black/60 dark:text-white rounded-full px-3 py-1 text-xs font-semibold backdrop-blur-md shadow-xs">
+                    ⚡ Instant Engagement
+                  </Badge>
+                  <h3 className="font-rubik font-bold text-2xl text-zinc-900 leading-tight">
+                    Turn comments into customers while you sleep.
+                  </h3>
+                </div>
+
+                {/* Live simulation glass card floating in right panel */}
+                <div className="relative z-10 rounded-2xl bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl border border-white/70 p-4 shadow-xl space-y-2.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-2">
+                      <div className="size-6 rounded-full bg-gradient-to-tr from-amber-500 to-pink-500 flex items-center justify-center text-white text-[10px] font-bold">
+                        IG
+                      </div>
+                      <span className="font-semibold text-zinc-900 dark:text-white">@follower_user</span>
+                    </div>
+                    <span className="text-[10px] text-zinc-500 font-mono">Just now</span>
+                  </div>
+                  <p className="text-xs text-zinc-700 dark:text-zinc-300">
+                    commented: <span className="font-bold text-zinc-900 dark:text-white font-mono bg-amber-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded">&quot;GUIDE&quot;</span>
+                  </p>
+                  <div className="p-2.5 rounded-xl bg-violet-50 dark:bg-zinc-800/60 border border-violet-100 dark:border-zinc-700 text-[11px] text-violet-900 dark:text-violet-200 flex items-center gap-1.5">
+                    <Zap className="size-3 text-[#6c47ff] shrink-0" />
+                    <span>Auto-DM dispatched in 140ms</span>
+                  </div>
+                </div>
+
+                <div className="relative z-10 flex items-center justify-between text-[11px] text-zinc-700 font-medium pt-2">
+                  <span>10,000+ automations delivered</span>
+                  <span className="font-bold">100% Policy Safe</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ═════════════════════════════════════════════════════════════════ */}
+          {/* STEP 1: Creator Profile Details                                   */}
+          {/* ═════════════════════════════════════════════════════════════════ */}
+          {step === 1 && (
+            <div className="p-8 sm:p-12 max-w-xl mx-auto space-y-6">
+              <div>
+                <p className="text-xs font-bold text-[#6c47ff] uppercase tracking-wider mb-1.5">
+                  Step 1 of 3
+                </p>
+                <h2 className="font-rubik text-2xl sm:text-3xl font-extrabold tracking-tight text-[#111827] dark:text-white">
+                  Tell us about <span className="text-[#6c47ff]">yourself</span>
+                </h2>
+                <p className="text-xs sm:text-sm text-[#6b7280] dark:text-zinc-400 mt-1">
+                  We&apos;ll use this to set up your primary workspace.
+                </p>
+              </div>
+
+              {connectedAccount && (
+                <div className="rounded-2xl px-4 py-3 bg-[#6c47ff]/10 border border-[#6c47ff]/20 flex items-center justify-between text-xs font-medium">
+                  <div className="flex items-center gap-2 text-zinc-900 dark:text-white">
+                    <CheckCircle2 className="size-4 text-[#6c47ff]" />
+                    <span>Connected Instagram: <strong>@{connectedAccount.username}</strong></span>
+                  </div>
+                  <Badge variant="tag-teal" className="text-[10px] py-0.5">Workspace Ready</Badge>
+                </div>
+              )}
+
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold">First Name</Label>
+                    <Input
+                      placeholder="Alex"
+                      value={firstName}
+                      onChange={(e) => setFirstName(e.target.value)}
+                      className="h-10 rounded-xl text-xs bg-zinc-50 dark:bg-zinc-800 border-zinc-200"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold">
+                      Last Name <span className="text-zinc-400 font-normal">(optional)</span>
+                    </Label>
+                    <Input
+                      placeholder="Rivera"
+                      value={lastName}
+                      onChange={(e) => setLastName(e.target.value)}
+                      className="h-10 rounded-xl text-xs bg-zinc-50 dark:bg-zinc-800 border-zinc-200"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold">Account Email</Label>
+                  <Input
+                    readOnly
+                    value={initialUser.email || ""}
+                    className="h-10 rounded-xl text-xs bg-zinc-100 dark:bg-zinc-800/80 font-mono text-zinc-600 dark:text-zinc-400 border-zinc-200"
                   />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-4">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setStep(0)}
+                  className="rounded-full text-xs text-zinc-500"
+                >
+                  &larr; Back
+                </Button>
+                <Button
+                  size="sm"
+                  disabled={!firstName.trim()}
+                  onClick={() => setStep(2)}
+                  className="rounded-full px-6 font-semibold text-xs h-10 bg-[#1c1c1e] text-white hover:bg-zinc-800 dark:bg-white dark:text-black shadow-xs"
+                >
+                  Continue &rarr;
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* ═════════════════════════════════════════════════════════════════ */}
+          {/* STEP 2: Main Automation Goal & Template                          */}
+          {/* ═════════════════════════════════════════════════════════════════ */}
+          {step === 2 && (
+            <div className="p-8 sm:p-12 max-w-xl mx-auto space-y-6">
+              <div>
+                <p className="text-xs font-bold text-[#6c47ff] uppercase tracking-wider mb-1.5">
+                  Step 2 of 3
+                </p>
+                <h2 className="font-rubik text-2xl sm:text-3xl font-extrabold tracking-tight text-[#111827] dark:text-white">
+                  What is your <span className="text-[#6c47ff]">main goal?</span>
+                </h2>
+                <p className="text-xs sm:text-sm text-[#6b7280] dark:text-zinc-400 mt-1">
+                  Choose a recipe to activate your first automation right away.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5">
+                {AUTOMATION_GOALS.map((goal) => {
+                  const isSelected = selectedGoal === goal.id;
+                  return (
+                    <button
+                      key={goal.id}
+                      type="button"
+                      onClick={() => handleGoalSelect(goal.id)}
+                      className={`p-3.5 rounded-2xl text-left border transition-all ${
+                        isSelected
+                          ? "border-[#6c47ff] bg-violet-50/70 dark:bg-violet-950/30 ring-1 ring-[#6c47ff]"
+                          : "border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-800/60 hover:bg-zinc-50"
+                      }`}
+                    >
+                      <span className="text-xl">{goal.icon}</span>
+                      <p className="font-semibold text-xs text-zinc-900 dark:text-white mt-1.5 leading-tight">
+                        {goal.title}
+                      </p>
+                      <p className="text-[11px] text-zinc-500 mt-0.5 leading-tight line-clamp-1">
+                        {goal.subtitle}
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Selected message preview */}
+              <div className="p-4 rounded-2xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-800 space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-zinc-700 dark:text-zinc-300">
+                    Keyword Trigger:
+                  </span>
+                  <span className="font-mono font-bold px-2 py-0.5 rounded-md bg-[#6c47ff] text-white text-[11px]">
+                    {triggerKeyword}
+                  </span>
+                </div>
+                <p className="text-zinc-600 dark:text-zinc-400 italic">
+                  &ldquo;{dmMessage}&rdquo;
+                </p>
+              </div>
+
+              <div className="flex items-center justify-between pt-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setStep(1)}
+                  className="rounded-full text-xs text-zinc-500"
+                >
+                  &larr; Back
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => setStep(3)}
+                  className="rounded-full px-6 font-semibold text-xs h-10 bg-[#1c1c1e] text-white hover:bg-zinc-800 dark:bg-white dark:text-black shadow-xs"
+                >
+                  Continue &rarr;
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* ═════════════════════════════════════════════════════════════════ */}
+          {/* STEP 3: Attribution                                              */}
+          {/* ═════════════════════════════════════════════════════════════════ */}
+          {step === 3 && (
+            <div className="p-8 sm:p-12 max-w-xl mx-auto space-y-6">
+              <div>
+                <p className="text-xs font-bold text-[#6c47ff] uppercase tracking-wider mb-1.5">
+                  Step 3 of 3
+                </p>
+                <h2 className="font-rubik text-2xl sm:text-3xl font-extrabold tracking-tight text-[#111827] dark:text-white">
+                  How did you <span className="text-[#6c47ff]">find us?</span>
+                </h2>
+                <p className="text-xs sm:text-sm text-[#6b7280] dark:text-zinc-400 mt-1">
+                  Helps our engineering team optimize future integrations.
+                </p>
+              </div>
+
+              {errorMsg && (
+                <div className="p-3 rounded-xl border border-red-200 bg-red-50 text-red-700 text-xs">
+                  {errorMsg}
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-2">
+                {ATTRIBUTION_OPTIONS.map((opt) => (
+                  <button
+                    key={opt}
+                    type="button"
+                    onClick={() => setHeardFrom(opt)}
+                    className={`p-3 rounded-xl text-left text-xs font-semibold border transition-all ${
+                      heardFrom === opt
+                        ? "border-[#6c47ff] bg-violet-50 text-[#6c47ff] dark:bg-violet-950/40"
+                        : "border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50"
+                    }`}
+                  >
+                    {opt}
+                  </button>
                 ))}
               </div>
 
-              <button
-                type="button"
-                onClick={() => router.push("/dashboard")}
-                className="text-xs sm:text-sm font-medium text-neutral-500 hover:text-neutral-900 dark:hover:text-white underline underline-offset-4 transition-colors"
-              >
-                Skip to Dashboard
-              </button>
-            </div>
-          )}
-
-          {/* ═══════════════════════════════════════════════════════════ */}
-          {/* SCREEN 1: Welcome & Profile (Step 1 of 4)                   */}
-          {/* ═══════════════════════════════════════════════════════════ */}
-          {step === 1 && (
-            <div className="flex-1 flex flex-col justify-between animate-in fade-in duration-200">
-              <div>
-                <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-neutral-900 dark:text-neutral-100">
-                  Welcome to dmplease
-                </h1>
-                <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-1.5 leading-relaxed">
-                  Let&apos;s personalize your setup. Takes about 30 seconds.
-                </p>
-
-                <div className="mt-6 space-y-4">
-                  <div className="grid grid-cols-2 gap-3.5">
-                    <div className="space-y-1.5">
-                      <Label htmlFor="firstName" className="text-xs font-semibold text-neutral-700 dark:text-neutral-300">
-                        First name
-                      </Label>
-                      <Input
-                        id="firstName"
-                        placeholder="Alex"
-                        value={firstName}
-                        onChange={(e) => setFirstName(e.target.value)}
-                        className="rounded-xl border-neutral-200 dark:border-neutral-700 h-10 px-3.5 text-sm font-medium focus-visible:ring-neutral-900 dark:focus-visible:ring-white"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="lastName" className="text-xs font-semibold text-neutral-700 dark:text-neutral-300">
-                        Last name <span className="text-neutral-400 font-normal">optional</span>
-                      </Label>
-                      <Input
-                        id="lastName"
-                        placeholder="Rivera"
-                        value={lastName}
-                        onChange={(e) => setLastName(e.target.value)}
-                        className="rounded-xl border-neutral-200 dark:border-neutral-700 h-10 px-3.5 text-sm font-medium focus-visible:ring-neutral-900 dark:focus-visible:ring-white"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-semibold text-neutral-700 dark:text-neutral-300">
-                      What best describes you?
-                    </Label>
-                    <div className="grid grid-cols-2 gap-2">
-                      {ROLES.slice(0, 4).map((r) => {
-                        const isSelected = selectedRole === r.id;
-                        return (
-                          <button
-                            key={r.id}
-                            type="button"
-                            onClick={() => setSelectedRole(r.id)}
-                            className={`rounded-xl border p-2.5 flex items-center gap-2.5 transition-all text-left ${
-                              isSelected
-                                ? "border-neutral-900 dark:border-white ring-1 ring-neutral-900 dark:ring-white bg-neutral-50 dark:bg-neutral-800"
-                                : "border-neutral-200/90 dark:border-neutral-700/80 bg-white dark:bg-neutral-850 hover:bg-neutral-50/60"
-                            }`}
-                          >
-                            <span className="text-sm shrink-0">{r.icon}</span>
-                            <span className="font-semibold text-xs text-neutral-900 dark:text-neutral-100 truncate">
-                              {r.title}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  <p className="text-xs text-neutral-400 dark:text-neutral-500 pt-1">
-                    Signed in as {initialUser.email || "user@example.com"}
-                  </p>
-                </div>
-              </div>
-
-              {/* Bottom bar */}
-              <div className="flex justify-end pt-6 border-t border-neutral-100 dark:border-neutral-800/80 mt-6">
+              <div className="flex items-center justify-between pt-4">
                 <Button
+                  variant="ghost"
+                  size="sm"
                   onClick={() => setStep(2)}
-                  className="rounded-xl bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-950 font-semibold px-7 h-10 text-sm shadow-sm"
-                >
-                  Continue
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {/* ═══════════════════════════════════════════════════════════ */}
-          {/* SCREEN 2: Connect your Instagram Account (Step 2 of 4)      */}
-          {/* ═══════════════════════════════════════════════════════════ */}
-          {step === 2 && (
-            <div className="flex-1 flex flex-col justify-between animate-in fade-in duration-200">
-              <div>
-                <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-neutral-900 dark:text-neutral-100">
-                  Connect your Instagram
-                </h1>
-                <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-1.5 leading-relaxed">
-                  Link your Instagram Business or Creator account to activate real-time comment listening and zero-latency DMs.
-                </p>
-
-                {connectionError && (
-                  <div className="mt-4 p-3 rounded-xl border border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400 text-xs flex items-center gap-2">
-                    <AlertCircle className="size-4 shrink-0" />
-                    <span>{connectionError}</span>
-                  </div>
-                )}
-
-                {/* State A: Account Connected Successfully */}
-                {connectedAccount ? (
-                  <div className="mt-6 p-5 rounded-2xl border border-emerald-500/30 bg-emerald-500/5 dark:bg-emerald-950/20 space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="size-11 rounded-xl bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-600 flex items-center justify-center text-white shadow-sm shrink-0">
-                          <Instagram className="size-6" />
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-sm sm:text-base text-foreground">
-                              @{connectedAccount.username}
-                            </span>
-                            <Badge
-                              variant="outline"
-                              className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 text-[10px] font-semibold gap-1"
-                            >
-                              <CheckCircle2 className="size-3" /> Connected
-                            </Badge>
-                          </div>
-                          <p className="text-xs text-muted-foreground mt-0.5">
-                            Meta Graph API v21.0 &bull; Webhooks Active
-                          </p>
-                        </div>
-                      </div>
-
-                      <a
-                        href="/api/auth/meta/connect?next=/onboarding"
-                        className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-4 shrink-0"
-                      >
-                        Switch
-                      </a>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2 pt-3 border-t border-emerald-500/20 text-xs text-neutral-600 dark:text-neutral-400">
-                      <div className="flex items-center gap-1.5">
-                        <Check className="size-3.5 text-emerald-600 shrink-0" />
-                        <span>Comment Webhooks Ready</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <Check className="size-3.5 text-emerald-600 shrink-0" />
-                        <span>60-Day Vault Encryption</span>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  /* State B: Not Connected Yet */
-                  <div className="mt-6 space-y-4">
-                    <div className="p-5 rounded-2xl border border-neutral-200/90 dark:border-neutral-800 bg-neutral-50/70 dark:bg-neutral-850 space-y-4">
-                      <div className="flex items-start gap-3.5">
-                        <div className="size-10 rounded-xl bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-600 flex items-center justify-center text-white shrink-0 shadow-xs mt-0.5">
-                          <Instagram className="size-5" />
-                        </div>
-                        <div className="space-y-1">
-                          <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
-                            Meta Graph API Unified OAuth
-                          </p>
-                          <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed">
-                            One-click authorization linking your Instagram Business or Creator account. Enables real-time webhook ingestion.
-                          </p>
-                        </div>
-                      </div>
-
-                      <Button
-                        asChild
-                        className="w-full h-11 rounded-xl bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-950 font-semibold text-sm shadow-sm gap-2"
-                      >
-                        <a href="/api/auth/meta/connect?next=/onboarding">
-                          <Instagram className="size-4" />
-                          Connect with Facebook / Meta
-                        </a>
-                      </Button>
-                    </div>
-
-                    <div className="flex items-center gap-2 px-1 text-[11px] text-neutral-400 dark:text-neutral-500">
-                      <ShieldCheck className="size-3.5 text-emerald-600 shrink-0" />
-                      <span>Official Meta Graph API v21.0 &bull; AES-256 Vault &bull; Instant disconnect anytime</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Bottom bar */}
-              <div className="flex items-center justify-between pt-6 border-t border-neutral-100 dark:border-neutral-800/80 mt-6">
-                <Button
-                  variant="outline"
-                  onClick={() => setStep(1)}
-                  className="rounded-xl border-neutral-200 dark:border-neutral-700 px-6 h-10 text-sm font-semibold text-neutral-800 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-800"
-                >
-                  Back
-                </Button>
-
-                <div className="flex items-center gap-3">
-                  {!connectedAccount && (
-                    <button
-                      type="button"
-                      onClick={() => setStep(3)}
-                      className="text-xs font-medium text-neutral-500 hover:text-neutral-900 dark:hover:text-white underline underline-offset-4 transition-colors"
-                    >
-                      I&apos;ll connect later
-                    </button>
-                  )}
-                  <Button
-                    onClick={() => setStep(3)}
-                    className="rounded-xl bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-950 font-semibold px-7 h-10 text-sm shadow-sm"
-                  >
-                    {connectedAccount ? "Continue" : "Skip & Continue"}
-                  </Button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ═══════════════════════════════════════════════════════════ */}
-          {/* SCREEN 3: Automation Goals & Trigger (Step 3 of 4)          */}
-          {/* ═══════════════════════════════════════════════════════════ */}
-          {step === 3 && (
-            <div className="flex-1 flex flex-col justify-between animate-in fade-in duration-200">
-              <div>
-                <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-neutral-900 dark:text-neutral-100">
-                  Configure your first trigger
-                </h1>
-                <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-1.5 leading-relaxed">
-                  Choose what followers comment on your posts, and what automated DM they receive.
-                </p>
-
-                <div className="grid grid-cols-2 gap-2 mt-4">
-                  {AUTOMATION_GOALS.map((g) => {
-                    const isSelected = selectedGoal === g.id;
-                    return (
-                      <button
-                        key={g.id}
-                        type="button"
-                        onClick={() => handleGoalSelect(g.id)}
-                        className={`rounded-2xl border p-2.5 sm:p-3 flex items-center justify-between transition-all text-left ${
-                          isSelected
-                            ? "border-neutral-900 dark:border-white ring-1 ring-neutral-900 dark:ring-white bg-neutral-50 dark:bg-neutral-800 shadow-xs"
-                            : "border-neutral-200/90 dark:border-neutral-700/80 bg-white dark:bg-neutral-850 hover:border-neutral-400 hover:bg-neutral-50/60"
-                        }`}
-                      >
-                        <div className="flex items-center gap-2 truncate">
-                          <div className="size-7 sm:size-8 rounded-xl bg-neutral-100 dark:bg-neutral-800 flex items-center justify-center shrink-0 text-sm sm:text-base">
-                            {g.icon}
-                          </div>
-                          <span className="font-semibold text-xs sm:text-sm text-neutral-900 dark:text-neutral-100 truncate">
-                            {g.title}
-                          </span>
-                        </div>
-                        <div
-                          className={`size-4 rounded-md border flex items-center justify-center shrink-0 transition-colors ml-1.5 ${
-                            isSelected
-                              ? "bg-neutral-900 dark:bg-white border-neutral-900 dark:border-white text-white dark:text-neutral-900"
-                              : "border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800"
-                          }`}
-                        >
-                          {isSelected && <Check className="size-3 stroke-[3]" />}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                <div className="mt-4 p-3.5 rounded-xl border border-neutral-200 dark:border-neutral-700 bg-neutral-50/60 dark:bg-neutral-850 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-neutral-700 dark:text-neutral-300">
-                      Trigger Keyword
-                    </span>
-                    <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-primary/10 text-primary font-bold">
-                      {triggerKeyword}
-                    </span>
-                  </div>
-                  <p className="text-xs text-neutral-500 dark:text-neutral-400 line-clamp-2">
-                    &ldquo;{dmMessage}&rdquo;
-                  </p>
-                </div>
-              </div>
-
-              {/* Bottom bar */}
-              <div className="flex items-center justify-between pt-6 border-t border-neutral-100 dark:border-neutral-800/80 mt-6">
-                <Button
-                  variant="outline"
-                  onClick={() => setStep(2)}
-                  className="rounded-xl border-neutral-200 dark:border-neutral-700 px-6 h-10 text-sm font-semibold text-neutral-800 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-800"
-                >
-                  Back
-                </Button>
-                <Button
-                  onClick={() => setStep(4)}
-                  className="rounded-xl bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-950 font-semibold px-7 h-10 text-sm shadow-sm"
-                >
-                  Continue
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {/* ═══════════════════════════════════════════════════════════ */}
-          {/* SCREEN 4: Attribution (Step 4 of 4)                         */}
-          {/* ═══════════════════════════════════════════════════════════ */}
-          {step === 4 && (
-            <div className="flex-1 flex flex-col justify-between animate-in fade-in duration-200">
-              <div>
-                <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-neutral-900 dark:text-neutral-100">
-                  How did you hear about us?
-                </h1>
-                <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-1.5 leading-relaxed">
-                  Helps our team know what works.
-                </p>
-
-                {errorMsg && (
-                  <div className="mt-3 p-2.5 rounded-xl border border-red-200 dark:border-red-900/40 bg-red-50 dark:bg-red-950/20 text-xs text-red-600 dark:text-red-400">
-                    {errorMsg}
-                  </div>
-                )}
-
-                <div className="grid grid-cols-2 gap-2.5 mt-6">
-                  {ATTRIBUTION_OPTIONS.map((opt) => {
-                    const isSelected = heardFrom === opt;
-                    return (
-                      <button
-                        key={opt}
-                        type="button"
-                        disabled={isSubmitting}
-                        onClick={() => setHeardFrom(opt)}
-                        className={`rounded-2xl border p-3.5 text-xs sm:text-sm font-semibold transition-all text-left flex items-center justify-between ${
-                          isSelected
-                            ? "border-neutral-900 dark:border-white ring-1 ring-neutral-900 dark:ring-white bg-neutral-50 dark:bg-neutral-800 text-neutral-900 dark:text-white shadow-xs"
-                            : "border-neutral-200/90 dark:border-neutral-700/80 bg-white dark:bg-neutral-850 text-neutral-800 dark:text-neutral-200 hover:border-neutral-400 hover:bg-neutral-50/60"
-                        }`}
-                      >
-                        <span>{opt}</span>
-                        {isSelected && <Check className="size-3.5 stroke-[2.5]" />}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Bottom bar */}
-              <div className="flex items-center justify-between pt-6 border-t border-neutral-100 dark:border-neutral-800/80 mt-6">
-                <Button
-                  variant="outline"
                   disabled={isSubmitting}
-                  onClick={() => setStep(3)}
-                  className="rounded-xl border-neutral-200 dark:border-neutral-700 px-6 h-10 text-sm font-semibold text-neutral-800 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+                  className="rounded-full text-xs text-zinc-500"
                 >
-                  Back
+                  &larr; Back
                 </Button>
                 <Button
+                  size="sm"
                   disabled={isSubmitting}
                   onClick={() => handleFinish()}
-                  className="rounded-xl bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-950 font-semibold px-7 h-10 text-sm shadow-sm"
+                  className="rounded-full px-6 font-semibold text-xs h-10 bg-gradient-to-r from-[#6c47ff] to-[#4262ff] text-white shadow-md hover:opacity-95"
                 >
-                  {isSubmitting ? "Launching..." : "Finish Setup"}
+                  {isSubmitting ? "Launching..." : "Launch Automation 🚀"}
                 </Button>
               </div>
             </div>
           )}
 
-          {/* ═══════════════════════════════════════════════════════════ */}
-          {/* SCREEN 5: Celebration / All Set                             */}
-          {/* ═══════════════════════════════════════════════════════════ */}
-          {step === 5 && (
-            <div className="flex-1 flex flex-col justify-between text-center animate-in fade-in duration-300">
-              <div>
-                <div className="size-14 rounded-2xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mx-auto mb-4 shadow-sm">
-                  <Check className="size-7 stroke-[2.5]" />
-                </div>
-
-                <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-neutral-900 dark:text-neutral-100">
-                  You&apos;re all set, {firstName || "Creator"}.
-                </h1>
-                <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-2 max-w-md mx-auto leading-relaxed">
-                  Your automation is armed! When followers comment on your posts, they will instantly receive your DM.
-                </p>
-
-                <div className="flex items-center justify-center gap-3 mt-6">
-                  <Button
-                    onClick={() => {
-                      router.push("/dashboard");
-                      router.refresh();
-                    }}
-                    className="rounded-xl bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-950 font-semibold px-6 h-11 text-sm shadow-sm"
-                  >
-                    Go to Dashboard
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      router.push("/dashboard/campaigns");
-                      router.refresh();
-                    }}
-                    className="rounded-xl border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-700 font-semibold px-6 h-11 text-sm"
-                  >
-                    View Campaigns
-                  </Button>
-                </div>
-
-                {/* Status Card */}
-                <div className="mt-8 rounded-2xl bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200/80 dark:border-neutral-700/80 p-4 text-left space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-xs font-semibold text-purple-600 dark:text-purple-400">
-                      <Sparkles className="size-3.5" />
-                      <span>Live Trigger Active</span>
-                    </div>
-                    {connectedAccount && (
-                      <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
-                        @{connectedAccount.username}
-                      </span>
-                    )}
-                  </div>
-
-                  <p className="text-xs sm:text-sm font-semibold text-neutral-900 dark:text-neutral-100">
-                    Comment &ldquo;{triggerKeyword}&rdquo; on your Instagram posts &rarr; Instant DM.
-                  </p>
-
-                  <div className="flex items-center gap-2">
-                    <Input
-                      readOnly
-                      value={dmMessage}
-                      className="rounded-xl bg-white dark:bg-neutral-900 border-neutral-200 dark:border-neutral-700 text-xs h-9 text-neutral-600 dark:text-neutral-400"
-                    />
-                    <Button
-                      size="sm"
-                      onClick={() => router.push("/dashboard")}
-                      className="rounded-xl bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-950 font-semibold text-xs px-4 h-9 shrink-0"
-                    >
-                      Check status
-                    </Button>
-                  </div>
-                </div>
+          {/* ═════════════════════════════════════════════════════════════════ */}
+          {/* STEP 4: All Set Celebration Screen                               */}
+          {/* ═════════════════════════════════════════════════════════════════ */}
+          {step === 4 && (
+            <div className="p-8 sm:p-14 max-w-lg mx-auto text-center space-y-6">
+              <div className="size-16 rounded-2xl bg-gradient-to-tr from-[#6c47ff] to-[#4262ff] flex items-center justify-center mx-auto text-white shadow-lg">
+                <Check className="size-8 stroke-[3]" />
               </div>
 
-              <div className="pt-2" />
+              <div>
+                <h2 className="font-rubik text-3xl font-extrabold text-[#111827] dark:text-white">
+                  You&apos;re All Set!
+                </h2>
+                <p className="text-xs sm:text-sm text-zinc-500 dark:text-zinc-400 mt-2 max-w-sm mx-auto">
+                  Your automation is listening for &ldquo;{triggerKeyword}&rdquo; comments and will reply instantly with direct messages.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-center gap-3 pt-2">
+                <Button
+                  onClick={() => {
+                    router.push("/dashboard");
+                    router.refresh();
+                  }}
+                  className="rounded-full px-7 h-11 text-xs font-semibold bg-[#1c1c1e] text-white hover:bg-zinc-800 dark:bg-white dark:text-black shadow-xs"
+                >
+                  Go to Dashboard &rarr;
+                </Button>
+                <Button
+                  asChild
+                  variant="outline"
+                  className="rounded-full px-5 h-11 text-xs font-semibold border-zinc-200"
+                >
+                  <Link href="/dashboard/campaigns">View Campaigns</Link>
+                </Button>
+              </div>
             </div>
           )}
-
         </div>
       </main>
 
-      {/* ── Minimal Fixed Footer ── */}
-      <footer className="py-4 text-center text-xs text-neutral-400 dark:text-neutral-500">
-        dmplease &bull; Turn Instagram comments into automated DM conversations
+      {/* ── Zorcha Footer Parity (exact row of links below container) ── */}
+      <footer className="w-full pb-8 pt-4 flex flex-col items-center justify-center text-[12px] text-zinc-500 space-y-2">
+        <div className="flex items-center gap-4 flex-wrap justify-center font-medium">
+          <span>&copy;2026 dmplease Inc.</span>
+          <span>&bull;</span>
+          <Link href="/terms" className="hover:text-zinc-800 dark:hover:text-zinc-300">
+            Terms &amp; Conditions
+          </Link>
+          <span>&bull;</span>
+          <Link href="/privacy" className="hover:text-zinc-800 dark:hover:text-zinc-300">
+            Privacy Policy
+          </Link>
+          <span>&bull;</span>
+          <Link href="/support" className="hover:text-zinc-800 dark:hover:text-zinc-300">
+            Support
+          </Link>
+          <span>&bull;</span>
+          <Link href="/auth/login" className="hover:text-zinc-800 dark:hover:text-zinc-300">
+            Sign Out
+          </Link>
+        </div>
       </footer>
     </div>
   );

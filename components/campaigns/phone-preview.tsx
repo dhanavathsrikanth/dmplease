@@ -45,16 +45,16 @@ export function PhonePreview({
 
   return (
     <div className="flex flex-col items-center">
-      {/* ── Preview Switcher Pill ── */}
-      <div className="flex items-center gap-1 p-1 bg-muted rounded-xl text-xs font-semibold mb-4 border border-border/60">
+      {/* ── Miro-Style Preview Switcher Pill (Liquid Glass) ── */}
+      <div className="flex items-center gap-1 p-1 glass-pill rounded-full text-xs font-semibold mb-5 shadow-xs">
         <button
           type="button"
           onClick={() => setActiveTab("dm")}
           className={cn(
-            "px-3 py-1 rounded-lg transition-all",
+            "px-4 py-1.5 rounded-full transition-all text-xs font-semibold",
             activeTab === "dm"
-              ? "bg-background text-foreground shadow-xs"
-              : "text-muted-foreground hover:text-foreground"
+              ? "bg-[#1c1c1e] text-white shadow-xs dark:bg-white dark:text-[#1c1c1e]"
+              : "text-[#6b6f7e] hover:text-foreground"
           )}
         >
           Direct Message View
@@ -63,10 +63,10 @@ export function PhonePreview({
           type="button"
           onClick={() => setActiveTab("post")}
           className={cn(
-            "px-3 py-1 rounded-lg transition-all",
+            "px-4 py-1.5 rounded-full transition-all text-xs font-semibold",
             activeTab === "post"
-              ? "bg-background text-foreground shadow-xs"
-              : "text-muted-foreground hover:text-foreground"
+              ? "bg-[#1c1c1e] text-white shadow-xs dark:bg-white dark:text-[#1c1c1e]"
+              : "text-[#6b6f7e] hover:text-foreground"
           )}
         >
           Post & Comment View

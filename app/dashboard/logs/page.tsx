@@ -6,10 +6,19 @@ import {
   Clock,
   Inbox,
   AlertCircle,
+  Terminal,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { getCurrentProfile } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
 
@@ -20,11 +29,11 @@ export const metadata = {
 function LogsSkeleton() {
   return (
     <div className="space-y-6 animate-pulse">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between pb-2 border-b">
         <Skeleton className="h-8 w-56 rounded-xl" />
-        <Skeleton className="h-8 w-48 rounded-xl" />
+        <Skeleton className="h-8 w-48 rounded-lg" />
       </div>
-      <Skeleton className="h-96 rounded-2xl" />
+      <Skeleton className="h-96 rounded-xl" />
     </div>
   );
 }
@@ -100,95 +109,91 @@ async function DmLogsContent() {
   }
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-300">
+    <div className="space-y-6 animate-in fade-in duration-300 antialiased selection:bg-[#ffd02f] selection:text-[#1c1c1e]">
       {/* ── Header ── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-[#e0e2e8] dark:border-border/80">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">
-            <History className="size-6 text-primary" />
-            DM Delivery Audit Logs
+          <h1 className="text-2xl sm:text-3xl font-medium tracking-tight text-foreground flex items-center gap-2">
+            DM Execution Logs
           </h1>
-          <p className="text-muted-foreground text-sm mt-0.5">
-            Real-time delivery verification for all Instagram comment-triggered direct messages.
+          <p className="text-[#555a6a] dark:text-muted-foreground text-xs sm:text-sm mt-0.5">
+            Real-time delivery verification and payload audit log for all Instagram comment triggers.
           </p>
         </div>
 
-        {/* Filter Pills */}
-        <div className="flex items-center gap-1.5 p-1 rounded-xl border border-border/80 bg-muted/40 text-xs font-semibold self-start sm:self-auto">
-          <span className="px-2.5 py-1 rounded-lg bg-background text-foreground shadow-xs">
+        {/* Filter Pills in Liquid Glass pill style */}
+        <div className="flex items-center gap-1.5 p-1 rounded-full glass-pill text-xs font-semibold self-start sm:self-auto">
+          <span className="px-3.5 py-1 rounded-full bg-[#1c1c1e] text-white shadow-xs font-semibold dark:bg-white dark:text-[#1c1c1e]">
             All ({totalCount})
           </span>
-          <span className="px-2.5 py-1 rounded-lg text-muted-foreground">
+          <span className="px-3.5 py-1 rounded-full text-[#6b6f7e]">
             Delivered ({deliveredCount})
           </span>
-          <span className="px-2.5 py-1 rounded-lg text-muted-foreground">
+          <span className="px-3.5 py-1 rounded-full text-[#6b6f7e]">
             Failed ({failedCount})
           </span>
         </div>
       </div>
 
-      {/* ── Logs Table / Cards ── */}
-      <Card className="rounded-2xl border-border/80 shadow-xs overflow-hidden">
+      {/* ── Logs Explorer (Miro Liquid Glass Table) ── */}
+      <Card className="rounded-2xl glass-card overflow-hidden">
         {logs.length > 0 ? (
-          <div className="divide-y divide-border/60">
-            {logs.map((log) => (
-              <div
-                key={log.id}
-                className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-muted/30 transition-colors"
-              >
-                <div className="space-y-1.5 flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-semibold text-sm text-foreground">
-                      {log.user}
+          <Table>
+            <TableHeader className="bg-muted/40">
+              <TableRow>
+                <TableHead className="w-[180px]">Recipient</TableHead>
+                <TableHead className="w-[120px]">Trigger</TableHead>
+                <TableHead>Automated DM Payload</TableHead>
+                <TableHead className="w-[160px]">Timestamp</TableHead>
+                <TableHead className="text-right w-[110px]">Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {logs.map((log) => (
+                <TableRow key={log.id} className="hover:bg-muted/30">
+                  <TableCell className="font-semibold text-xs sm:text-sm text-foreground">
+                    {log.user}
+                  </TableCell>
+                  <TableCell>
+                    <span className="px-2 py-0.5 rounded-full bg-[#fff8e0] text-[#746019] border border-[#ffd02f]/30 font-semibold text-[10px] font-mono">
+                      {log.keyword}
                     </span>
-                    <span className="text-xs text-muted-foreground">&bull;</span>
-                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                      <span>Trigger:</span>
-                      <code className="px-1.5 py-0.2 rounded bg-muted font-mono font-bold text-foreground text-[11px]">
-                        {log.keyword}
-                      </code>
-                    </div>
-                    <span className="text-xs text-muted-foreground">&bull;</span>
-                    <span className="text-[11px] text-muted-foreground flex items-center gap-1">
+                  </TableCell>
+                  <TableCell className="text-xs text-[#555a6a] dark:text-muted-foreground font-sans max-w-md truncate">
+                    &ldquo;{log.message}&rdquo;
+                  </TableCell>
+                  <TableCell className="text-[11px] font-mono text-[#6b6f7e]">
+                    <span className="flex items-center gap-1">
                       <Clock className="size-3" /> {log.time}
                     </span>
-                  </div>
-
-                  <p className="text-xs text-muted-foreground truncate italic">
-                    &ldquo;{log.message}&rdquo;
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-3 shrink-0 self-end sm:self-center">
-                  <Badge
-                    variant="outline"
-                    className={
-                      log.status === "Delivered"
-                        ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 text-xs font-semibold gap-1"
-                        : "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/30 text-xs font-semibold gap-1"
-                    }
-                  >
-                    {log.status === "Delivered" ? (
-                      <CheckCircle2 className="size-3" />
-                    ) : (
-                      <AlertCircle className="size-3" />
-                    )}
-                    {log.status}
-                  </Badge>
-                </div>
-              </div>
-            ))}
-          </div>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Badge
+                      variant={log.status === "Delivered" ? "tag-teal" : "destructive"}
+                      className="text-[10px] font-semibold py-0.5 px-2.5 rounded-full gap-1"
+                    >
+                      {log.status === "Delivered" ? (
+                        <CheckCircle2 className="size-3 text-[#00b473]" />
+                      ) : (
+                        <AlertCircle className="size-3" />
+                      )}
+                      {log.status}
+                    </Badge>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         ) : (
           <div className="p-12 text-center space-y-3">
-            <div className="size-12 rounded-2xl bg-muted flex items-center justify-center mx-auto text-muted-foreground">
-              <Inbox className="size-6" />
+            <div className="size-11 rounded-2xl bg-[#fff8e0] text-[#746019] flex items-center justify-center mx-auto shadow-xs">
+              <Inbox className="size-5" />
             </div>
             <div>
-              <p className="font-semibold text-sm text-foreground">
+              <p className="font-semibold text-base text-foreground">
                 No DM delivery logs yet
               </p>
-              <p className="text-xs text-muted-foreground max-w-sm mx-auto mt-1">
+              <p className="text-xs text-[#555a6a] dark:text-muted-foreground max-w-sm mx-auto mt-1">
                 When followers comment trigger keywords on your Instagram posts or reels, automated direct messages and delivery status will appear here.
               </p>
             </div>

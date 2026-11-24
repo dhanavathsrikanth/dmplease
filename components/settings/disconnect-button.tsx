@@ -45,7 +45,7 @@ export function DisconnectButton() {
       variant="outline"
       onClick={handleDisconnect}
       disabled={isPending}
-      className="rounded-xl text-xs h-8 text-destructive border-destructive/30 hover:bg-destructive/10 hover:text-destructive"
+      className="rounded-full text-xs h-9 px-4 text-destructive border-destructive/30 hover:bg-destructive/10 hover:text-destructive"
     >
       {isPending ? (
         <Loader2 className="size-3 animate-spin mr-1" />

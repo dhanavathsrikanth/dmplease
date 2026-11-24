@@ -28,11 +28,6 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  // 2. Fallback to env token if testing
-  if (!accessToken) {
-    accessToken = process.env.INSTAGRAM_ACCESS_TOKEN || null;
-  }
-
   if (!accessToken) {
     return NextResponse.json({
       success: true,

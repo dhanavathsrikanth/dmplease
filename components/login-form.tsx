@@ -15,7 +15,11 @@ import { OAuthButtons } from "@/components/auth/oauth-buttons";
 export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get("callbackUrl") || searchParams.get("next") || "/onboarding";
+  const nextTarget = searchParams.get("next") || searchParams.get("callbackUrl");
+  const callbackUrl = nextTarget || "/onboarding";
+  const signUpUrl = nextTarget
+    ? `/auth/sign-up?next=${encodeURIComponent(nextTarget)}`
+    : "/auth/sign-up";
   const urlError = searchParams.get("error");
 
   const [authMode, setAuthMode] = useState<"password" | "magic-link">("password");
@@ -283,7 +287,8 @@ export function LoginForm() {
           <div className="pt-2 text-center text-sm text-muted-foreground">
             Don&apos;t have an account?{" "}
             <Link
-              href="/auth/sign-up"
+              href={signUpUrl}
+              suppressHydrationWarning
               className="font-medium text-foreground underline underline-offset-4 hover:text-primary transition-colors"
             >
               Sign up

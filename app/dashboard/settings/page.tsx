@@ -7,6 +7,8 @@ import {
   User,
   CheckCircle2,
   AlertCircle,
+  Key,
+  ShieldCheck,
 } from "lucide-react";
 import { getCurrentProfile, getCurrentUser } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
@@ -26,8 +28,8 @@ function SettingsSkeleton() {
   return (
     <div className="space-y-6 max-w-4xl animate-pulse">
       <Skeleton className="h-8 w-64 rounded-xl" />
-      <Skeleton className="h-44 rounded-2xl" />
-      <Skeleton className="h-44 rounded-2xl" />
+      <Skeleton className="h-44 rounded-xl" />
+      <Skeleton className="h-44 rounded-xl" />
     </div>
   );
 }
@@ -86,77 +88,75 @@ async function SettingsContent({
     }
   }
 
-  // Account is only connected if an active row exists in instagram_accounts
   const instagramHandle = connectedAccount?.username || null;
   const isConnected = !!instagramHandle;
 
   return (
-    <div className="space-y-6 max-w-4xl animate-in fade-in duration-300">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">
-          <SettingsIcon className="size-6 text-primary" />
-          Workspace & Instagram Settings
+    <div className="space-y-6 max-w-4xl animate-in fade-in duration-300 antialiased selection:bg-[#ffd02f] selection:text-[#1c1c1e]">
+      <div className="pb-3 border-b border-[#e0e2e8] dark:border-border/80">
+        <h1 className="text-2xl sm:text-3xl font-medium tracking-tight text-foreground flex items-center gap-2">
+          Workspace Settings
         </h1>
-        <p className="text-muted-foreground text-sm mt-0.5">
-          Manage your connected Instagram creator account, team members, and webhook automations.
+        <p className="text-[#555a6a] dark:text-muted-foreground text-xs sm:text-sm mt-0.5">
+          Manage your connected Instagram creator account, team members, and webhook permissions.
         </p>
       </div>
 
       {status === "connected" && (
-        <div className="p-3.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 text-xs flex items-center gap-2">
-          <CheckCircle2 className="size-4 shrink-0" />
+        <div className="p-4 rounded-2xl border border-[#0fbcb0]/30 bg-[#c3faf5]/40 text-foreground text-xs font-medium flex items-center gap-2">
+          <CheckCircle2 className="size-4 text-[#00b473] shrink-0" />
           <span>Instagram account successfully connected via Meta Graph API!</span>
         </div>
       )}
 
       {error && (
-        <div className="p-3.5 rounded-xl border border-destructive/30 bg-destructive/10 text-destructive text-xs flex items-center gap-2">
+        <div className="p-4 rounded-2xl border border-destructive/30 bg-destructive/10 text-destructive text-xs font-medium flex items-center gap-2">
           <AlertCircle className="size-4 shrink-0" />
           <span>{error}</span>
         </div>
       )}
 
-      <div className="space-y-6">
+      <div className="space-y-5">
         {/* ── Instagram Connection Card ── */}
-        <Card className="rounded-2xl border-border/80 shadow-xs">
-          <CardHeader>
+        <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 shadow-subtle bg-card">
+          <CardHeader className="pb-3 border-b border-[#e0e2e8] dark:border-border/60">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2.5">
-                <div className="size-8 rounded-lg bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-600 flex items-center justify-center text-white">
+                <div className="size-8 rounded-xl bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-600 flex items-center justify-center text-white shadow-xs">
                   <Instagram className="size-4" />
                 </div>
                 <div>
-                  <CardTitle className="text-base">Instagram Professional Account</CardTitle>
-                  <CardDescription className="text-xs">
+                  <CardTitle className="text-sm font-semibold">Instagram Professional Account</CardTitle>
+                  <CardDescription className="text-xs text-[#555a6a] dark:text-muted-foreground">
                     Connected via Meta Graph API & Webhooks
                   </CardDescription>
                 </div>
               </div>
               {isConnected ? (
                 <Badge
-                  variant="outline"
-                  className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 font-semibold gap-1"
+                  variant="tag-teal"
+                  className="text-[10px] font-semibold py-0.5 px-3 rounded-full gap-1"
                 >
-                  <CheckCircle2 className="size-3" /> Connected
+                  <span className="size-1.5 rounded-full bg-[#00b473]" /> Connected
                 </Badge>
               ) : (
-                <Badge variant="outline" className="text-xs text-muted-foreground">
+                <Badge variant="outline" className="text-[10px] font-medium rounded-full">
                   Not Linked
                 </Badge>
               )}
             </div>
           </CardHeader>
-          <CardContent className="space-y-4 text-sm">
+          <CardContent className="pt-5 space-y-4 text-sm">
             {isConnected ? (
-              <div className="p-4 rounded-xl border border-border/70 bg-muted/30 flex items-center justify-between">
+              <div className="p-4 rounded-xl border border-[#e0e2e8] dark:border-border bg-[#f7f8fa] dark:bg-muted/30 flex items-center justify-between">
                 <div>
-                  <p className="font-semibold text-foreground">@{instagramHandle}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
+                  <p className="font-semibold text-foreground text-xs sm:text-sm">@{instagramHandle}</p>
+                  <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground mt-0.5">
                     Webhook subscribed: Comments & Direct Messages
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button asChild size="sm" variant="outline" className="rounded-xl text-xs h-8">
+                  <Button asChild size="sm" variant="outline" className="rounded-full text-xs h-9 px-4 border-[#c7cad5]">
                     <a href="/api/auth/meta/connect">Reconnect</a>
                   </Button>
                   <DisconnectButton />
@@ -164,12 +164,12 @@ async function SettingsContent({
               </div>
             ) : (
               <div className="space-y-3">
-                <p className="text-xs text-muted-foreground">
+                <p className="text-xs text-[#555a6a] dark:text-muted-foreground leading-relaxed">
                   Connect your Instagram business or creator account to allow dmplease to automatically respond to follower comments with direct messages.
                 </p>
-                <Button asChild size="sm" className="rounded-xl text-xs h-9 font-semibold bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 gap-2">
+                <Button asChild size="sm" className="rounded-full text-xs h-9 font-semibold bg-[#1c1c1e] hover:bg-[#2c2c34] text-white px-5 gap-2 shadow-xs dark:bg-white dark:text-[#1c1c1e]">
                   <a href="/api/auth/meta/connect">
-                    <Instagram className="size-4" /> Connect with Facebook / Meta
+                    <Instagram className="size-3.5 text-rose-500" /> Connect via Facebook / Meta
                   </a>
                 </Button>
               </div>
@@ -178,67 +178,67 @@ async function SettingsContent({
         </Card>
 
         {/* ── Workspace Settings Card ── */}
-        <Card className="rounded-2xl border-border/80 shadow-xs">
-          <CardHeader>
+        <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 shadow-subtle bg-card">
+          <CardHeader className="pb-3 border-b border-[#e0e2e8] dark:border-border/60">
             <div className="flex items-center gap-2.5">
-              <Building2 className="size-5 text-primary" />
+              <Building2 className="size-4 text-foreground" />
               <div>
-                <CardTitle className="text-base">Workspace Information</CardTitle>
-                <CardDescription className="text-xs">
+                <CardTitle className="text-sm font-semibold">Workspace Information</CardTitle>
+                <CardDescription className="text-xs text-[#555a6a] dark:text-muted-foreground">
                   Your team and campaign configuration container
                 </CardDescription>
               </div>
             </div>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="pt-5 space-y-4">
             <div className="space-y-1.5">
-              <Label className="text-xs font-semibold">Workspace Name</Label>
+              <Label className="text-xs font-semibold text-foreground">Workspace Name</Label>
               <Input
                 readOnly
                 value={workspace.name}
-                className="rounded-xl max-w-md text-xs h-9 bg-muted/40 font-medium"
+                className="rounded-lg max-w-md text-xs h-9 bg-[#f7f8fa] dark:bg-muted/40 font-medium border-[#c7cad5]"
               />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs font-semibold">Workspace ID</Label>
+              <Label className="text-xs font-semibold text-foreground">Workspace ID</Label>
               <Input
                 readOnly
                 value={workspace.id}
-                className="rounded-xl max-w-md text-xs h-9 bg-muted/40 font-mono text-muted-foreground"
+                className="rounded-lg max-w-md text-xs h-9 bg-[#f7f8fa] dark:bg-muted/40 font-mono text-[#6b6f7e] border-[#c7cad5]"
               />
             </div>
           </CardContent>
         </Card>
 
         {/* ── User Profile Card ── */}
-        <Card className="rounded-2xl border-border/80 shadow-xs">
-          <CardHeader>
+        <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 shadow-subtle bg-card">
+          <CardHeader className="pb-3 border-b border-[#e0e2e8] dark:border-border/60">
             <div className="flex items-center gap-2.5">
-              <User className="size-5 text-primary" />
+              <User className="size-4 text-foreground" />
               <div>
-                <CardTitle className="text-base">Account Profile</CardTitle>
-                <CardDescription className="text-xs">
+                <CardTitle className="text-sm font-semibold">Account Profile</CardTitle>
+                <CardDescription className="text-xs text-[#555a6a] dark:text-muted-foreground">
                   Your personal authenticated identity
                 </CardDescription>
               </div>
             </div>
           </CardHeader>
-          <CardContent className="space-y-3 text-xs">
-            <div className="flex justify-between py-1 border-b border-border/60">
-              <span className="text-muted-foreground">Name:</span>
+          <CardContent className="pt-5 space-y-3 text-xs">
+            <div className="flex justify-between py-2 border-b border-[#e0e2e8]/60 dark:border-border/60">
+              <span className="text-[#6b6f7e]">Name:</span>
               <span className="font-semibold text-foreground">{profile?.fullName || "Creator"}</span>
             </div>
-            <div className="flex justify-between py-1 border-b border-border/60">
-              <span className="text-muted-foreground">Email:</span>
-              <span className="font-semibold text-foreground">{user?.email}</span>
+            <div className="flex justify-between py-2 border-b border-[#e0e2e8]/60 dark:border-border/60">
+              <span className="text-[#6b6f7e]">Email:</span>
+              <span className="font-mono text-foreground">{user?.email}</span>
             </div>
-            <div className="flex justify-between py-1 border-b border-border/60">
-              <span className="text-muted-foreground">Platform Role:</span>
+            <div className="flex justify-between py-2 border-b border-[#e0e2e8]/60 dark:border-border/60">
+              <span className="text-[#6b6f7e]">Platform Role:</span>
               <span className="font-semibold text-foreground">Workspace Owner</span>
             </div>
-            <div className="flex justify-between py-1">
-              <span className="text-muted-foreground">Onboarding Status:</span>
-              <Badge variant="outline" className="bg-lime-500/10 text-lime-700 dark:text-lime-300 border-lime-500/30 text-[10px]">
+            <div className="flex justify-between py-2">
+              <span className="text-[#6b6f7e]">Onboarding Status:</span>
+              <Badge variant="tag-teal" className="text-[10px] font-semibold py-0.5 px-2.5 rounded-full">
                 Completed
               </Badge>
             </div>

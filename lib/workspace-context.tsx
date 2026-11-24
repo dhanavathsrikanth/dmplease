@@ -1,6 +1,7 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, { createContext, useContext, useState } from "react";
+import { useRouter } from "next/navigation";
 
 export interface WorkspaceItem {
   id: string;
@@ -31,6 +32,7 @@ export function WorkspaceProvider({
   instagramUsername: string | null;
   instagramAccountCount: number;
 }) {
+  const router = useRouter();
   const [workspaces] = useState<WorkspaceItem[]>(initialWorkspaces);
   const [currentId, setCurrentId] = useState<string>(
     activeWorkspaceId || initialWorkspaces[0]?.id || ""
@@ -41,10 +43,10 @@ export function WorkspaceProvider({
 
   const switchWorkspace = (workspaceId: string) => {
     setCurrentId(workspaceId);
-    // Store in cookie / localStorage for persistence
     if (typeof document !== "undefined") {
-      document.cookie = `active_workspace_id=${workspaceId}; path=/; max-age=31536000`;
+      document.cookie = `active_workspace_id=${workspaceId}; path=/; max-age=31536000; SameSite=Lax`;
     }
+    router.refresh();
   };
 
   return (

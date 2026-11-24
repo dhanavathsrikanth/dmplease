@@ -4,10 +4,24 @@ const META_API_VERSION = process.env.META_API_VERSION || "v21.0";
 const META_BASE_URL = `https://graph.facebook.com/${META_API_VERSION}`;
 const INSTAGRAM_GRAPH_URL = `https://graph.instagram.com/${META_API_VERSION}`;
 
+export type MetaAuthProvider = "facebook" | "instagram";
+
+/**
+ * Selects the appropriate Meta Graph host based on token prefix:
+ * Direct Instagram Login tokens begin with "IG", while Facebook Login
+ * user/page tokens begin with "EAA" and target graph.facebook.com.
+ */
+function getGraphBaseUrl(accessToken: string): string {
+  return accessToken.trim().startsWith("IG")
+    ? INSTAGRAM_GRAPH_URL
+    : META_BASE_URL;
+}
+
 export interface MetaTokenExchangeResponse {
   access_token: string;
   token_type: string;
   expires_in?: number;
+  user_id?: string | number;
 }
 
 export interface MetaAccountInfo {
@@ -45,12 +59,17 @@ export interface InstagramMedia {
 export interface VerifiedOAuthState {
   userId: string;
   nextUrl?: string;
+  provider?: MetaAuthProvider;
 }
 
 /**
- * Signs an OAuth state string with user ID, optional next URL, and 10-minute expiry
+ * Signs an OAuth state string with user ID, optional next URL, provider, and 10-minute expiry
  */
-export function signOAuthState(userId: string, nextUrl?: string): string {
+export function signOAuthState(
+  userId: string,
+  nextUrl?: string,
+  provider: MetaAuthProvider = "facebook"
+): string {
   const secret =
     process.env.TOKEN_VAULT_SECRET ||
     "a8b3e9447c231791a826477bfa9c338290eef219a5c814df39c4a8563a45c291";
@@ -58,6 +77,7 @@ export function signOAuthState(userId: string, nextUrl?: string): string {
     JSON.stringify({
       userId,
       nextUrl: nextUrl || "/dashboard/settings",
+      provider,
       expiresAt: Date.now() + 10 * 60 * 1000,
     })
   ).toString("base64url");
@@ -66,7 +86,7 @@ export function signOAuthState(userId: string, nextUrl?: string): string {
 }
 
 /**
- * Validates and extracts userId and nextUrl from OAuth state
+ * Validates and extracts userId, nextUrl, and provider from OAuth state
  */
 export function verifyOAuthState(state: string): VerifiedOAuthState | null {
   const secret =
@@ -90,9 +110,18 @@ export function verifyOAuthState(state: string): VerifiedOAuthState | null {
   try {
     const data = JSON.parse(
       Buffer.from(payload, "base64url").toString("utf8")
-    ) as { userId?: string; nextUrl?: string; expiresAt?: number };
+    ) as {
+      userId?: string;
+      nextUrl?: string;
+      provider?: MetaAuthProvider;
+      expiresAt?: number;
+    };
     return data.userId && Number(data.expiresAt) > Date.now()
-      ? { userId: data.userId, nextUrl: data.nextUrl }
+      ? {
+          userId: data.userId,
+          nextUrl: data.nextUrl,
+          provider: data.provider === "instagram" ? "instagram" : "facebook",
+        }
       : null;
   } catch {
     return null;
@@ -121,15 +150,60 @@ export async function checkMetaApiLatency(): Promise<{
 }
 
 /**
+ * Retrieves Meta App ID and App Secret from environment variables
+ */
+export function getMetaAppCredentials(): { appId: string; appSecret: string } {
+  const appId = (process.env.META_APP_ID || process.env.INSTAGRAM_APP_ID || "").trim();
+  const appSecret = (
+    process.env.META_APP_SECRET ||
+    process.env.INSTAGRAM_APP_SECRET ||
+    process.env.FACEBOOK_APP_SECRET ||
+    ""
+  ).trim();
+
+  if (!appId || !appSecret) {
+    throw new Error(
+      "Meta credentials not configured. Please set META_APP_ID and META_APP_SECRET in your Vercel environment variables."
+    );
+  }
+
+  return { appId, appSecret };
+}
+
+/**
  * Exchanges OAuth authorization code for initial short-lived access token
  */
 export async function exchangeOAuthCode(
   code: string,
-  redirectUri: string
+  redirectUri: string,
+  provider: MetaAuthProvider = "facebook"
 ): Promise<MetaTokenExchangeResponse> {
-  const appId = process.env.META_APP_ID || "1122753620356066";
-  const appSecret =
-    process.env.META_APP_SECRET || "606e59964015bf87db1c71b777519c02";
+  const { appId, appSecret } = getMetaAppCredentials();
+
+  if (provider === "instagram") {
+    const formData = new URLSearchParams({
+      client_id: appId,
+      client_secret: appSecret,
+      grant_type: "authorization_code",
+      redirect_uri: redirectUri,
+      code,
+    });
+
+    const res = await fetch("https://api.instagram.com/oauth/access_token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: formData.toString(),
+    });
+
+    if (!res.ok) {
+      const errorBody = await res.text();
+      throw new Error(
+        `Instagram OAuth code exchange failed (${res.status}): ${errorBody}`
+      );
+    }
+
+    return (await res.json()) as MetaTokenExchangeResponse;
+  }
 
   const params = new URLSearchParams({
     client_id: appId,
@@ -152,14 +226,32 @@ export async function exchangeOAuthCode(
 }
 
 /**
+ * Fetches the user's verified primary email from Facebook Graph API (when email scope is granted)
+ */
+export async function fetchMetaUserEmail(
+  accessToken: string
+): Promise<string | null> {
+  try {
+    const res = await fetch(
+      `${META_BASE_URL}/me?fields=email&access_token=${encodeURIComponent(
+        accessToken
+      )}`
+    );
+    if (!res.ok) return null;
+    const json = (await res.json()) as { email?: string };
+    return json.email || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Exchanges short-lived token for 60-day long-lived access token (via Facebook Graph)
  */
 export async function exchangeForLongLivedToken(
   shortLivedToken: string
 ): Promise<MetaTokenExchangeResponse> {
-  const appId = process.env.META_APP_ID || "1122753620356066";
-  const appSecret =
-    process.env.META_APP_SECRET || "606e59964015bf87db1c71b777519c02";
+  const { appId, appSecret } = getMetaAppCredentials();
 
   const params = new URLSearchParams({
     grant_type: "fb_exchange_token",
@@ -187,10 +279,7 @@ export async function exchangeForLongLivedToken(
 export async function getLongLivedToken(
   shortLivedToken: string
 ): Promise<{ accessToken: string; expiresIn: number }> {
-  const appSecret =
-    process.env.INSTAGRAM_APP_SECRET ||
-    process.env.META_APP_SECRET ||
-    "606e59964015bf87db1c71b777519c02";
+  const { appSecret } = getMetaAppCredentials();
 
   const url = new URL(`${INSTAGRAM_GRAPH_URL}/access_token`);
   url.searchParams.set("grant_type", "ig_exchange_token");
@@ -534,4 +623,87 @@ export async function sendDirectMessage(
   });
 
   return await res.json();
+}
+
+/**
+ * Posts a public reply under an Instagram comment.
+ * Uses POST /{comment-id}/replies so it appears threaded under the original comment.
+ * Requires instagram_manage_comments permission.
+ */
+export async function postPublicCommentReply(
+  accessToken: string,
+  commentId: string,
+  message: string
+): Promise<{ id?: string; error?: any }> {
+  try {
+    const url = `${INSTAGRAM_GRAPH_URL}/${commentId}/replies`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ message }),
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      console.warn(`[Meta Client] postPublicCommentReply error (${res.status}):`, data);
+      return { error: data };
+    }
+    return data;
+  } catch (err) {
+    console.warn(`[Meta Client] postPublicCommentReply exception:`, err);
+    return { error: err };
+  }
+}
+
+/**
+ * Checks whether a given Instagram user (commenterIgsid) follows the
+ * connected business account (instagramAccountId).
+ *
+ * Uses GET /{ig-account-id}/followers?user_id={commenterIgsid}
+ * Returns true  → confirmed follower (or API unavailable → fail-open to avoid blocking real followers)
+ * Returns false → definitely not a follower
+ *
+ * NOTE: Meta's followers edge does not guarantee a user_id filter on all
+ * API versions. If the endpoint returns an error we fail-open (allow DM)
+ * and log a warning, so large-account creators are never silently blocked.
+ */
+export async function checkIsFollower(
+  accessToken: string,
+  instagramAccountId: string,
+  commenterIgsid: string
+): Promise<boolean> {
+  try {
+    const url = new URL(`${INSTAGRAM_GRAPH_URL}/${instagramAccountId}/followers`);
+    url.searchParams.set("user_id", commenterIgsid);
+    url.searchParams.set("fields", "id,username");
+    url.searchParams.set("access_token", accessToken);
+
+    const res = await fetch(url.toString(), {
+      signal: AbortSignal.timeout(4000),
+    });
+
+    if (!res.ok) {
+      // API rejected the request — fail-open so real followers aren't blocked
+      console.warn(
+        `[Meta Client] checkIsFollower: followers endpoint returned ${res.status} — failing open`
+      );
+      return true;
+    }
+
+    const data = await res.json();
+    // If data.data array contains the user, they follow
+    if (Array.isArray(data?.data) && data.data.length > 0) {
+      return true;
+    }
+
+    // data.data is empty → not a follower (confirmed)
+    return false;
+  } catch (err) {
+    // Network/timeout — fail-open
+    console.warn(`[Meta Client] checkIsFollower exception — failing open:`, err);
+    return true;
+  }
 }
