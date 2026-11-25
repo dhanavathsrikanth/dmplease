@@ -11,14 +11,23 @@ import {
 import { encryptToken } from "@/lib/meta/vault";
 import { createClient } from "@/lib/supabase/server";
 import { prisma } from "@/lib/prisma";
+import { hasDatabaseUrl } from "@/lib/config";
 
 export async function GET(request: NextRequest) {
-  const origin =
-    process.env.TUNNEL_URL ||
-    process.env.CLOUDFLARE_TUNNEL_URL ||
-    process.env.APP_URL ||
-    request.nextUrl.origin;
-  const redirectUri = `${origin.replace(/\/$/, "")}/api/auth/meta/callback`;
+  const host = request.headers.get("x-forwarded-host") || request.nextUrl.host;
+  const proto = request.headers.get("x-forwarded-proto") || (request.nextUrl.protocol.replace(":", "") || "https");
+  const isLocal = host.includes("localhost") || host.includes("127.0.0.1");
+
+  // Determine and sanitize origin to strip any invisible BOM (\uFEFF) or trailing whitespace
+  const rawOrigin = (isLocal && (process.env.TUNNEL_URL || process.env.CLOUDFLARE_TUNNEL_URL))
+    ? (process.env.TUNNEL_URL || process.env.CLOUDFLARE_TUNNEL_URL)!
+    : (process.env.APP_URL || `${proto}://${host}`);
+
+  const origin = rawOrigin
+    .replace(/^[\uFEFF\u200B-\u200D\s]+|[\uFEFF\u200B-\u200D\s]+$/g, "")
+    .replace(/\/$/, "");
+
+  const redirectUri = `${origin}/api/auth/meta/callback`;
 
   const searchParams = request.nextUrl.searchParams;
   const code = searchParams.get("code");
@@ -28,7 +37,13 @@ export async function GET(request: NextRequest) {
 
   const verifiedState = stateParam ? verifyOAuthState(stateParam) : null;
   const nextTarget = verifiedState?.nextUrl || "/dashboard/settings";
-  const targetUrl = new URL(nextTarget, origin);
+
+  let targetUrl: URL;
+  try {
+    targetUrl = new URL(nextTarget, origin);
+  } catch {
+    targetUrl = new URL(nextTarget, request.nextUrl.origin);
+  }
 
   if (error) {
     targetUrl.searchParams.set("error", errorDescription || error);
@@ -133,8 +148,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const dbUrl = process.env.DATABASE_URL || "";
-    const hasDb = dbUrl && !dbUrl.includes("[YOUR-PASSWORD]");
+    const hasDb = hasDatabaseUrl();
     let primaryWorkspaceId: string | undefined;
 
     for (const account of accounts) {

@@ -8,6 +8,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "postinstall": "prisma generate"
   },
   "dependencies": {
@@ -47,6 +49,8 @@
     "prisma": "^6.19.3",
     "tailwindcss": "^3.4.1",
     "tailwindcss-animate": "^1.0.7",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vite-tsconfig-paths": "^5.1.4",
+    "vitest": "^3.2.7"
   }
 }

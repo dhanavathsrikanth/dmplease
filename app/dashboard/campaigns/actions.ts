@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import { validateCampaign } from "@/lib/validation/campaign";
 
 export interface CreateCampaignPayload {
   name: string;
@@ -30,6 +31,16 @@ export async function createCampaign(payload: CreateCampaignPayload) {
     return { success: false, error: "Not authenticated" };
   }
 
+  const validation = validateCampaign(payload);
+  if (!validation.success || !validation.data) {
+    return {
+      success: false,
+      error: validation.error,
+      fieldErrors: validation.fieldErrors,
+    };
+  }
+  const values = validation.data;
+
   try {
     // 1. Get or create workspace
     const { data: workspaces } = await supabase
@@ -57,27 +68,27 @@ export async function createCampaign(payload: CreateCampaignPayload) {
     }
 
     // 2. Insert automation
-    const cleanKeywords = (payload.triggerKeywords || [])
-      .map((k) => k.trim().toUpperCase())
+    const cleanKeywords = values.triggerKeywords
+      .map((keyword) => keyword.trim().toUpperCase())
       .filter(Boolean);
 
     const { data, error } = await supabase
       .from("automations")
       .insert({
         workspace_id: workspaceId,
-        name: payload.name.trim() || "Untitled Campaign",
-        goal: payload.goal || "custom",
-        post_scope: payload.postScope,
-        post_id: payload.postId || null,
-        post_thumbnail_url: payload.postThumbnailUrl || null,
-        post_caption: payload.postCaption || null,
+        name: values.name,
+        goal: values.goal || "custom",
+        post_scope: values.postScope,
+        post_id: values.postId || null,
+        post_thumbnail_url: values.postThumbnailUrl || null,
+        post_caption: values.postCaption || null,
         trigger_keywords: cleanKeywords.length > 0 ? cleanKeywords : ["START"],
-        dm_message: payload.dmMessage.trim(),
-        button_text: payload.buttonText?.trim() || null,
-        button_url: payload.buttonUrl?.trim() || null,
-        public_reply_enabled: !!payload.publicReplyEnabled,
-        public_reply_messages: payload.publicReplyMessages || [],
-        follow_gate_enabled: !!payload.followGateEnabled,
+        dm_message: values.dmMessage,
+        button_text: values.buttonText || null,
+        button_url: values.buttonUrl || null,
+        public_reply_enabled: values.publicReplyEnabled,
+        public_reply_messages: values.publicReplyMessages,
+        follow_gate_enabled: values.followGateEnabled,
         active: true,
       })
       .select("id")

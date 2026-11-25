@@ -1,33 +1,54 @@
 import { createHmac, timingSafeEqual } from "crypto";
+import { getWebhookSecrets, getWebhookVerifyToken } from "@/lib/config";
 
+/**
+ * Verifies Meta's X-Hub-Signature-256 header.
+ * Fails closed: an unsigned payload or a missing app secret is never accepted.
+ */
 export function verifyWebhookSignature(
   payload: string,
   signature: string | null
 ): boolean {
   if (!signature) return false;
 
-  const secrets = [
-    process.env.META_APP_SECRET,
-    process.env.INSTAGRAM_APP_SECRET,
-    process.env.FACEBOOK_APP_SECRET,
-  ].filter((s): s is string => Boolean(s));
-
+  const secrets = getWebhookSecrets();
   if (secrets.length === 0) {
-    console.warn(
-      "[Webhook Security] No META_APP_SECRET, INSTAGRAM_APP_SECRET, or FACEBOOK_APP_SECRET configured."
+    console.error(
+      "[Webhook Security] No META_APP_SECRET configured. Refusing unsigned webhook."
     );
-    return true;
+    return false;
   }
 
+  const hex = signature.replace(/^sha256=/i, "");
+  if (!/^[0-9a-f]{64}$/i.test(hex)) return false;
+  const supplied = Buffer.from(hex, "hex");
+
   return secrets.some((secret) => {
-    const expected =
-      "sha256=" + createHmac("sha256", secret).update(payload).digest("hex");
-    try {
-      return timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
-    } catch {
-      return false;
-    }
+    const expected = createHmac("sha256", secret)
+      .update(payload)
+      .digest();
+    return supplied.length === expected.length && timingSafeEqual(supplied, expected);
   });
+}
+
+/** True when at least one app secret is configured to sign webhooks. */
+export function hasWebhookSigningSecret(): boolean {
+  return getWebhookSecrets().length > 0;
+}
+
+/** Constant-time comparison for the Meta webhook handshake token. */
+export function verifyWebhookVerifyToken(supplied: string | null): boolean {
+  if (!supplied) return false;
+  let expected: string;
+  try {
+    expected = getWebhookVerifyToken();
+  } catch (error) {
+    console.error("[Webhook Security] Verify token misconfigured:", error);
+    return false;
+  }
+  const a = Buffer.from(supplied);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 export interface WebhookCommentEvent {

@@ -3,6 +3,7 @@ import { getCurrentUser } from "@/lib/profile";
 import { prisma } from "@/lib/prisma";
 import { decryptToken } from "@/lib/meta/vault";
 import { getUserMedia } from "@/lib/meta/client";
+import { hasDatabaseUrl } from "@/lib/config";
 
 export async function GET(request: NextRequest) {
   const user = await getCurrentUser();
@@ -12,8 +13,7 @@ export async function GET(request: NextRequest) {
 
   // 1. Check if token configured in DB
   let accessToken: string | null = null;
-  const dbUrl = process.env.DATABASE_URL || "";
-  const hasDb = dbUrl && !dbUrl.includes("[YOUR-PASSWORD]");
+  const hasDb = hasDatabaseUrl();
 
   if (hasDb) {
     const account = await prisma.instagramAccount.findFirst({

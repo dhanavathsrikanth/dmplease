@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { prisma } from "@/lib/prisma";
 import { decryptToken } from "@/lib/meta/vault";
 import { unsubscribeInstagramAccountFromWebhooks } from "@/lib/meta/client";
+import { hasDatabaseUrl } from "@/lib/config";
 
 export async function POST(request: NextRequest) {
   const user = await getCurrentUser();
@@ -65,8 +66,7 @@ export async function POST(request: NextRequest) {
     }
 
     // 5. Erase from Prisma database if direct connection is available
-    const dbUrl = process.env.DATABASE_URL || "";
-    const hasDb = dbUrl && !dbUrl.includes("[YOUR-PASSWORD]");
+    const hasDb = hasDatabaseUrl();
 
     if (hasDb) {
       try {

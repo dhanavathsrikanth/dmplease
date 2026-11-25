@@ -106,6 +106,7 @@ export function CampaignBuilder({ initialHandle }: CampaignBuilderProps = {}) {
   // Submitting state
   const [publishStatus, setPublishStatus] = useState<"idle" | "publishing" | "success">("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string[]>>({});
 
   // Validation
   const isMissingPost = postScope === "SPECIFIC_POST" && !selectedPost;
@@ -171,6 +172,7 @@ export function CampaignBuilder({ initialHandle }: CampaignBuilderProps = {}) {
 
     setPublishStatus("publishing");
     setErrorMsg(null);
+    setFieldErrors({});
 
     const payload = {
       name: name.trim() || "Instagram Auto-DM Campaign",
@@ -200,6 +202,9 @@ export function CampaignBuilder({ initialHandle }: CampaignBuilderProps = {}) {
       } else {
         setPublishStatus("idle");
         setErrorMsg(res.error || "Failed to publish campaign");
+        setFieldErrors(
+          (res as { fieldErrors?: Record<string, string[]> }).fieldErrors ?? {}
+        );
       }
     } catch {
       setPublishStatus("idle");
@@ -273,9 +278,16 @@ export function CampaignBuilder({ initialHandle }: CampaignBuilderProps = {}) {
       </div>
 
       {errorMsg && (
-        <div className="p-3.5 rounded-2xl border border-destructive/40 bg-destructive/10 text-xs font-medium text-destructive flex items-center gap-2">
-          <X className="size-4 shrink-0" />
-          <span>{errorMsg}</span>
+        <div role="alert" aria-live="assertive" className="p-3.5 rounded-2xl border border-destructive/40 bg-destructive/10 text-xs font-medium text-destructive flex flex-col gap-1.5">
+          <span className="flex items-center gap-2">
+            <X className="size-4 shrink-0" aria-hidden="true" />
+            {errorMsg}
+          </span>
+          {Object.entries(fieldErrors).map(([field, messages]) => (
+            <span key={field} className="pl-6 text-[11px] font-normal opacity-90">
+              {field}: {messages.join(", ")}
+            </span>
+          ))}
         </div>
       )}
 

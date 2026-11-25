@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { getCurrentProfile } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
+import { getWebhookHealth } from "@/lib/meta/webhook-events";
 
 export const metadata = {
   title: "Analytics & Performance - dmplease",
@@ -58,6 +59,7 @@ async function OverviewContent({ range }: { range: string }) {
   const supabase = await createClient();
 
   const workspaceIds = (profile?.ownedWorkspaces || []).map((w) => w.id);
+  const health = await getWebhookHealth(24 * 7);
 
   let totalDms = 0;
   let deliveredDms = 0;
@@ -96,7 +98,7 @@ async function OverviewContent({ range }: { range: string }) {
   }
 
   const deliveryRate =
-    totalDms > 0 ? Math.round((deliveredDms / totalDms) * 100) : 100;
+    totalDms > 0 ? Math.round((deliveredDms / totalDms) * 100) : null;
 
   const sortedKeywords = Object.entries(keywordCounts)
     .sort(([, a], [, b]) => b - a)
@@ -120,7 +122,7 @@ async function OverviewContent({ range }: { range: string }) {
             Analytics &amp; Performance
           </h1>
           <p className="text-[#555a6a] dark:text-muted-foreground text-xs sm:text-sm mt-0.5">
-            Detailed metrics on Instagram post engagement, comment triggers, and delivery throughput.
+            Keyword triggers and delivery performance measured from your automations.
           </p>
         </div>
 
@@ -170,11 +172,15 @@ async function OverviewContent({ range }: { range: string }) {
           </div>
           <div className="mt-4">
             <div className="text-3xl font-bold tracking-tight text-foreground">
-              {totalDms > 0 ? `${deliveryRate}%` : "100%"}
+              {deliveryRate === null ? "—" : `${deliveryRate}%`}
             </div>
             <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground mt-1 flex items-center gap-1 font-medium">
-              <CheckCircle2 className="size-3.5 text-[#00b473] inline" />
-              <span>{deliveredDms} of {totalDms} automated messages delivered</span>
+              <CheckCircle2 className="size-3.5 text-[#00b473] inline" aria-hidden="true" />
+              <span>
+                {totalDms > 0
+                  ? `${deliveredDms} of ${totalDms} automated messages delivered`
+                  : "No deliveries in this period"}
+              </span>
             </p>
           </div>
         </Card>
@@ -196,15 +202,21 @@ async function OverviewContent({ range }: { range: string }) {
 
         <Card className="rounded-2xl glass-card liquid-sheen border border-[#ffd8f4]/40 bg-[#fde0f0]/30 dark:bg-[#7d2663]/10 shadow-subtle p-5">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-[#7d2663] dark:text-[#ffd8f4]">Avg. Delivery Latency</span>
+            <span className="text-xs font-semibold text-[#7d2663] dark:text-[#ffd8f4]">Processing Time</span>
             <div className="size-8 rounded-full bg-[#ffd8f4] text-[#7d2663] flex items-center justify-center font-bold shadow-xs">
-              <Zap className="size-4" />
+              <Zap className="size-4" aria-hidden="true" />
             </div>
           </div>
           <div className="mt-4">
-            <div className="text-3xl font-bold tracking-tight text-foreground">&lt; 280ms</div>
-            <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground mt-1 font-mono">
-              Instant Meta Graph API webhook delivery
+            <div className="text-3xl font-bold tracking-tight text-foreground">
+              {health.available && health.avgDurationMs !== null
+                ? `${health.avgDurationMs} ms`
+                : "—"}
+            </div>
+            <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground mt-1 font-medium">
+              {health.available && health.total > 0
+                ? `From webhook to DM · ${health.successRate ?? 0}% success over ${health.total} jobs`
+                : "No deliveries measured in the last 7 days"}
             </p>
           </div>
         </Card>

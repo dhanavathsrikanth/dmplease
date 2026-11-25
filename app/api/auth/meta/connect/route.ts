@@ -17,11 +17,15 @@ export async function GET(request: NextRequest) {
   const proto = request.headers.get("x-forwarded-proto") || (request.nextUrl.protocol.replace(":", "") || "https");
   const isLocal = host.includes("localhost") || host.includes("127.0.0.1");
 
-  const origin = (isLocal && (process.env.TUNNEL_URL || process.env.CLOUDFLARE_TUNNEL_URL))
+  const rawOrigin = (isLocal && (process.env.TUNNEL_URL || process.env.CLOUDFLARE_TUNNEL_URL))
     ? (process.env.TUNNEL_URL || process.env.CLOUDFLARE_TUNNEL_URL)!
-    : `${proto}://${host}`;
+    : (process.env.APP_URL || `${proto}://${host}`);
 
-  const redirectUri = `${origin.replace(/\/$/, "")}/api/auth/meta/callback`;
+  const origin = rawOrigin
+    .replace(/^[\uFEFF\u200B-\u200D\s]+|[\uFEFF\u200B-\u200D\s]+$/g, "")
+    .replace(/\/$/, "");
+
+  const redirectUri = `${origin}/api/auth/meta/callback`;
 
   // Dedicated Instagram Consumer App ID is only used if explicitly provided and distinct from META_APP_ID
   const hasDedicatedInstagramApp =

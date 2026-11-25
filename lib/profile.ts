@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { prisma } from "@/lib/prisma";
+import { hasDatabaseUrl } from "@/lib/config";
 
 export interface AutomationData {
   id: string;
@@ -71,8 +72,7 @@ export async function getCurrentProfile(): Promise<UserProfileData | null> {
   }
 
   // Check if DATABASE_URL has a valid password configured
-  const dbUrl = process.env.DATABASE_URL || "";
-  const hasDbPassword = dbUrl && !dbUrl.includes("[YOUR-PASSWORD]");
+  const hasDbPassword = hasDatabaseUrl();
 
   if (hasDbPassword) {
     try {

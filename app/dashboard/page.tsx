@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { getCurrentProfile, getCurrentUser } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
+import { getWebhookHealth } from "@/lib/meta/webhook-events";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -73,8 +74,13 @@ async function DashboardContent() {
 
   const workspaceIds = (profile?.ownedWorkspaces || []).map((w) => w.id);
 
+  const health = await getWebhookHealth(24 * 7);
+
   let connectedUsername: string | null = null;
   let totalDmsSent = 0;
+  let deliverySampleCount = 0;
+  let deliveredCount = 0;
+  let uniqueLeads = 0;
   let recentLogs: Array<{
     id: string;
     user: string;
@@ -99,6 +105,22 @@ async function DashboardContent() {
       .select("*", { count: "exact", head: true })
       .in("workspace_id", workspaceIds);
     totalDmsSent = count || 0;
+
+    // Sample the most recent deliveries for honest delivery-rate and lead counts.
+    const { data: sampleLogs } = await supabase
+      .from("dm_logs")
+      .select("status, recipient_id")
+      .in("workspace_id", workspaceIds)
+      .order("sent_at", { ascending: false })
+      .limit(1000);
+
+    if (sampleLogs) {
+      deliverySampleCount = sampleLogs.length;
+      deliveredCount = sampleLogs.filter(
+        (log) => log.status === "SENT" || log.status === "Delivered" || !log.status
+      ).length;
+      uniqueLeads = new Set(sampleLogs.map((log) => log.recipient_id)).size;
+    }
 
     const { data: logsData } = await supabase
       .from("dm_logs")
@@ -127,6 +149,11 @@ async function DashboardContent() {
     profile?.fullName?.split(" ")[0] ||
     user?.email?.split("@")[0] ||
     "Creator";
+
+  const deliveryRate =
+    deliverySampleCount > 0
+      ? Math.round((deliveredCount / deliverySampleCount) * 100)
+      : null;
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300 antialiased selection:bg-[#ffd02f] selection:text-[#1c1c1e]">
@@ -194,9 +221,9 @@ async function DashboardContent() {
             <div className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground">
               {totalDmsSent}
             </div>
-            <p className="text-[11px] text-[#00b473] mt-1 flex items-center gap-1 font-semibold">
-              <TrendingUp className="size-3 inline" />
-              <span>Real-time delivery</span>
+            <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground mt-1 flex items-center gap-1 font-medium">
+              <TrendingUp className="size-3 inline" aria-hidden="true" />
+              <span>Since you connected</span>
             </p>
           </div>
         </Card>
@@ -211,10 +238,12 @@ async function DashboardContent() {
           </div>
           <div className="mt-4">
             <div className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground">
-              {totalDmsSent > 0 ? "99.8%" : "100%"}
+              {deliveryRate === null ? "—" : `${deliveryRate}%`}
             </div>
-            <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground mt-1 font-mono">
-              sub-280ms latency
+            <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground mt-1 font-medium">
+              {deliverySampleCount > 0
+                ? `${deliveredCount} delivered of last ${deliverySampleCount}`
+                : "No deliveries measured yet"}
             </p>
           </div>
         </Card>
@@ -247,14 +276,27 @@ async function DashboardContent() {
           </div>
           <div className="mt-4">
             <div className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground">
-              {totalDmsSent > 0 ? totalDmsSent : 0}
+              {uniqueLeads}
             </div>
             <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground mt-1">
-              Engaged commenters
+              {deliverySampleCount > 0
+                ? `Distinct people in last ${deliverySampleCount} deliveries`
+                : "No leads recorded yet"}
             </p>
           </div>
         </Card>
       </div>
+
+      {health.available && health.total > 0 && (
+        <div
+          role="status"
+          className="flex flex-wrap items-center gap-2 rounded-xl border border-[#e0e2e8] dark:border-border/80 bg-card px-4 py-2.5 text-[11px] text-[#555a6a] dark:text-muted-foreground"
+        >
+          <Activity className="size-3.5 text-[#187574] dark:text-[#c3faf5]" aria-hidden="true" />
+          <span className="font-semibold text-foreground">Automation processing</span>
+          <span>{health.successRate ?? 0}% successful · {health.avgDurationMs ?? "—"} ms average · last 7 days</span>
+        </div>
+      )}
 
       {/* ── Main Content Grid: Campaigns & Recent Activity ── */}
       <div className="grid gap-6 lg:grid-cols-3">

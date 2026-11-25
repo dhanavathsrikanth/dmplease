@@ -1,4 +1,5 @@
-import { createHmac, timingSafeEqual } from "crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "crypto";
+import { getOAuthStateSecret, getOAuthStateSecrets } from "@/lib/config";
 
 const META_API_VERSION = process.env.META_API_VERSION || "v21.0";
 const META_BASE_URL = `https://graph.facebook.com/${META_API_VERSION}`;
@@ -70,18 +71,18 @@ export function signOAuthState(
   nextUrl?: string,
   provider: MetaAuthProvider = "facebook"
 ): string {
-  const secret =
-    process.env.TOKEN_VAULT_SECRET ||
-    "a8b3e9447c231791a826477bfa9c338290eef219a5c814df39c4a8563a45c291";
   const payload = Buffer.from(
     JSON.stringify({
       userId,
       nextUrl: nextUrl || "/dashboard/settings",
       provider,
       expiresAt: Date.now() + 10 * 60 * 1000,
+      nonce: randomUUID(),
     })
   ).toString("base64url");
-  const signature = createHmac("sha256", secret).update(payload).digest("hex");
+  const signature = createHmac("sha256", getOAuthStateSecret())
+    .update(payload)
+    .digest("hex");
   return `${payload}.${signature}`;
 }
 
@@ -89,23 +90,17 @@ export function signOAuthState(
  * Validates and extracts userId, nextUrl, and provider from OAuth state
  */
 export function verifyOAuthState(state: string): VerifiedOAuthState | null {
-  const secret =
-    process.env.TOKEN_VAULT_SECRET ||
-    "a8b3e9447c231791a826477bfa9c338290eef219a5c814df39c4a8563a45c291";
   const [payload, signature, extra] = state.split(".");
-  if (!payload || !signature || extra) return null;
-
-  const expected = createHmac("sha256", secret).update(payload).digest();
-  let supplied: Buffer;
-  try {
-    supplied = Buffer.from(signature, "hex");
-  } catch {
+  if (!payload || !signature || extra || !/^[0-9a-f]+$/i.test(signature)) {
     return null;
   }
 
-  if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
-    return null;
-  }
+  const supplied = Buffer.from(signature, "hex");
+  const signaturesValid = getOAuthStateSecrets().some((secret) => {
+    const expected = createHmac("sha256", secret).update(payload).digest();
+    return supplied.length === expected.length && timingSafeEqual(supplied, expected);
+  });
+  if (!signaturesValid) return null;
 
   try {
     const data = JSON.parse(

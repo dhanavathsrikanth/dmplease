@@ -124,6 +124,24 @@ model DmLog {
   @@map("dm_logs")
 }
 
+/// Durable record of every verified Meta webhook and its processing outcome.
+/// No workspace relation: this table is written by the service-role path only.
+model WebhookEvent {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  object             String
+  status             String    @default("PENDING")
+  instagramAccountId String?   @map("instagram_account_id")
+  payload            Json
+  error              String?
+  durationMs         Int?      @map("duration_ms")
+  receivedAt         DateTime  @default(now()) @map("received_at") @db.Timestamptz(6)
+  startedAt          DateTime? @map("started_at") @db.Timestamptz(6)
+  completedAt        DateTime? @map("completed_at") @db.Timestamptz(6)
+
+  @@index([status, receivedAt])
+  @@map("webhook_events")
+}
+
 enum WorkspaceRole {
   OWNER
   ADMIN
