@@ -346,63 +346,241 @@ export async function getUserInfo(
   return data;
 }
 
+interface LinkedIgAccount {
+  id: string;
+  username?: string;
+  name?: string;
+  profile_picture_url?: string;
+  followers_count?: number;
+}
+
+interface FacebookPage {
+  id: string;
+  name?: string;
+  access_token?: string;
+  instagram_business_account?: LinkedIgAccount | null;
+}
+
+function toAccount(page: FacebookPage, ig: LinkedIgAccount): MetaAccountInfo {
+  return {
+    instagramBusinessId: ig.id,
+    facebookPageId: page.id,
+    username: ig.username || page.name || "unknown",
+    displayName: ig.name || page.name || ig.username || "Instagram account",
+    profilePictureUrl: ig.profile_picture_url,
+    followersCount: ig.followers_count || 0,
+    pageToken: page.access_token,
+  };
+}
+
+function describeGraphError(payload: unknown): string {
+  if (!payload || typeof payload !== "object") return "unknown Meta error";
+  const error = (payload as { error?: { code?: number; message?: string } }).error;
+  if (!error) return "unknown Meta error";
+  return `code ${error.code ?? "?"}: ${error.message ?? "no message"}`;
+}
+
 /**
- * Queries connected Instagram Business / Creator accounts for a Facebook User Access Token
+ * Discovers Instagram accounts available to a token.
+ *
+ * Instagram Login tokens (IG…) live on graph.instagram.com, while Facebook
+ * Login tokens live on graph.facebook.com. Trying the wrong host was the main
+ * cause of "No Instagram Professional account found" after a successful login.
  */
 export async function fetchInstagramAccountsForToken(
-  accessToken: string
+  accessToken: string,
+  provider: MetaAuthProvider = "facebook"
 ): Promise<MetaAccountInfo[]> {
   const accounts: MetaAccountInfo[] = [];
+  const isInstagramToken = accessToken.trim().startsWith("IG");
 
-  // 1. Try Facebook Graph API: /me/accounts
+  // ── Direct Instagram Login: use the Instagram Graph API ───────────────────
+  if (provider === "instagram" || isInstagramToken) {
+    try {
+      const url = new URL(`${INSTAGRAM_GRAPH_URL}/me`);
+      url.searchParams.set(
+        "fields",
+        "id,user_id,username,name,account_type,profile_picture_url,followers_count"
+      );
+      url.searchParams.set("access_token", accessToken);
+
+      const res = await fetch(url.toString(), { signal: AbortSignal.timeout(8000) });
+      const json = (await res.json()) as InstagramUser & {
+        account_type?: string;
+        error?: { code?: number; message?: string };
+      };
+
+      if (!res.ok || json.error) {
+        console.warn(
+          `[Meta] Instagram /me failed: ${describeGraphError(json)} (status ${res.status})`
+        );
+        return [];
+      }
+
+      if (
+        json.account_type &&
+        json.account_type !== "BUSINESS" &&
+        json.account_type !== "CREATOR"
+      ) {
+        console.warn(
+          `[Meta] @${json.username} is a ${json.account_type} account. Instagram automation requires a Business or Creator account.`
+        );
+        return [];
+      }
+
+      const id = json.user_id || json.id;
+      if (id) {
+        accounts.push({
+          instagramBusinessId: id,
+          facebookPageId: null,
+          username: json.username,
+          displayName: json.name || json.username,
+          profilePictureUrl: json.profile_picture_url,
+          followersCount: json.followers_count || 0,
+        });
+      }
+    } catch (error) {
+      console.warn("[Meta] Instagram /me request failed:", error);
+    }
+    return accounts;
+  }
+
+  // ── Facebook Login: discover Pages and their linked Instagram accounts ────
+  const fields =
+    "id,name,access_token,instagram_business_account{id,username,name,profile_picture_url,followers_count}";
+  let pages: FacebookPage[] = [];
+
   try {
-    const fields =
-      "id,name,access_token,instagram_business_account{id,username,name,profile_picture_url,followers_count}";
     const url = `${META_BASE_URL}/me/accounts?fields=${encodeURIComponent(
       fields
     )}&access_token=${encodeURIComponent(accessToken)}`;
-    const res = await fetch(url);
-    if (res.ok) {
-      const json = (await res.json()) as {
-        data?: Array<{
-          id: string;
-          name?: string;
-          access_token?: string;
-          instagram_business_account?: {
-            id: string;
-            username?: string;
-            name?: string;
-            profile_picture_url?: string;
-            followers_count?: number;
-          };
-        }>;
-      };
-      if (Array.isArray(json.data)) {
-        for (const page of json.data) {
-          if (page.instagram_business_account) {
-            const ig = page.instagram_business_account;
-            accounts.push({
-              instagramBusinessId: ig.id,
-              facebookPageId: page.id,
-              username: ig.username || page.name || "unknown",
-              displayName: ig.name || page.name,
-              profilePictureUrl: ig.profile_picture_url,
-              followersCount: ig.followers_count || 0,
-              pageToken: page.access_token,
-            });
-          }
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    const json = (await res.json()) as {
+      data?: FacebookPage[];
+      error?: { code?: number; message?: string };
+    };
+    if (!res.ok || json.error) {
+      console.warn(
+        `[Meta] /me/accounts failed: ${describeGraphError(json)} (status ${res.status})`
+      );
+    } else {
+      pages = Array.isArray(json.data) ? json.data : [];
+      console.info(`[Meta] /me/accounts returned ${pages.length} page(s)`);
+      for (const page of pages) {
+        if (page.instagram_business_account) {
+          accounts.push(toAccount(page, page.instagram_business_account));
         }
       }
     }
-  } catch (err) {
-    console.warn("[Meta Client] Failed querying /me/accounts:", err);
+  } catch (error) {
+    console.warn("[Meta] /me/accounts request failed:", error);
   }
 
-  // 2. Fallback: Direct Instagram Graph API /me
+  // ── System-user tokens from Facebook Login for Business (Unified Login) ────
+  // These tokens frequently return an EMPTY /me/accounts while the assets are
+  // exposed on the dedicated assignment edges instead.
+  if (accounts.length === 0) {
+    try {
+      const fields =
+        "id,username,name,profile_picture_url,followers_count";
+      const url = `${META_BASE_URL}/me/assigned_instagram_accounts?fields=${encodeURIComponent(
+        fields
+      )}&access_token=${encodeURIComponent(accessToken)}`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      const json = (await res.json()) as {
+        data?: LinkedIgAccount[];
+        error?: { code?: number; message?: string };
+      };
+      if (!res.ok || json.error) {
+        console.warn(
+          `[Meta] /me/assigned_instagram_accounts failed: ${describeGraphError(json)} (status ${res.status})`
+        );
+      } else if (Array.isArray(json.data)) {
+        console.info(
+          `[Meta] /me/assigned_instagram_accounts returned ${json.data.length} account(s)`
+        );
+        for (const ig of json.data) {
+          if (!ig?.id) continue;
+          accounts.push({
+            instagramBusinessId: ig.id,
+            facebookPageId: null,
+            username: ig.username || "unknown",
+            displayName: ig.name || ig.username || "Instagram account",
+            profilePictureUrl: ig.profile_picture_url,
+            followersCount: ig.followers_count || 0,
+          });
+        }
+      }
+    } catch (error) {
+      console.warn("[Meta] /me/assigned_instagram_accounts request failed:", error);
+    }
+  }
+
+  if (accounts.length === 0) {
+    try {
+      const fields =
+        "id,name,instagram_business_account{id,username,name,profile_picture_url,followers_count}";
+      const url = `${META_BASE_URL}/me/assigned_pages?fields=${encodeURIComponent(
+        fields
+      )}&access_token=${encodeURIComponent(accessToken)}`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      const json = (await res.json()) as {
+        data?: FacebookPage[];
+        error?: { code?: number; message?: string };
+      };
+      if (!res.ok || json.error) {
+        console.warn(
+          `[Meta] /me/assigned_pages failed: ${describeGraphError(json)} (status ${res.status})`
+        );
+      } else if (Array.isArray(json.data)) {
+        console.info(`[Meta] /me/assigned_pages returned ${json.data.length} page(s)`);
+        for (const page of json.data) {
+          if (page.instagram_business_account) {
+            accounts.push(toAccount(page, page.instagram_business_account));
+          }
+        }
+      }
+    } catch (error) {
+      console.warn("[Meta] /me/assigned_pages request failed:", error);
+    }
+  }
+
+  // Some permissions/configurations omit the nested field. Ask for each Page explicitly.
+  if (accounts.length === 0 && pages.length > 0) {
+    for (const page of pages) {
+      try {
+        const pageToken = page.access_token || accessToken;
+        const url = `${META_BASE_URL}/${page.id}?fields=${encodeURIComponent(
+          "instagram_business_account{id,username,name,profile_picture_url,followers_count}"
+        )}&access_token=${encodeURIComponent(pageToken)}`;
+        const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+        const json = (await res.json()) as {
+          instagram_business_account?: LinkedIgAccount | null;
+          error?: { code?: number; message?: string };
+        };
+        if (!res.ok || json.error) {
+          console.warn(`[Meta] Page ${page.id} lookup failed: ${describeGraphError(json)}`);
+          continue;
+        }
+        if (json.instagram_business_account) {
+          accounts.push(toAccount(page, json.instagram_business_account));
+        }
+      } catch (error) {
+        console.warn(`[Meta] Page ${page.id} lookup failed:`, error);
+      }
+    }
+    if (accounts.length === 0) {
+      console.warn(
+        "[Meta] Pages were found but none has an attached Instagram Business/Creator account."
+      );
+    }
+  }
+
+  // Last resort: the token may actually be an Instagram token with a FB prefix.
   if (accounts.length === 0) {
     try {
       const userInfo = await getUserInfo(accessToken);
-      if (userInfo && (userInfo.username || userInfo.user_id || userInfo.id)) {
+      if (userInfo?.id || userInfo?.user_id) {
         accounts.push({
           instagramBusinessId: userInfo.user_id || userInfo.id,
           facebookPageId: null,
@@ -412,8 +590,12 @@ export async function fetchInstagramAccountsForToken(
           followersCount: userInfo.followers_count || 0,
         });
       }
-    } catch (err) {
-      console.warn("[Meta Client] Failed querying graph.instagram.com/me:", err);
+    } catch (error) {
+      console.warn(
+        `[Meta] graph.instagram.com/me fallback failed: ${
+          error instanceof Error ? error.message : "unknown"
+        }`
+      );
     }
   }
 

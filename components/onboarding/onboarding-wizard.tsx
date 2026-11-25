@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -117,6 +117,17 @@ export function OnboardingWizard({
   initialAccountParam,
 }: OnboardingWizardProps) {
   const router = useRouter();
+
+  // Facebook appends `#_=_` to the redirect URL. Remove it so the URL stays clean.
+  useEffect(() => {
+    if (window.location.hash === "#_=_") {
+      window.history.replaceState(
+        null,
+        "",
+        window.location.pathname + window.location.search
+      );
+    }
+  }, []);
 
   const [connectedAccount] = useState<{ username: string } | null>(
     initialConnectedAccount ||

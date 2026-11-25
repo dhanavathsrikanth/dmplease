@@ -27,15 +27,24 @@ export async function GET(request: NextRequest) {
 
   const redirectUri = `${origin}/api/auth/meta/callback`;
 
-  // Dedicated Instagram Consumer App ID is only used if explicitly provided and distinct from META_APP_ID
-  const hasDedicatedInstagramApp =
-    !!process.env.INSTAGRAM_APP_ID &&
-    process.env.INSTAGRAM_APP_ID.trim() !== "" &&
-    process.env.INSTAGRAM_APP_ID.trim() !== process.env.META_APP_ID?.trim();
+  // Direct Instagram Login for Professionals. Instagram uses the same Meta app
+  // ID when the app has the Instagram product configured, so a separate
+  // INSTAGRAM_APP_ID is optional rather than required.
+  if (provider === "instagram") {
+    const igAppId = (
+      process.env.INSTAGRAM_APP_ID?.trim() ||
+      process.env.META_APP_ID?.trim() ||
+      ""
+    );
+    if (!igAppId) {
+      const errorUrl = new URL("/auth/error", request.url);
+      errorUrl.searchParams.set(
+        "error",
+        "META_APP_ID is not configured. Add it to your environment variables."
+      );
+      return NextResponse.redirect(errorUrl);
+    }
 
-  // If user explicitly configured a dedicated Instagram App ID and selected provider=instagram
-  if (provider === "instagram" && hasDedicatedInstagramApp) {
-    const igAppId = process.env.INSTAGRAM_APP_ID!.trim();
     const state = signOAuthState(user.id, nextParam, "instagram");
     const igParams = new URLSearchParams({
       client_id: igAppId,

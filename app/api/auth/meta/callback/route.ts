@@ -90,12 +90,15 @@ export async function GET(request: NextRequest) {
     const tokenExpiresAt = new Date(Date.now() + expiresSeconds * 1000);
 
     // 3. Query linked Instagram Accounts
-    const accounts = await fetchInstagramAccountsForToken(longLivedToken);
+    const accounts = await fetchInstagramAccountsForToken(
+      longLivedToken,
+      authProvider
+    );
 
     if (accounts.length === 0) {
       targetUrl.searchParams.set(
         "error",
-        "No Instagram Professional or Creator account was found linked to your Meta account."
+        "No Instagram Business or Creator account was found. Use an Instagram account linked to a Facebook Page, or connect with the Instagram option. If you just approved permissions, make sure 'pages_show_list' and 'instagram_manage_messages' were granted."
       );
       return NextResponse.redirect(targetUrl);
     }

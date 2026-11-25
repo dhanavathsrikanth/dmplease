@@ -64,6 +64,7 @@ export async function updateSession(request: NextRequest) {
     "/sitemap.xml",
     "/terms",
     "/privacy",
+    "/support",
     "/go",
   ];
   const isPublicPath = publicPaths.some(
