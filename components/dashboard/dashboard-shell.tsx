@@ -12,6 +12,7 @@ interface DashboardShellProps {
   instagramUsername: string | null;
   instagramAccountCount: number;
   userEmail?: string | null;
+  isAdmin?: boolean;
 }
 
 export function DashboardShell({
@@ -21,6 +22,7 @@ export function DashboardShell({
   instagramUsername,
   instagramAccountCount,
   userEmail,
+  isAdmin = false,
 }: DashboardShellProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -39,6 +41,7 @@ export function DashboardShell({
           onToggleCollapse={() => setCollapsed(!collapsed)}
           mobileOpen={mobileOpen}
           onCloseMobile={() => setMobileOpen(false)}
+          isAdmin={isAdmin}
         />
 
         {/* Content Column */}

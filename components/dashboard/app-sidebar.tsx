@@ -15,6 +15,7 @@ import {
   IconSelector,
   IconCheck,
   IconAddressBook,
+  IconGauge,
 } from "@tabler/icons-react";
 import { cn } from "@/lib/utils";
 import { useWorkspace } from "@/lib/workspace-context";
@@ -29,13 +30,15 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 interface AppSidebarProps {
+  isAdmin?: boolean;
   collapsed: boolean;
   onToggleCollapse: () => void;
   mobileOpen: boolean;
   onCloseMobile: () => void;
 }
 
-const navSections = [
+function getNavSections(isAdmin: boolean) {
+  return [
   {
     label: "Workspace",
     items: [
@@ -58,9 +61,13 @@ const navSections = [
     items: [
       { label: "Settings", href: "/dashboard/settings", icon: IconAdjustmentsHorizontal },
       { label: "System Health", href: "/dashboard/diagnostics", icon: IconActivityHeartbeat },
+      ...(isAdmin
+        ? [{ label: "Platform Capacity", href: "/dashboard/admin/alerts", icon: IconGauge }]
+        : []),
     ],
   },
-];
+  ];
+}
 
 function getWorkspaceInitials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -70,6 +77,7 @@ function getWorkspaceInitials(name: string): string {
 }
 
 export function AppSidebar({
+  isAdmin = false,
   collapsed,
   mobileOpen,
   onCloseMobile,
@@ -104,7 +112,7 @@ export function AppSidebar({
 
       {/* ── Navigation Sections ── */}
       <div className="flex-1 overflow-y-auto py-3 px-2 space-y-5">
-        {navSections.map((section) => (
+        {getNavSections(isAdmin).map((section) => (
           <div key={section.label} className="space-y-1">
             {!collapsed && (
               <p className="px-2.5 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-wider mb-1.5">
