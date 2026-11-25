@@ -7,14 +7,17 @@ import {
   sendDirectMessage,
   sendPrivateReply,
   sendPrivateReplyWithButton,
+  isTransientMetaError,
   type MetaApiError,
 } from "@/lib/meta/client";
 import {
   acquireSendSlot,
+  checkRecipientCooldown,
   isViralSpike,
   pickVariant,
   randomizedDelay,
 } from "@/lib/meta/safety";
+import { getQstash, getQstashWorkerUrl, hasQstash } from "@/lib/upstash";
 import { createTrackedLink } from "@/lib/tracking";
 import {
   parseCommentEvents,
@@ -44,6 +47,8 @@ export interface ProcessingResult {
   skipped: number;
   avgLatencyMs: number | null;
   errors: string[];
+  transientFailures: number;
+  permanentFailures: number;
 }
 
 export interface AutomationLike {
@@ -503,11 +508,34 @@ async function sendCommentDm(input: {
   keyword: string;
   contactId: string | null;
   accountDbId: string | null;
-}): Promise<boolean> {
+  event?: WebhookCommentEvent;
+  attempts?: number;
+}): Promise<{ sent: boolean; error?: MetaApiError }> {
   const { auto } = input;
   const cap = auto.hourlyCap ?? 0;
   const limit = await acquireSendSlot(`${input.accountId}:${auto.id}`, cap);
   if (!limit.allowed) {
+    const attempts = input.attempts ?? 0;
+    if (input.event && attempts < 3 && hasQstash()) {
+      try {
+        const base = new URL(getQstashWorkerUrl()).origin;
+        const delay = Math.max(1, Math.ceil(limit.retryAfterMs / 1000));
+        await getQstash().publishJSON({
+          url: `${base}/api/workers/send-queued-dm`,
+          body: { event: input.event, auto, attempts: attempts + 1 },
+          delay,
+          retries: 2,
+          label: ["dm-overflow"],
+        });
+        console.warn(
+          `[safety] Hourly cap reached for ${auto.name}; delayed ${delay}s (attempt ${attempts + 1})`
+        );
+        return { sent: false };
+      } catch (error) {
+        console.warn("[safety] Delayed overflow publish failed:", error);
+      }
+    }
+
     await createPending({
       workspaceId: input.workspaceId,
       kind: "queued",
@@ -519,8 +547,8 @@ async function sendCommentDm(input: {
       buttonText: auto.buttonText,
       buttonUrl: auto.buttonUrl,
     });
-    console.warn(`[safety] Hourly cap reached for ${auto.name}; message queued (retry in ${limit.retryAfterMs}ms)`);
-    return false;
+    console.warn(`[safety] Hourly cap reached for ${auto.name}; message parked (retry in ${limit.retryAfterMs}ms)`);
+    return { sent: false };
   }
 
   const variants = auto.dmVariants ?? [];
@@ -619,7 +647,7 @@ async function sendCommentDm(input: {
     }
   }
 
-  return succeeded;
+  return { sent: succeeded, error: succeeded ? undefined : result.error };
 }
 
 /**
@@ -628,8 +656,9 @@ async function sendCommentDm(input: {
  */
 export async function processCommentEventForAutomation(
   event: WebhookCommentEvent,
-  auto: AutomationLike
-): Promise<{ sent: boolean; skipped?: string }> {
+  auto: AutomationLike,
+  attempts = 0
+): Promise<{ sent: boolean; skipped?: string; error?: MetaApiError }> {
   if (!hasAdminDb()) return { sent: false, skipped: "Database unavailable" };
 
   const account = await getAccount(event.instagramAccountId);
@@ -654,6 +683,13 @@ export async function processCommentEventForAutomation(
     .limit(1)
     .maybeSingle();
   if (existing) return { sent: false, skipped: "Already messaged in 24h" };
+
+  const cooldownOk = await checkRecipientCooldown(
+    event.instagramAccountId,
+    event.mediaId,
+    event.commenterId
+  );
+  if (!cooldownOk) return { sent: false, skipped: "Recipient cooldown (10 min per post)" };
 
   const contactId = await ensureContact(
     auto.workspaceId,
@@ -702,7 +738,7 @@ export async function processCommentEventForAutomation(
     await markContactLedger(auto.workspaceId, event.commenterId, "follow_verified_at", new Date().toISOString());
   }
 
-  const sent = await sendCommentDm({
+  const dispatch = await sendCommentDm({
     token,
     accountId: event.instagramAccountId,
     commentId: event.commentId,
@@ -713,9 +749,17 @@ export async function processCommentEventForAutomation(
     keyword: matchedKeyword,
     contactId,
     accountDbId: account.id,
+    event,
+    attempts,
   });
 
-  return sent ? { sent: true } : { sent: false, skipped: "Meta rejected the DM or cap reached" };
+  return dispatch.sent
+    ? { sent: true }
+    : {
+        sent: false,
+        skipped: "Meta rejected the DM or cap reached",
+        error: dispatch.error,
+      };
 }
 
 async function processDirectRule(input: {
@@ -818,6 +862,8 @@ export async function processWebhookPayload(
     skipped: 0,
     avgLatencyMs: null,
     errors: [],
+    transientFailures: 0,
+    permanentFailures: 0,
   };
   const latencies: number[] = [];
   const dbAvailable = hasAdminDb();
@@ -879,8 +925,15 @@ export async function processWebhookPayload(
             detail: outcome.skipped ?? auto.name ?? "automation",
             latencyMs,
           });
-          if (outcome.sent) result.sent++;
-          else result.skipped++;
+          if (outcome.sent) {
+            result.sent++;
+          } else if (outcome.error) {
+            if (isTransientMetaError(outcome.error)) result.transientFailures++;
+            else result.permanentFailures++;
+            result.failed++;
+          } else {
+            result.skipped++;
+          }
         } catch (error) {
           const message = error instanceof Error ? error.message : "unknown error";
           result.errors.push(`Automation "${auto.name ?? auto.id}" failed: ${message}`);

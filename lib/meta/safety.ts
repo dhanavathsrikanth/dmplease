@@ -4,7 +4,8 @@
  * durable ledger (`safety_events`) provides the cross-instance audit trail.
  */
 
-import { getRateLimiter, hasUpstashRedis } from "@/lib/upstash";
+import { Ratelimit } from "@upstash/ratelimit";
+import { getRateLimiter, getRedis, hasUpstashRedis } from "@/lib/upstash";
 
 export interface SafetyConfig {
   /** Maximum automated sends per account per hour. 0 disables the cap. */
@@ -155,6 +156,35 @@ export async function acquireSendSlot(
 
   const local = checkRateLimit(key, hourlyCap);
   return { ...local, mode: "local" };
+}
+
+let recipientLimiter: Ratelimit | null = null;
+
+/**
+ * One trigger per follower per post per 10 minutes. Returns true when allowed.
+ * Fails open if Redis is unavailable — the 24h DB guard still applies.
+ */
+export async function checkRecipientCooldown(
+  creatorIgId: string,
+  mediaId: string,
+  senderId: string
+): Promise<boolean> {
+  if (!hasUpstashRedis()) return true;
+  if (!recipientLimiter) {
+    recipientLimiter = new Ratelimit({
+      redis: getRedis(),
+      limiter: Ratelimit.fixedWindow(1, "10 m"),
+      prefix: "rl:ig:recipient",
+      analytics: false,
+    });
+  }
+  try {
+    const result = await recipientLimiter.limit(`${creatorIgId}:${mediaId}:${senderId}`);
+    return result.success;
+  } catch (error) {
+    console.warn("[safety] Recipient cooldown unavailable:", error);
+    return true;
+  }
 }
 
 /** True when a recipient already received this automation within `days`. */

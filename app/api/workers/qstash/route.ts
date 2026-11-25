@@ -39,9 +39,20 @@ export async function POST(request: Request) {
     const result = await processWebhookPayload(body.payload);
     await markWebhookFinished(body.eventId ?? null, result, startedAt);
 
-    if (result.failed > 0) {
-      console.error("[qstash-worker] Processing failed, requesting retry:", result.errors);
-      return Response.json({ retried: true, errors: result.errors }, { status: 500 });
+    if (result.transientFailures > 0 || (result.failed > 0 && result.permanentFailures === 0)) {
+      console.error("[qstash-worker] Transient failure, requesting QStash retry:", result.errors);
+      return Response.json(
+        { retried: true, transient: result.transientFailures, errors: result.errors },
+        { status: 500 }
+      );
+    }
+
+    if (result.permanentFailures > 0) {
+      return Response.json({
+        status: "skipped_permanent_error",
+        permanent: result.permanentFailures,
+        errors: result.errors,
+      });
     }
 
     return Response.json({ success: true, sent: result.sent, skipped: result.skipped });

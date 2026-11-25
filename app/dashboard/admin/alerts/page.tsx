@@ -8,6 +8,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SendBriefButton } from "@/components/admin/send-brief-button";
+import { DlqPanel } from "@/components/admin/dlq-panel";
 
 export const metadata = {
   title: "Platform Capacity - dmplease",
@@ -154,6 +155,10 @@ async function AdminAlertsContent() {
         <pre className="whitespace-pre-wrap rounded-xl bg-[#f7f8fa] dark:bg-muted/40 p-4 text-[11px] leading-relaxed font-sans">
 {ARCHITECTURE_BRIEF}
         </pre>
+      </Card>
+
+      <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 p-5">
+        <DlqPanel />
       </Card>
 
       <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 p-5 space-y-3">

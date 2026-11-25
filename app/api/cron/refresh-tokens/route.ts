@@ -5,6 +5,7 @@ import { getAdminDb, hasAdminDb } from "@/lib/db-admin";
 import { decryptToken, encryptToken, needsReEncryption } from "@/lib/meta/vault";
 import { refreshLongLivedToken } from "@/lib/meta/client";
 import { getCronSecret } from "@/lib/config";
+import { withCronLock } from "@/lib/redis-lock";
 
 /** Scheduled cron: refresh 60-day Instagram tokens expiring within 14 days. */
 function isAuthorized(request: NextRequest): boolean {
@@ -27,6 +28,7 @@ export async function GET(request: NextRequest) {
   }
   await connection();
 
+  const run = await withCronLock("lock:cron:refresh-tokens", 45, async () => {
   if (!hasAdminDb()) {
     return NextResponse.json({ status: "skipped", message: "Admin database not configured" });
   }
@@ -76,4 +78,10 @@ export async function GET(request: NextRequest) {
     failed: results.length - refreshed,
     results,
   });
+  });
+
+  if (run.locked) {
+    return NextResponse.json({ status: "skipped_locked", message: "Refresh already in progress" }, { status: 202 });
+  }
+  return run.value!;
 }

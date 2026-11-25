@@ -15,6 +15,13 @@ export interface MetaApiError {
   [key: string]: unknown;
 }
 
+/** Rate limits, transient Meta outages and API-side retries are worth retrying. */
+export function isTransientMetaError(error?: MetaApiError): boolean {
+  const code = error?.error?.code ?? error?.code;
+  if (code === undefined) return true;
+  return [1, 2, 4, 17, 32, 100, 429, 613].includes(code);
+}
+
 function toMetaApiError(error: unknown): MetaApiError {
   if (error && typeof error === "object") return error as MetaApiError;
   return { message: error instanceof Error ? error.message : String(error) };

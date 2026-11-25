@@ -4,6 +4,7 @@ import { connection } from "next/server";
 import { getAdminDb, hasAdminDb } from "@/lib/db-admin";
 import { getCronSecret } from "@/lib/config";
 import { refreshInsightsForWorkspaces } from "@/lib/meta/insights-sync";
+import { withCronLock } from "@/lib/redis-lock";
 
 function isAuthorized(request: NextRequest): boolean {
   const header = request.headers.get("authorization") || "";
@@ -26,6 +27,7 @@ export async function GET(request: NextRequest) {
   }
   await connection();
 
+  const run = await withCronLock("lock:cron:insights", 45, async () => {
   if (!hasAdminDb()) {
     return NextResponse.json({ status: "skipped", message: "Admin database not configured" });
   }
@@ -46,4 +48,10 @@ export async function GET(request: NextRequest) {
       { status: 500 }
     );
   }
+  });
+
+  if (run.locked) {
+    return NextResponse.json({ status: "skipped_locked", message: "Insights refresh already in progress" }, { status: 202 });
+  }
+  return run.value!;
 }

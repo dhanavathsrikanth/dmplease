@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCronSecret } from "@/lib/config";
 import { getCurrentUser } from "@/lib/profile";
 import { isAdminEmail, runCapacityCheck } from "@/lib/alerts/capacity";
+import { withCronLock } from "@/lib/redis-lock";
 
 function hasCronToken(request: NextRequest): boolean {
   const header = request.headers.get("authorization") || "";
@@ -32,7 +33,16 @@ async function handle(request: NextRequest, forceBrief: boolean) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const result = await runCapacityCheck({ forceBrief });
+  const run = await withCronLock("lock:cron:capacity-alerts", 45, async () =>
+    runCapacityCheck({ forceBrief })
+  );
+  if (run.locked) {
+    return NextResponse.json(
+      { status: "skipped_locked", message: "Capacity check already in progress" },
+      { status: 202 }
+    );
+  }
+  const result = run.value!;
   return NextResponse.json({ success: result.errors.length === 0, ...result });
 }
 

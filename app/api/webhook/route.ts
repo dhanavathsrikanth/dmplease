@@ -12,6 +12,7 @@ import {
   recordWebhookReceived,
 } from "@/lib/meta/webhook-events";
 import { cleanEnv, getQstash, getQstashWorkerUrl, hasQstash } from "@/lib/upstash";
+import { claimWebhookEvent } from "@/lib/dedupe";
 
 // `after()` callbacks run until the platform's max duration.
 export const maxDuration = 60;
@@ -76,7 +77,19 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // 3. Persist a job record (best effort) before returning.
+  // 3. Drop Meta retry bursts atomically before doing any work.
+  const dedupeKey =
+    payload.entry?.[0]?.changes?.[0]?.value?.id ??
+    payload.entry?.[0]?.changes?.[0]?.value?.comment_id ??
+    payload.entry?.[0]?.messaging?.[0]?.message?.mid;
+  if (dedupeKey && !(await claimWebhookEvent(dedupeKey))) {
+    return NextResponse.json(
+      { success: true, status: "DUPLICATE_IGNORED" },
+      { status: 200, headers: NO_STORE }
+    );
+  }
+
+  // Persist a job record (best effort) before returning.
   const eventId = await recordWebhookReceived(payload);
 
   // 4. Durable queue path: hand the event to QStash and return immediately.
@@ -155,6 +168,8 @@ export async function POST(request: NextRequest) {
           skipped: 0,
           avgLatencyMs: null,
           errors: [error instanceof Error ? error.message : "Unknown processing error"],
+          transientFailures: 1,
+          permanentFailures: 0,
         },
         processingStartedAt
       );
