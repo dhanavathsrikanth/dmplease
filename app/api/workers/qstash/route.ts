@@ -6,6 +6,7 @@ import {
   markWebhookProcessing,
 } from "@/lib/meta/webhook-events";
 import { verifyQstashRequest } from "@/lib/qstash-verify";
+import { captureServerEvent } from "@/lib/posthog-server";
 import type { WebhookPayload } from "@/lib/meta/webhook";
 
 export const maxDuration = 60;
@@ -40,6 +41,22 @@ export async function POST(request: Request) {
     await markWebhookProcessing(body.eventId ?? null);
     const result = await processWebhookPayload(body.payload);
     await markWebhookFinished(body.eventId ?? null, result, startedAt);
+
+    // GA4 cannot see server-side DM delivery outcomes. One summary event per
+    // worker run keeps cost low while measuring the core product loop.
+    captureServerEvent({
+      event: "dm_batch_processed",
+      properties: {
+        sent: result.sent,
+        skipped: result.skipped,
+        failed: result.failed,
+        transient_failures: result.transientFailures,
+        permanent_failures: result.permanentFailures,
+        duration_ms: Date.now() - startedAt,
+        has_event_id: Boolean(body.eventId),
+      },
+      anonymous: true,
+    });
 
     if (result.transientFailures > 0 || (result.failed > 0 && result.permanentFailures === 0)) {
       posthogLogger?.emit({
@@ -87,6 +104,14 @@ export async function POST(request: Request) {
       severityNumber: SeverityNumber.ERROR,
     });
     console.error("[qstash-worker] Unhandled error:", error);
+    captureServerEvent({
+      event: "webhook_worker_crashed",
+      properties: {
+        error_name: error instanceof Error ? error.name : "UnknownError",
+        duration_ms: Date.now() - startedAt,
+      },
+      anonymous: true,
+    });
     return Response.json(
       { error: error instanceof Error ? error.message : "Unknown worker error" },
       { status: 500 }

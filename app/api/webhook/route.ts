@@ -13,6 +13,7 @@ import {
 } from "@/lib/meta/webhook-events";
 import { cleanEnv, getQstash, getQstashWorkerUrl, hasQstash } from "@/lib/upstash";
 import { claimWebhookEvent } from "@/lib/dedupe";
+import { captureServerEvent } from "@/lib/posthog-server";
 
 // `after()` callbacks run until the platform's max duration.
 export const maxDuration = 60;
@@ -130,6 +131,14 @@ export async function POST(request: NextRequest) {
       );
     } catch (error) {
       console.error("[webhook] QStash publish failed:", error);
+      captureServerEvent({
+        event: "queue_publish_failed",
+        properties: {
+          error_name: error instanceof Error ? error.name : "UnknownError",
+          has_event_id: Boolean(eventId),
+        },
+        anonymous: true,
+      });
       // Fall through to the in-process path so the event is not lost.
     }
   }
