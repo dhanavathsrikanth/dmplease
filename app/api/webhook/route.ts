@@ -11,7 +11,7 @@ import {
   markWebhookProcessing,
   recordWebhookReceived,
 } from "@/lib/meta/webhook-events";
-import { getQstash, getQstashWorkerUrl, hasQstash } from "@/lib/upstash";
+import { cleanEnv, getQstash, getQstashWorkerUrl, hasQstash } from "@/lib/upstash";
 
 // `after()` callbacks run until the platform's max duration.
 export const maxDuration = 60;
@@ -83,8 +83,8 @@ export async function POST(request: NextRequest) {
   //    QStash retries failed deliveries and moves exhausted ones to its DLQ.
   if (hasQstash()) {
     const origin = (
-      process.env.NEXT_PUBLIC_SITE_URL ||
-      process.env.APP_URL ||
+      cleanEnv("NEXT_PUBLIC_SITE_URL") ||
+      cleanEnv("APP_URL") ||
       request.nextUrl.origin
     ).replace(/\/$/, "");
     const firstEntry = payload.entry?.[0];

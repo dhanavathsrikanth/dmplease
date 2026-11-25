@@ -3,9 +3,9 @@ import { Ratelimit } from "@upstash/ratelimit";
 import { Client } from "@upstash/qstash";
 
 /** Strips BOM/zero-width characters that can arrive from copied env values. */
-function cleanEnv(name: string): string {
+export function cleanEnv(name: string): string {
   return (process.env[name] || "")
-    .replace(/^[\uFEFF\u200B-\u200D\s]+|[\uFEFF\u200B-\u200D\s]+$/g, "")
+    .replace(/[\uFEFF\u200B-\u200D]/g, "")
     .trim();
 }
 
