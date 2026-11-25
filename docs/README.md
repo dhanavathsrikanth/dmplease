@@ -74,6 +74,12 @@ The folders are numbered so they sort in a sensible reading order, like a deskto
 | --- | --- |
 | [Scaling Architecture & Migration Plan](09-architecture/SCALING_ARCHITECTURE.md) | Target architecture for 25,000 creators, vendor/cost decisions, security (scoped RPCs), data partitioning, observability, and phased migration. |
 
+## 10 — Product Analytics
+
+| Doc | What it covers |
+| --- | --- |
+| [Product Analytics (beyond GA4)](10-analytics/PRODUCT_ANALYTICS.md) | PostHog event taxonomy, GA4-blind server-side outcomes, saved dashboards and insights, decision thresholds, and cost controls. |
+
 ---
 
 ## Suggested Reading Order

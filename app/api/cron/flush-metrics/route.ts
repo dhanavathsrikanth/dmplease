@@ -3,6 +3,7 @@ import { getAdminDb, hasAdminDb } from "@/lib/db-admin";
 import { getRedis, hasUpstashRedis } from "@/lib/upstash";
 import { verifyQstashRequest } from "@/lib/qstash-verify";
 import { acquireRedisLock, releaseRedisLock } from "@/lib/redis-lock";
+import { captureServerEvent } from "@/lib/posthog-server";
 import {
   DIRTY_METRICS_SET,
   buildMetricKey,
@@ -123,6 +124,21 @@ export async function POST(request: Request) {
       console.error("[flush-metrics] DB upsert failed; deltas restored:", error);
       return NextResponse.json({ error: "DB flush failed" }, { status: 500 });
     }
+
+    // One aggregate event per flush, not per click: follower-side engagement
+    // (bio clicks, DMs, link clicks, replies) is invisible to GA4.
+    captureServerEvent({
+      event: "daily_metrics_flushed",
+      properties: {
+        flushed_keys: keys.length,
+        creator_rows: rows.length,
+        bio_clicks: rows.reduce((sum, row) => sum + row.bioClicks, 0),
+        dms_sent: rows.reduce((sum, row) => sum + row.dmSent, 0),
+        dm_link_clicks: rows.reduce((sum, row) => sum + row.dmLinkClicks, 0),
+        dm_replies: rows.reduce((sum, row) => sum + row.dmReplies, 0),
+      },
+      anonymous: true,
+    });
 
     return NextResponse.json({
       flushedKeys: keys.length,
