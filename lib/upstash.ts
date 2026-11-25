@@ -2,6 +2,13 @@ import { Redis } from "@upstash/redis";
 import { Ratelimit } from "@upstash/ratelimit";
 import { Client } from "@upstash/qstash";
 
+/** Strips BOM/zero-width characters that can arrive from copied env values. */
+function cleanEnv(name: string): string {
+  return (process.env[name] || "")
+    .replace(/^[\uFEFF\u200B-\u200D\s]+|[\uFEFF\u200B-\u200D\s]+$/g, "")
+    .trim();
+}
+
 /** Server-only Upstash clients. All calls are HTTPS, so they work from Vercel. */
 
 let redis: Redis | null = null;
@@ -9,26 +16,23 @@ let qstash: Client | null = null;
 const limiters = new Map<number, Ratelimit>();
 
 export function hasUpstashRedis(): boolean {
-  return Boolean(
-    process.env.UPSTASH_REDIS_REST_URL?.trim() &&
-      process.env.UPSTASH_REDIS_REST_TOKEN?.trim()
-  );
+  return Boolean(cleanEnv("UPSTASH_REDIS_REST_URL") && cleanEnv("UPSTASH_REDIS_REST_TOKEN"));
 }
 
 export function hasQstash(): boolean {
   return Boolean(
-    process.env.QSTASH_TOKEN?.trim() &&
-      process.env.QSTASH_WORKER_URL?.trim() &&
-      process.env.QSTASH_CURRENT_SIGNING_KEY?.trim() &&
-      process.env.QSTASH_NEXT_SIGNING_KEY?.trim()
+    cleanEnv("QSTASH_TOKEN") &&
+      cleanEnv("QSTASH_WORKER_URL") &&
+      cleanEnv("QSTASH_CURRENT_SIGNING_KEY") &&
+      cleanEnv("QSTASH_NEXT_SIGNING_KEY")
   );
 }
 
 export function getRedis(): Redis {
   if (!redis) {
     redis = new Redis({
-      url: process.env.UPSTASH_REDIS_REST_URL!.trim(),
-      token: process.env.UPSTASH_REDIS_REST_TOKEN!.trim(),
+      url: cleanEnv("UPSTASH_REDIS_REST_URL"),
+      token: cleanEnv("UPSTASH_REDIS_REST_TOKEN"),
     });
   }
   return redis;
@@ -50,9 +54,20 @@ export function getRateLimiter(hourlyCap: number): Ratelimit {
   return limiter;
 }
 
+export function getQstashWorkerUrl(): string {
+  return cleanEnv("QSTASH_WORKER_URL");
+}
+
+export function getQstashSigningKeys(): { current: string; next: string } {
+  return {
+    current: cleanEnv("QSTASH_CURRENT_SIGNING_KEY"),
+    next: cleanEnv("QSTASH_NEXT_SIGNING_KEY"),
+  };
+}
+
 export function getQstash(): Client {
   if (!qstash) {
-    qstash = new Client({ token: process.env.QSTASH_TOKEN!.trim() });
+    qstash = new Client({ token: cleanEnv("QSTASH_TOKEN") });
   }
   return qstash;
 }

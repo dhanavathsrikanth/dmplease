@@ -1,4 +1,5 @@
 import { Receiver } from "@upstash/qstash";
+import { getQstashSigningKeys } from "@/lib/upstash";
 
 /**
  * Verifies a QStash delivery inside the handler (not at module evaluation),
@@ -9,8 +10,7 @@ export async function verifyQstashRequest(
   request: Request
 ): Promise<string | null> {
   const signature = request.headers.get("upstash-signature");
-  const current = process.env.QSTASH_CURRENT_SIGNING_KEY?.trim();
-  const next = process.env.QSTASH_NEXT_SIGNING_KEY?.trim();
+  const { current, next } = getQstashSigningKeys();
 
   if (!signature || !current || !next) return null;
 

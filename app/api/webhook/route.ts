@@ -11,7 +11,7 @@ import {
   markWebhookProcessing,
   recordWebhookReceived,
 } from "@/lib/meta/webhook-events";
-import { getQstash, hasQstash } from "@/lib/upstash";
+import { getQstash, getQstashWorkerUrl, hasQstash } from "@/lib/upstash";
 
 // `after()` callbacks run until the platform's max duration.
 export const maxDuration = 60;
@@ -96,7 +96,7 @@ export async function POST(request: NextRequest) {
 
     try {
       const published = await getQstash().publishJSON({
-        url: process.env.QSTASH_WORKER_URL!.trim(),
+        url: getQstashWorkerUrl(),
         body: { eventId, payload },
         label: ["meta-webhook"],
         retries: 3,
