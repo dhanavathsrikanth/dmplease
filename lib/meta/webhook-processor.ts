@@ -10,7 +10,7 @@ import {
   type MetaApiError,
 } from "@/lib/meta/client";
 import {
-  checkRateLimit,
+  acquireSendSlot,
   isViralSpike,
   pickVariant,
   randomizedDelay,
@@ -506,7 +506,7 @@ async function sendCommentDm(input: {
 }): Promise<boolean> {
   const { auto } = input;
   const cap = auto.hourlyCap ?? 0;
-  const limit = checkRateLimit(`${input.accountId}:${auto.id}`, cap);
+  const limit = await acquireSendSlot(`${input.accountId}:${auto.id}`, cap);
   if (!limit.allowed) {
     await createPending({
       workspaceId: input.workspaceId,

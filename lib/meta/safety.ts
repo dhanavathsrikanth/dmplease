@@ -4,6 +4,8 @@
  * durable ledger (`safety_events`) provides the cross-instance audit trail.
  */
 
+import { getRateLimiter, hasUpstashRedis } from "@/lib/upstash";
+
 export interface SafetyConfig {
   /** Maximum automated sends per account per hour. 0 disables the cap. */
   hourlyCap: number;
@@ -116,6 +118,43 @@ export function validateAutomationInput(input: {
   }
 
   return issues;
+}
+
+export interface SendSlot {
+  allowed: boolean;
+  remaining: number;
+  retryAfterMs: number;
+  mode: "redis" | "local" | "unlimited";
+}
+
+/**
+ * Shared rate-limit gate. Uses Upstash Redis when configured so the cap is
+ * global across every serverless instance; falls back to the in-process bucket.
+ */
+export async function acquireSendSlot(
+  key: string,
+  hourlyCap: number
+): Promise<SendSlot> {
+  if (hourlyCap <= 0) {
+    return { allowed: true, remaining: Infinity, retryAfterMs: 0, mode: "unlimited" };
+  }
+
+  if (hasUpstashRedis()) {
+    try {
+      const result = await getRateLimiter(hourlyCap).limit(key);
+      return {
+        allowed: result.success,
+        remaining: result.remaining,
+        retryAfterMs: Math.max(0, result.reset - Date.now()),
+        mode: "redis",
+      };
+    } catch (error) {
+      console.warn("[safety] Redis limiter unavailable, using local bucket:", error);
+    }
+  }
+
+  const local = checkRateLimit(key, hourlyCap);
+  return { ...local, mode: "local" };
 }
 
 /** True when a recipient already received this automation within `days`. */

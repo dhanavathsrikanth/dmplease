@@ -5,6 +5,7 @@ import {
   isProduction,
 } from "@/lib/config";
 import { hasWebhookSigningSecret } from "@/lib/meta/webhook";
+import { hasQstash, hasUpstashRedis } from "@/lib/upstash";
 
 /**
  * Public, secret-free configuration probe. Reveals only booleans — never
@@ -14,6 +15,8 @@ export async function GET() {
   const checks = {
     databaseUrl: hasDatabaseUrl(),
     supabaseServiceKey: hasSecret("SUPABASE_SERVICE_ROLE_KEY"),
+    upstashRedis: hasUpstashRedis(),
+    qstash: hasQstash(),
     metaAppId: hasSecret("META_APP_ID") || hasSecret("INSTAGRAM_APP_ID"),
     webhookSigning: hasWebhookSigningSecret(),
     webhookVerifyToken:

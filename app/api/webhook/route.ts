@@ -11,6 +11,7 @@ import {
   markWebhookProcessing,
   recordWebhookReceived,
 } from "@/lib/meta/webhook-events";
+import { getQstash, hasQstash } from "@/lib/upstash";
 
 // `after()` callbacks run until the platform's max duration.
 export const maxDuration = 60;
@@ -78,7 +79,49 @@ export async function POST(request: NextRequest) {
   // 3. Persist a job record (best effort) before returning.
   const eventId = await recordWebhookReceived(payload);
 
-  // 4. Process after the response is sent. Nothing here blocks Meta.
+  // 4. Durable queue path: hand the event to QStash and return immediately.
+  //    QStash retries failed deliveries and moves exhausted ones to its DLQ.
+  if (hasQstash()) {
+    const origin = (
+      process.env.NEXT_PUBLIC_SITE_URL ||
+      process.env.APP_URL ||
+      request.nextUrl.origin
+    ).replace(/\/$/, "");
+    const firstEntry = payload.entry?.[0];
+    const externalId =
+      firstEntry?.changes?.[0]?.value?.id ??
+      firstEntry?.changes?.[0]?.value?.comment_id ??
+      firstEntry?.messaging?.[0]?.message?.mid ??
+      `${payload.object}:${firstEntry?.id ?? "unknown"}`;
+
+    try {
+      const published = await getQstash().publishJSON({
+        url: process.env.QSTASH_WORKER_URL!.trim(),
+        body: { eventId, payload },
+        label: ["meta-webhook"],
+        retries: 3,
+        failureCallback: `${origin}/api/workers/qstash-failed`,
+        ...(externalId ? { deduplicationId: `meta-${externalId}` } : {}),
+      });
+
+      return NextResponse.json(
+        {
+          success: true,
+          status: "EVENT_RECEIVED",
+          eventId,
+          queued: true,
+          messageId: published.messageId,
+          storage: eventId ? "recorded" : "unavailable",
+        },
+        { status: 200, headers: NO_STORE }
+      );
+    } catch (error) {
+      console.error("[webhook] QStash publish failed:", error);
+      // Fall through to the in-process path so the event is not lost.
+    }
+  }
+
+  // 5. Fallback: process after the response is sent. Nothing here blocks Meta.
   const processingStartedAt = Date.now();
   after(async () => {
     try {
