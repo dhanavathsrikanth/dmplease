@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import posthog from "posthog-js";
 import {
   Megaphone,
   MessageCircle,
@@ -91,6 +92,9 @@ export function CampaignsList({
         );
         showToast(`Failed to update campaign: ${res.error || "Unknown error"}`);
       } else {
+        posthog.capture("campaign_status_changed", {
+          active: nextActive,
+        });
         showToast(nextActive ? "Campaign activated" : "Campaign paused");
       }
     } catch {
@@ -110,6 +114,10 @@ export function CampaignsList({
     try {
       const res = await deleteCampaign(deleteTarget.id);
       if (res.success) {
+        posthog.capture("campaign_deleted", {
+          post_scope: deleteTarget.postScope ?? "unknown",
+          was_active: deleteTarget.active,
+        });
         setAutomations((prev) => prev.filter((a) => a.id !== deleteTarget.id));
         showToast(`Deleted "${deleteTarget.name}"`);
         setDeleteTarget(null);
@@ -167,6 +175,10 @@ export function CampaignsList({
       if (!res.ok || !data.success) {
         setRerunError(data.error || "Could not queue this re-run.");
       } else {
+        posthog.capture("campaign_rerun_queued", {
+          queued_count: data.queued ?? 0,
+          post_scope: rerunTarget.postScope ?? "unknown",
+        });
         const name = rerunTarget.name;
         setRerunTarget(null);
         setRerunCount(null);

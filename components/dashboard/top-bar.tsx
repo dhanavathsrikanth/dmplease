@@ -19,6 +19,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useWorkspace } from "@/lib/workspace-context";
+import posthog from "posthog-js";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 
@@ -52,6 +53,8 @@ export function TopBar({
   const pageInfo = pageTitles[pathname] || { title: "Dashboard", category: "Workspace" };
 
   const handleSignOut = async () => {
+    posthog.reset();
+
     const supabase = createClient();
     await supabase.auth.signOut();
     router.push("/auth/login");

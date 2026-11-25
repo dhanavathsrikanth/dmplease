@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Roboto, Rubik } from "next/font/google";
 import { ThemeProvider } from "next-themes";
+import { PostHogAuth } from "@/components/theme-switcher";
 import "./globals.css";
 
 const defaultUrl = process.env.VERCEL_URL
@@ -41,6 +42,7 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
+          <PostHogAuth />
           {children}
         </ThemeProvider>
       </body>

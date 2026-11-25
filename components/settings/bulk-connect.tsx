@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import posthog from "posthog-js";
 import { CheckCircle2, Layers3, Loader2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -96,6 +97,9 @@ export function BulkConnect({ enabled }: { enabled: boolean }) {
         setMessage(json.error ?? "Could not connect the selected accounts.");
         return;
       }
+      posthog.capture("instagram_accounts_connected", {
+        account_count: json.created ?? 0,
+      });
       setMessage(`${json.created ?? 0} workspace${json.created === 1 ? "" : "s"} created.`);
       await loadAccounts();
     } catch {

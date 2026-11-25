@@ -1,5 +1,6 @@
 import { getAdminDb, hasAdminDb } from "@/lib/db-admin";
 import { verifyQstashRequest } from "@/lib/qstash-verify";
+import { captureServerEvent } from "@/lib/posthog-server";
 
 /** QStash failure callback: records a dead-letter admin alert. */
 export async function POST(request: Request) {
@@ -22,6 +23,12 @@ export async function POST(request: Request) {
       console.error("[qstash-dlq] Could not record alert:", error);
     }
   }
+
+  captureServerEvent({
+    event: "dlq_message_created",
+    properties: { source: "qstash" },
+    anonymous: true,
+  });
 
   return Response.json({ recorded: true });
 }

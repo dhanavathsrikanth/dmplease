@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import posthog from "posthog-js";
 import {
   Check,
   CheckCircle2,
@@ -179,8 +180,14 @@ export function OnboardingWizard({
     };
     const res = await submitOnboarding(payload);
     setIsSubmitting(false);
-    if (res.success) setStep(4);
-    else setErrorMsg(res.error || "Failed to save. Please try again.");
+    if (res.success) {
+      posthog.capture("onboarding_completed", {
+        primary_goal: selectedGoal,
+        attribution_source: chosen || heardFrom,
+        instagram_connected: Boolean(connectedAccount),
+      });
+      setStep(4);
+    } else setErrorMsg(res.error || "Failed to save. Please try again.");
   };
 
   const totalSteps = 3;

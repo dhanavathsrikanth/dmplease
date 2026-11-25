@@ -1,4 +1,6 @@
+import { SeverityNumber } from "@opentelemetry/api-logs";
 import { NextResponse } from "next/server";
+import { posthogLogger } from "@/instrumentation";
 import {
   hasDatabaseUrl,
   hasSecret,
@@ -26,6 +28,15 @@ export async function GET() {
   };
 
   const ready = Object.values(checks).every(Boolean);
+
+  posthogLogger?.emit({
+    body: "health_check_completed",
+    severityNumber: ready ? SeverityNumber.INFO : SeverityNumber.WARN,
+    attributes: {
+      health_check_ready: ready,
+      health_check_status_code: ready ? 200 : 503,
+    },
+  });
 
   return NextResponse.json(
     {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import posthog from "posthog-js";
 import {
   AlertCircle,
   Check,
@@ -225,6 +226,13 @@ export function RuleManager({
           ? prev.map((rule) => (rule.id === form.id ? saved : rule))
           : [saved, ...prev]
       );
+      posthog.capture(form.id ? "inbox_rule_updated" : "inbox_rule_created", {
+        trigger_type: form.triggerType,
+        keyword_count: payload.keywords.length,
+        active: form.active,
+        has_action_button: Boolean(form.buttonText.trim() && form.buttonUrl.trim()),
+        collects_contact_field: form.collectField !== "none",
+      });
       setIsFormOpen(false);
       flash(form.id ? "Rule updated" : "Rule created");
     } catch {
@@ -240,6 +248,10 @@ export function RuleManager({
     try {
       const result = await deleteRule(deleteTarget.id);
       if (result.success) {
+        posthog.capture("inbox_rule_deleted", {
+          trigger_type: deleteTarget.triggerType,
+          was_active: deleteTarget.active,
+        });
         setRules((prev) => prev.filter((rule) => rule.id !== deleteTarget.id));
         setDeleteTarget(null);
         flash("Rule deleted");
@@ -271,6 +283,10 @@ export function RuleManager({
         );
         flash(result.error || "Could not change the rule status.", true);
       } else {
+        posthog.capture("inbox_rule_status_changed", {
+          trigger_type: rule.triggerType,
+          active: nextActive,
+        });
         flash(nextActive ? "Rule activated" : "Rule paused");
       }
     } catch {

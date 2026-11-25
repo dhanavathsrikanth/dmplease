@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import posthog from "posthog-js";
 import { Button } from "@/components/ui/button";
 import { Unlink, Loader2 } from "lucide-react";
 
@@ -25,6 +26,7 @@ export function DisconnectButton() {
       });
 
       if (res.ok) {
+        posthog.capture("instagram_account_disconnected");
         router.refresh();
         window.location.href = "/dashboard/settings";
       } else {

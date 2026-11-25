@@ -68,6 +68,12 @@ The folders are numbered so they sort in a sensible reading order, like a deskto
 | --- | --- |
 | [Public Bio Page Rendering](08-public-pages/PUBLIC_BIO_PAGE_RENDERING.md) | Cached Server Component bio page, SEO metadata, R2 image allowlisting via `next/image`, and `/go/[linkId]` click routing. |
 
+## 09 — Architecture
+
+| Doc | What it covers |
+| --- | --- |
+| [Scaling Architecture & Migration Plan](09-architecture/SCALING_ARCHITECTURE.md) | Target architecture for 25,000 creators, vendor/cost decisions, security (scoped RPCs), data partitioning, observability, and phased migration. |
+
 ---
 
 ## Suggested Reading Order

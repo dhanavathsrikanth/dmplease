@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { OAuthButtons } from "@/components/auth/oauth-buttons";
+import posthog from "posthog-js";
 
 export function SignUpForm() {
   const router = useRouter();
@@ -68,6 +69,13 @@ export function SignUpForm() {
 
       if (error) {
         throw error;
+      }
+
+      if (data?.user) {
+        posthog.capture("user_signed_up", {
+          method: "password",
+          user_id: data.user.id,
+        });
       }
 
       // Check if user already exists (Supabase returns empty identities array for existing users)

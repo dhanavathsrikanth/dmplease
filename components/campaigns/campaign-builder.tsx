@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import posthog from "posthog-js";
 import {
   Sparkles,
   ArrowLeft,
@@ -192,6 +193,13 @@ export function CampaignBuilder({ initialHandle }: CampaignBuilderProps = {}) {
       const res = await createCampaign(payload);
 
       if (res.success) {
+        posthog.capture("campaign_published", {
+          post_scope: postScope,
+          keyword_count: keywords.length,
+          public_reply_enabled: publicReplyEnabled,
+          follow_gate_enabled: followGateEnabled,
+          has_action_button: Boolean(buttonText.trim() && buttonUrl.trim()),
+        });
         setPublishStatus("success");
         setTimeout(() => {
           router.push("/dashboard/campaigns?created=1");

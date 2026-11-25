@@ -1,3 +1,5 @@
+import { SeverityNumber } from "@opentelemetry/api-logs";
+import { posthogLogger } from "@/instrumentation";
 import { processWebhookPayload } from "@/lib/meta/webhook-processor";
 import {
   markWebhookFinished,
@@ -40,6 +42,14 @@ export async function POST(request: Request) {
     await markWebhookFinished(body.eventId ?? null, result, startedAt);
 
     if (result.transientFailures > 0 || (result.failed > 0 && result.permanentFailures === 0)) {
+      posthogLogger?.emit({
+        body: "webhook_worker_retry_requested",
+        severityNumber: SeverityNumber.ERROR,
+        attributes: {
+          transient_failures: result.transientFailures,
+          permanent_failures: result.permanentFailures,
+        },
+      });
       console.error("[qstash-worker] Transient failure, requesting QStash retry:", result.errors);
       return Response.json(
         { retried: true, transient: result.transientFailures, errors: result.errors },
@@ -48,6 +58,13 @@ export async function POST(request: Request) {
     }
 
     if (result.permanentFailures > 0) {
+      posthogLogger?.emit({
+        body: "webhook_worker_permanent_failure",
+        severityNumber: SeverityNumber.WARN,
+        attributes: {
+          permanent_failures: result.permanentFailures,
+        },
+      });
       return Response.json({
         status: "skipped_permanent_error",
         permanent: result.permanentFailures,
@@ -55,8 +72,20 @@ export async function POST(request: Request) {
       });
     }
 
+    posthogLogger?.emit({
+      body: "webhook_worker_completed",
+      severityNumber: SeverityNumber.INFO,
+      attributes: {
+        sent_count: result.sent,
+        skipped_count: result.skipped,
+      },
+    });
     return Response.json({ success: true, sent: result.sent, skipped: result.skipped });
   } catch (error) {
+    posthogLogger?.emit({
+      body: "webhook_worker_failed",
+      severityNumber: SeverityNumber.ERROR,
+    });
     console.error("[qstash-worker] Unhandled error:", error);
     return Response.json(
       { error: error instanceof Error ? error.message : "Unknown worker error" },

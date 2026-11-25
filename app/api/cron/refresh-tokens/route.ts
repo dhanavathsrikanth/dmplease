@@ -6,6 +6,7 @@ import { decryptToken, encryptToken, needsReEncryption } from "@/lib/meta/vault"
 import { refreshLongLivedToken } from "@/lib/meta/client";
 import { getCronSecret } from "@/lib/config";
 import { withCronLock } from "@/lib/redis-lock";
+import { captureServerEvent } from "@/lib/posthog-server";
 
 /** Scheduled cron: refresh 60-day Instagram tokens expiring within 14 days. */
 function isAuthorized(request: NextRequest): boolean {
@@ -71,6 +72,15 @@ export async function GET(request: NextRequest) {
   }
 
   const refreshed = results.filter((result) => result.refreshed).length;
+  captureServerEvent({
+    event: "token_refresh_completed",
+    properties: {
+      processed: (accounts ?? []).length,
+      refreshed,
+      failed: results.length - refreshed,
+    },
+    anonymous: true,
+  });
   return NextResponse.json({
     success: true,
     processed: (accounts ?? []).length,

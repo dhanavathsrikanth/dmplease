@@ -12,6 +12,7 @@ import { encryptToken } from "@/lib/meta/vault";
 import { createClient } from "@/lib/supabase/server";
 import { prisma } from "@/lib/prisma";
 import { hasDatabaseUrl } from "@/lib/config";
+import { captureServerEvent } from "@/lib/posthog-server";
 
 export async function GET(request: NextRequest) {
   const host = request.headers.get("x-forwarded-host") || request.nextUrl.host;
@@ -263,6 +264,16 @@ export async function GET(request: NextRequest) {
         await subscribeInstagramAccountToWebhooks(subscribeTargetId, rawAccountToken);
       }
     }
+
+    captureServerEvent({
+      event: "instagram_account_connected",
+      distinctId: userId,
+      properties: {
+        provider: authProvider,
+        accounts_connected: accounts.length,
+        workspaces_created: primaryWorkspaceId ? 1 : 0,
+      },
+    });
 
     targetUrl.searchParams.set("status", "connected");
     targetUrl.searchParams.set("account", primaryAccount.username);

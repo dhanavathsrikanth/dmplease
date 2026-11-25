@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import posthog from "posthog-js";
 import {
   Search,
   CheckCircle2,
@@ -107,6 +108,9 @@ export function InboxInteractiveChat({
       if (!res.ok || !data.success) {
         setSendError(data.error || "Failed to deliver message via Meta API");
       } else {
+        posthog.capture("inbox_reply_sent", {
+          conversation_type: activeConv.messages ? "stored" : "legacy",
+        });
         // Append new manual message to conversation stream
         const newMsg: MessageBubble = {
           id: `manual-${Date.now()}`,

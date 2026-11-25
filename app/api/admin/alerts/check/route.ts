@@ -4,6 +4,7 @@ import { getCronSecret } from "@/lib/config";
 import { getCurrentUser } from "@/lib/profile";
 import { isAdminEmail, runCapacityCheck } from "@/lib/alerts/capacity";
 import { withCronLock } from "@/lib/redis-lock";
+import { captureServerEvent } from "@/lib/posthog-server";
 
 function hasCronToken(request: NextRequest): boolean {
   const header = request.headers.get("authorization") || "";
@@ -43,6 +44,18 @@ async function handle(request: NextRequest, forceBrief: boolean) {
     );
   }
   const result = run.value!;
+  if (result.created > 0) {
+    captureServerEvent({
+      event: "capacity_alert_created",
+      properties: {
+        count: result.created,
+        accounts: result.metrics.accounts,
+        events_24h: result.metrics.events24h,
+        failures_24h: result.metrics.failures24h,
+      },
+      anonymous: true,
+    });
+  }
   return NextResponse.json({ success: result.errors.length === 0, ...result });
 }
 

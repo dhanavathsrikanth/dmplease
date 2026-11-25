@@ -10,7 +10,64 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Laptop, Moon, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import posthog from "posthog-js";
+import type { User } from "@supabase/supabase-js";
+import { createClient } from "@/lib/supabase/client";
+
+export function PostHogAuth() {
+  const identifiedUserId = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (
+      !process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN ||
+      !process.env.NEXT_PUBLIC_POSTHOG_HOST
+    ) {
+      return;
+    }
+
+    const supabase = createClient();
+
+    const identifyCurrentUser = (user: User) => {
+      if (identifiedUserId.current === user.id) {
+        return;
+      }
+
+      if (identifiedUserId.current) {
+        posthog.reset();
+      }
+
+      posthog.identify(user.id, user.email ? { email: user.email } : undefined);
+      identifiedUserId.current = user.id;
+    };
+
+    void supabase.auth.getUser().then(({ data: { user } }) => {
+      if (user) {
+        identifyCurrentUser(user);
+      }
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_OUT") {
+        if (identifiedUserId.current) {
+          posthog.reset();
+          identifiedUserId.current = null;
+        }
+        return;
+      }
+
+      if (event === "SIGNED_IN" && session?.user) {
+        identifyCurrentUser(session.user);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  return null;
+}
 
 const ThemeSwitcher = () => {
   const [mounted, setMounted] = useState(false);

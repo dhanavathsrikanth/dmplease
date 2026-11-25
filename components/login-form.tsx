@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { OAuthButtons } from "@/components/auth/oauth-buttons";
+import posthog from "posthog-js";
 
 export function LoginForm() {
   const router = useRouter();
@@ -43,13 +44,20 @@ export function LoginForm() {
 
     try {
       const supabase = createClient();
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
 
       if (error) {
         throw error;
+      }
+
+      if (data?.user) {
+        posthog.capture("user_signed_in", {
+          method: "password",
+          user_id: data.user.id,
+        });
       }
 
       if (typeof window !== "undefined") {
