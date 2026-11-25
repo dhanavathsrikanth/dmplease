@@ -5,13 +5,10 @@ import {
   ArrowRight,
   Check,
   CheckCircle2,
-  Copy,
-  ExternalLink,
   Instagram,
   Layers,
   MessageSquare,
   ShieldCheck,
-  Sparkles,
   Terminal,
   Zap,
   MousePointer2,
@@ -121,7 +118,7 @@ export default async function Home(props: {
           <span className="size-2 rounded-full bg-[#fcb900] animate-pulse" />
           <span>Visual Instagram DM Automations</span>
           <span className="text-[#ffd02f]">•</span>
-          <span className="font-mono text-[11px]">Sub-280ms Dispatcher</span>
+          <span className="font-mono text-[11px]">Official Meta Graph API</span>
         </div>
 
         {/* Display Typography */}
@@ -252,7 +249,10 @@ export default async function Home(props: {
                 </div>
               </div>
 
-              {/* Pastel Metrics Row */}
+              {/* Pastel Metrics Row — illustrative sample data */}
+              <p className="text-[10px] font-medium text-[#6b6f7e] dark:text-muted-foreground mb-2">
+                Sample dashboard data
+              </p>
               <div className="grid grid-cols-3 gap-3">
                 <div className="p-3.5 rounded-2xl border border-[#c3faf5] bg-[#c3faf5]/30 dark:bg-[#187574]/20">
                   <div className="text-[10px] text-[#187574] dark:text-[#c3faf5] uppercase font-bold">DMs Sent</div>
@@ -433,28 +433,15 @@ export default async function Home(props: {
                 <span className="text-[11px] text-neutral-500">TypeScript</span>
               </div>
               <pre className="p-6 text-xs font-mono leading-relaxed overflow-x-auto text-neutral-300">
-                <code>{`// Webhook handler verifying signature and dispatching DM
+                <code>{`// Verify first, acknowledge instantly, dispatch in the background
 export async function POST(req: Request) {
-  const body = await req.json();
-  const event = body.entry?.[0]?.messaging?.[0];
-
-  if (event?.message?.text) {
-    const keyword = event.message.text.toUpperCase().trim();
-    const campaign = await db.automation.findFirst({
-      where: { triggerKeyword: keyword, active: true },
-    });
-
-    if (campaign) {
-      await metaClient.sendDirectMessage({
-        recipientId: event.sender.id,
-        text: campaign.responseMessage,
-      });
-
-      await logDispatcherEvent({ status: 'DELIVERED', latencyMs: 240 });
-    }
+  const body = await req.text();
+  if (!verifyWebhookSignature(body, req.headers)) {
+    return Response.json({ error: 'Invalid signature' }, { status: 401 });
   }
 
-  return Response.json({ success: true, status: 200 });
+  after(() => processWebhookPayload(JSON.parse(body)));
+  return Response.json({ status: 'EVENT_RECEIVED' });
 }`}</code>
               </pre>
             </div>
@@ -635,7 +622,7 @@ export async function POST(req: Request) {
             Frequently Asked Questions
           </h2>
           <p className="text-sm text-[#555a6a] dark:text-muted-foreground max-w-lg mx-auto">
-            Everything you need to know about Instagram DM automations, Meta compliance, and our sub-280ms dispatcher.
+            Everything you need to know about Instagram DM automations, Meta compliance, and how deliveries are dispatched.
           </p>
         </div>
 
@@ -702,7 +689,7 @@ export async function POST(req: Request) {
               <span className="text-neutral-400">Visual Instagram Automation</span>
             </div>
             <p className="text-[11px] text-[#6b6f7e] max-w-sm">
-              The collaborative canvas for converting comments to direct messages in sub-300ms.
+              The visual workspace for turning Instagram comments into automated direct messages.
             </p>
           </div>
 
@@ -723,7 +710,7 @@ export async function POST(req: Request) {
 
           <div className="flex items-center gap-2.5">
             <span className="size-2 rounded-full bg-[#00b473]" />
-            <span className="font-mono text-[11px] text-neutral-300">All systems operational</span>
+            <span className="font-mono text-[11px] text-neutral-300">Built on Meta&apos;s official Graph API</span>
           </div>
         </div>
       </footer>

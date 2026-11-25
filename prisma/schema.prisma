@@ -41,6 +41,15 @@ model Workspace {
   automations       Automation[]
   instagramAccounts InstagramAccount[]
   dmLogs            DmLog[]
+  contacts          Contact[]
+  conversations     Conversation[]
+  messages          Message[] @relation("WorkspaceMessages")
+  dmRules           DmRule[]
+  commentEvents    CommentEvent[]
+  pendingDms        PendingDm[]
+  linkClicks        LinkClick[]
+  safetyEvents      SafetyEvent[]
+  insightSnapshots  InsightSnapshot[]
 
   @@map("workspaces")
 }
@@ -75,6 +84,10 @@ model Automation {
   publicReplyEnabled  Boolean  @default(false) @map("public_reply_enabled")
   publicReplyMessages String[] @default([]) @map("public_reply_messages")
   followGateEnabled   Boolean  @default(false) @map("follow_gate_enabled")
+  dmVariants          String[] @default([]) @map("dm_variants")
+  collectField        String?  @map("collect_field")
+  openingMessage      String?  @map("opening_message")
+  hourlyCap           Int      @default(0) @map("hourly_cap")
   active              Boolean  @default(true)
   createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt           DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -122,6 +135,167 @@ model DmLog {
   automation       Automation?       @relation(fields: [automationId], references: [id], onDelete: SetNull)
 
   @@map("dm_logs")
+}
+
+model Contact {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId      String   @map("workspace_id") @db.Uuid
+  instagramId      String   @map("instagram_id")
+  username         String?
+  displayName      String?  @map("display_name")
+  email            String?
+  phone            String?
+  properties       Json     @default("{}")
+  tags             String[] @default([])
+  source           String?
+  optedInAt        DateTime? @map("opted_in_at") @db.Timestamptz(6)
+  followVerifiedAt DateTime? @map("follow_verified_at") @db.Timestamptz(6)
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace     Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+
+  @@unique([workspaceId, instagramId])
+  @@map("contacts")
+}
+
+model Conversation {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId         String    @map("workspace_id") @db.Uuid
+  instagramAccountId  String?   @map("instagram_account_id") @db.Uuid
+  contactId           String    @map("contact_id") @db.Uuid
+  status              String    @default("open")
+  isBotActive         Boolean   @default(true) @map("is_bot_active")
+  lastMessageAt       DateTime  @default(now()) @map("last_message_at") @db.Timestamptz(6)
+
+  workspace     Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  contact       Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  messages      Message[]
+
+  @@unique([contactId, instagramAccountId])
+  @@map("conversations")
+}
+
+model Message {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId    String   @map("workspace_id") @db.Uuid
+  conversationId String   @map("conversation_id") @db.Uuid
+  externalId     String?  @map("external_id")
+  direction      String
+  senderType     String   @default("bot") @map("sender_type")
+  contentType    String   @default("text") @map("content_type")
+  content        Json
+  deliveryStatus String?  @map("delivery_status")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  workspace    Workspace    @relation("WorkspaceMessages", fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, externalId])
+  @@map("messages")
+}
+
+model DmRule {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId   String   @map("workspace_id") @db.Uuid
+  name          String
+  triggerType   String   @map("trigger_type")
+  keywords      String[] @default([])
+  message       String
+  variants      String[] @default([])
+  buttonText    String?  @map("button_text")
+  buttonUrl     String?  @map("button_url")
+  collectField  String?  @map("collect_field")
+  oncePerDays   Int      @default(45) @map("once_per_days")
+  priority      Int      @default(0)
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@map("dm_rules")
+}
+
+model CommentEvent {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId         String   @map("workspace_id") @db.Uuid
+  instagramAccountId  String?  @map("instagram_account_id") @db.Uuid
+  externalId          String   @map("external_id")
+  mediaId             String?  @map("media_id")
+  commenterId         String   @map("commenter_id")
+  commenterUsername   String?  @map("commenter_username")
+  text                String?
+  receivedAt          DateTime @default(now()) @map("received_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, externalId])
+  @@map("comment_events")
+}
+
+model PendingDm {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId         String   @map("workspace_id") @db.Uuid
+  kind                String   @default("optin")
+  automationId        String?  @map("automation_id") @db.Uuid
+  ruleId              String?  @map("rule_id") @db.Uuid
+  instagramAccountId  String?  @map("instagram_account_id") @db.Uuid
+  recipientId         String   @map("recipient_id")
+  commentId           String?  @map("comment_id")
+  message             String?
+  buttonText          String?  @map("button_text")
+  buttonUrl           String?  @map("button_url")
+  collectField        String?  @map("collect_field")
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  expiresAt           DateTime @default(now()) @map("expires_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@map("pending_dms")
+}
+
+model LinkClick {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId  String   @map("workspace_id") @db.Uuid
+  automationId String?  @map("automation_id") @db.Uuid
+  contactId    String?  @map("contact_id") @db.Uuid
+  token        String
+  referrer     String?
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@map("link_clicks")
+}
+
+model SafetyEvent {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId         String   @map("workspace_id") @db.Uuid
+  instagramAccountId  String?  @map("instagram_account_id") @db.Uuid
+  recipientId         String?  @map("recipient_id")
+  kind                String   @default("dm")
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@map("safety_events")
+}
+
+model InsightSnapshot {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId         String   @map("workspace_id") @db.Uuid
+  instagramAccountId  String   @map("instagram_account_id") @db.Uuid
+  day                 DateTime @db.Date
+  metric              String
+  value               BigInt   @default(0)
+  recordedAt          DateTime @default(now()) @map("recorded_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([instagramAccountId, day, metric])
+  @@map("insight_snapshots")
 }
 
 /// Durable record of every verified Meta webhook and its processing outcome.

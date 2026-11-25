@@ -11,11 +11,11 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex bg-background text-foreground">
       {/* Left Form Area */}
-      <div className="flex-1 flex items-center justify-center px-6 py-12 lg:px-12">
+      <main className="flex-1 flex items-center justify-center px-6 py-12 lg:px-12">
         <Suspense fallback={<div className="w-full max-w-sm animate-pulse h-96" />}>
           <LoginForm />
         </Suspense>
-      </div>
+      </main>
 
       {/* Right Testimonial Area */}
       <AuthSidePanel />

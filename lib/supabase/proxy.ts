@@ -56,9 +56,23 @@ export async function updateSession(request: NextRequest) {
 
   const pathname = request.nextUrl.pathname;
 
+  // Pages that must stay reachable without a session: marketing pages,
+  // crawler files and policy pages linked from the auth screens.
+  const publicPaths = [
+    "/",
+    "/robots.txt",
+    "/sitemap.xml",
+    "/terms",
+    "/privacy",
+    "/go",
+  ];
+  const isPublicPath = publicPaths.some(
+    (path) => pathname === path || pathname.startsWith(`${path}/`)
+  );
+
   // If user is not authenticated and trying to access protected paths
   if (
-    pathname !== "/" &&
+    !isPublicPath &&
     !user &&
     !pathname.startsWith("/login") &&
     !pathname.startsWith("/auth") &&

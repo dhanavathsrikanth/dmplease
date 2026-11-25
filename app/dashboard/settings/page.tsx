@@ -1,18 +1,16 @@
 import { Suspense } from "react";
 import { connection } from "next/server";
 import {
-  Settings as SettingsIcon,
   Instagram,
   Building2,
   User,
   CheckCircle2,
   AlertCircle,
-  Key,
-  ShieldCheck,
 } from "lucide-react";
 import { getCurrentProfile, getCurrentUser } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
 import { DisconnectButton } from "@/components/settings/disconnect-button";
+import { BulkConnect } from "@/components/settings/bulk-connect";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -176,6 +174,8 @@ async function SettingsContent({
             )}
           </CardContent>
         </Card>
+
+        <BulkConnect enabled={isConnected} />
 
         {/* ── Workspace Settings Card ── */}
         <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 shadow-subtle bg-card">

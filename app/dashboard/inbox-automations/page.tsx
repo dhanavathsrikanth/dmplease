@@ -1,25 +1,44 @@
 import { Suspense } from "react";
 import { connection } from "next/server";
 import Link from "next/link";
-import {
-  Bot,
-  Plus,
-  Instagram,
-  Sparkles,
-  ArrowRight,
-  MessageSquare,
-  ShieldCheck,
-} from "lucide-react";
-import { Card } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { Plus, Instagram, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  RuleManager,
+  type DmRuleItem,
+  type DmRuleTrigger,
+  type WorkspaceOption,
+} from "@/components/inbox-rules/rule-manager";
 import { getCurrentProfile } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata = {
   title: "Inbox Automations - dmplease",
 };
+
+interface DmRuleRow {
+  id: string;
+  workspace_id: string;
+  name: string;
+  trigger_type: string;
+  keywords: string[] | null;
+  message: string;
+  button_text: string | null;
+  button_url: string | null;
+  collect_field: string | null;
+  once_per_days: number | null;
+  priority: number | null;
+  active: boolean | null;
+  created_at: string;
+}
+
+const KNOWN_TRIGGERS: DmRuleTrigger[] = [
+  "DM_KEYWORD",
+  "STORY_REPLY",
+  "STORY_MENTION",
+  "SHARE_TO_DM",
+];
 
 function InboxAutomationsSkeleton() {
   return (
@@ -44,21 +63,54 @@ async function InboxAutomationsContent() {
   const profile = await getCurrentProfile();
   const supabase = await createClient();
 
-  const workspaceIds = (profile?.ownedWorkspaces || []).map((w) => w.id);
+  const ownedWorkspaces = profile?.ownedWorkspaces || [];
+  const workspaceIds = ownedWorkspaces.map((workspace) => workspace.id);
+  const workspaceOptions: WorkspaceOption[] = ownedWorkspaces.map((workspace) => ({
+    id: workspace.id,
+    name: workspace.name,
+  }));
 
   let isConnected = false;
-  let instagramUsername: string | null = null;
+  let rules: DmRuleItem[] = [];
 
   if (workspaceIds.length > 0) {
     const { data: accounts } = await supabase
       .from("instagram_accounts")
-      .select("username, webhook_subscribed")
+      .select("username")
       .in("workspace_id", workspaceIds)
       .limit(1);
 
-    if (accounts && accounts.length > 0) {
-      isConnected = true;
-      instagramUsername = accounts[0].username;
+    isConnected = Boolean(accounts && accounts.length > 0);
+
+    const { data: ruleRows, error } = await supabase
+      .from("dm_rules")
+      .select(
+        "id, workspace_id, name, trigger_type, keywords, message, button_text, button_url, collect_field, once_per_days, priority, active, created_at"
+      )
+      .in("workspace_id", workspaceIds)
+      .order("priority", { ascending: false })
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.warn("[inbox-automations] Could not load rules:", error.message);
+    } else if (ruleRows) {
+      rules = (ruleRows as DmRuleRow[]).map((row) => ({
+        id: row.id,
+        workspaceId: row.workspace_id,
+        name: row.name || "Untitled rule",
+        triggerType: KNOWN_TRIGGERS.includes(row.trigger_type as DmRuleTrigger)
+          ? (row.trigger_type as DmRuleTrigger)
+          : "DM_KEYWORD",
+        keywords: Array.isArray(row.keywords) ? row.keywords : [],
+        message: row.message || "",
+        buttonText: row.button_text,
+        buttonUrl: row.button_url,
+        collectField: row.collect_field,
+        oncePerDays: row.once_per_days ?? 45,
+        priority: row.priority ?? 0,
+        active: Boolean(row.active),
+        createdAt: row.created_at,
+      }));
     }
   }
 
@@ -67,7 +119,7 @@ async function InboxAutomationsContent() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-[#e0e2e8] dark:border-border/80">
         <div>
           <h1 className="text-2xl sm:text-3xl font-medium tracking-tight text-foreground flex items-center gap-2">
-            Inbox & Story Automations
+            Inbox &amp; Story Automations
           </h1>
           <p className="text-[#555a6a] dark:text-muted-foreground text-xs sm:text-sm mt-0.5">
             Auto-replies triggered directly in your Instagram DM inbox and Story mentions.
@@ -98,69 +150,7 @@ async function InboxAutomationsContent() {
         </div>
       )}
 
-      <div className="grid gap-4">
-        {/* Story Mention Auto-Reply */}
-        <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 shadow-subtle p-5">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="space-y-2.5 flex-1">
-              <div className="flex items-center gap-2">
-                <span className="font-semibold text-sm text-foreground">
-                  Story Mention Auto-Thank You
-                </span>
-                <Badge
-                  variant={isConnected ? "tag-teal" : "outline"}
-                  className="text-[10px] font-semibold py-0.5 px-2.5 rounded-full"
-                >
-                  {isConnected ? "Active on Webhook" : "Not Linked"}
-                </Badge>
-              </div>
-              <p className="text-xs text-[#555a6a] dark:text-muted-foreground">
-                Automatically DMs any follower who mentions your account in their Instagram Story.
-              </p>
-              <div className="p-3 rounded-xl bg-[#f7f8fa] dark:bg-muted/40 border border-[#e0e2e8] dark:border-border/60 text-xs text-foreground font-sans">
-                &ldquo;Thanks so much for the story mention! Really appreciate your support 🙌&rdquo;
-              </div>
-            </div>
-
-            <Button asChild variant="outline" size="sm" className="rounded-full text-xs font-medium h-9 px-5 shrink-0 border-[#c7cad5]">
-              <Link href="/dashboard/settings">
-                {isConnected ? "Manage Rules" : "Connect Account"}
-              </Link>
-            </Button>
-          </div>
-        </Card>
-
-        {/* DM Keyword Trigger: PRICING */}
-        <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 shadow-subtle p-5">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="space-y-2.5 flex-1">
-              <div className="flex items-center gap-2">
-                <span className="font-semibold text-sm text-foreground">
-                  Direct DM Trigger: &ldquo;PRICE&rdquo;
-                </span>
-                <Badge
-                  variant={isConnected ? "tag-teal" : "outline"}
-                  className="text-[10px] font-semibold py-0.5 px-2.5 rounded-full"
-                >
-                  {isConnected ? "Active" : "Not Linked"}
-                </Badge>
-              </div>
-              <p className="text-xs text-[#555a6a] dark:text-muted-foreground">
-                Triggered when someone sends &ldquo;PRICE&rdquo; or &ldquo;COST&rdquo; directly to your inbox.
-              </p>
-              <div className="p-3 rounded-xl bg-[#f7f8fa] dark:bg-muted/40 border border-[#e0e2e8] dark:border-border/60 text-xs text-foreground font-sans">
-                &ldquo;Hey! You can view our full package breakdown and pricing tiers here: https://dmplease.com/pricing 🚀&rdquo;
-              </div>
-            </div>
-
-            <Button asChild variant="outline" size="sm" className="rounded-full text-xs font-medium h-9 px-5 shrink-0 border-[#c7cad5]">
-              <Link href="/dashboard/campaigns/new">
-                Configure Rule
-              </Link>
-            </Button>
-          </div>
-        </Card>
-      </div>
+      <RuleManager initialRules={rules} workspaces={workspaceOptions} />
     </div>
   );
 }

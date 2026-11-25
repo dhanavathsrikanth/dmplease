@@ -1,18 +1,21 @@
 import { Suspense } from "react";
 import { connection } from "next/server";
+import { headers } from "next/headers";
+import { revalidatePath } from "next/cache";
 import Link from "next/link";
 import {
-  BarChart3,
   TrendingUp,
-  ArrowUpRight,
   Send,
   CheckCircle2,
   Inbox,
   Zap,
-  Activity,
-  Layers,
+  Eye,
+  Users,
+  BarChart3,
+  RefreshCw,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -23,6 +26,32 @@ import { getWebhookHealth } from "@/lib/meta/webhook-events";
 export const metadata = {
   title: "Analytics & Performance - dmplease",
 };
+
+/**
+ * Forwards the refresh request to the dedicated insights route, then refreshes
+ * the server-rendered figures. Kept as a form action so the button works
+ * without adding a client component to this page.
+ */
+async function refreshInsightsAction() {
+  "use server";
+
+  const requestHeaders = await headers();
+  const host = requestHeaders.get("host") || "localhost:3000";
+  const protocol = requestHeaders.get("x-forwarded-proto") || "http";
+  const cookie = requestHeaders.get("cookie") || "";
+
+  try {
+    await fetch(`${protocol}://${host}/api/insights/refresh`, {
+      method: "POST",
+      headers: { cookie },
+      cache: "no-store",
+    });
+  } catch (error) {
+    console.warn("[insights] Refresh request failed:", error);
+  }
+
+  revalidatePath("/dashboard/overview");
+}
 
 function OverviewSkeleton() {
   return (
@@ -42,18 +71,20 @@ interface PageProps {
   searchParams?: Promise<{ range?: string }>;
 }
 
-export default async function OverviewPage(props: PageProps) {
-  const searchParams = await props.searchParams;
-  const range = searchParams?.range || "all";
-
+export default function OverviewPage(props: PageProps) {
+  // Keep URL data access inside the Suspense boundary so the static shell can
+  // be prerendered with Cache Components enabled.
   return (
     <Suspense fallback={<OverviewSkeleton />}>
-      <OverviewContent range={range} />
+      <OverviewContent searchParams={props.searchParams} />
     </Suspense>
   );
 }
 
-async function OverviewContent({ range }: { range: string }) {
+async function OverviewContent({ searchParams }: PageProps) {
+  const resolvedParams = await searchParams;
+  const range = resolvedParams?.range || "all";
+
   await connection();
   const profile = await getCurrentProfile();
   const supabase = await createClient();
@@ -113,6 +144,48 @@ async function OverviewContent({ range }: { range: string }) {
   const activeKeywords = Array.from(
     new Set(allAutomations.flatMap((a) => a.triggerKeywords || []))
   );
+
+  // ── Meta insights snapshots (last 30 days) ──────────────────────────────
+  interface SnapshotRow {
+    metric: string;
+    value: number | string | null;
+    day: string;
+  }
+
+  const insightTotals = { reach: 0, impressions: 0, profileViews: 0 };
+  let snapshotCount = 0;
+
+  if (workspaceIds.length > 0) {
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000)
+      .toISOString()
+      .slice(0, 10);
+
+    const { data: snapshots, error: insightError } = await supabase
+      .from("insight_snapshots")
+      .select("metric, value, day")
+      .in("workspace_id", workspaceIds)
+      .gte("day", thirtyDaysAgo);
+
+    if (insightError) {
+      console.warn("[overview] Could not load insights:", insightError.message);
+    } else if (snapshots) {
+      for (const row of snapshots as SnapshotRow[]) {
+        snapshotCount++;
+        const value = Number(row.value) || 0;
+        const metric = (row.metric || "").toLowerCase().replace(/[\s-]/g, "_");
+        if (metric === "reach") insightTotals.reach += value;
+        else if (metric === "impressions") insightTotals.impressions += value;
+        else if (metric === "profile_views" || metric === "profileviews") {
+          insightTotals.profileViews += value;
+        }
+      }
+    }
+  }
+
+  const conversionRate =
+    insightTotals.impressions > 0
+      ? ((totalDms / insightTotals.impressions) * 100).toFixed(1)
+      : null;
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300 antialiased selection:bg-[#ffd02f] selection:text-[#1c1c1e]">
@@ -277,6 +350,100 @@ async function OverviewContent({ range }: { range: string }) {
                   ) : (
                     "Create your first comment-to-DM campaign to start tracking keyword performance."
                   )}
+                </p>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── Instagram Insights (daily snapshots) ── */}
+      <Card className="rounded-2xl glass-card border border-[#e0e2e8] dark:border-border shadow-subtle">
+        <CardHeader className="pb-4 border-b border-[#e0e2e8] dark:border-border/60">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <CardTitle className="text-base font-semibold tracking-tight">
+                Instagram Insights
+              </CardTitle>
+              <CardDescription className="text-xs mt-0.5 text-[#555a6a] dark:text-muted-foreground">
+                Reach, impressions and profile views recorded over the last 30 days.
+              </CardDescription>
+            </div>
+            <form action={refreshInsightsAction}>
+              <Button
+                type="submit"
+                size="sm"
+                variant="outline"
+                className="rounded-full h-9 px-4 text-xs font-semibold gap-1.5"
+              >
+                <RefreshCw className="size-3.5" />
+                Refresh insights
+              </Button>
+            </form>
+          </div>
+        </CardHeader>
+        <CardContent className="pt-5">
+          {snapshotCount === 0 ? (
+            <div role="status" className="py-10 text-center space-y-3">
+              <div className="size-11 rounded-2xl bg-[#fff8e0] text-[#746019] dark:bg-[#746019]/30 dark:text-[#ffd02f] flex items-center justify-center mx-auto shadow-xs">
+                <BarChart3 className="size-5" aria-hidden="true" />
+              </div>
+              <div>
+                <p className="font-semibold text-base text-foreground">
+                  Insights will appear after the daily refresh
+                </p>
+                <p className="text-xs text-[#555a6a] dark:text-muted-foreground max-w-sm mx-auto mt-1">
+                  Connect an Instagram account with insights access. Snapshots are recorded once a day and shown here automatically.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="rounded-2xl border border-[#4262ff]/25 bg-[#f5f3ff]/60 dark:bg-[#4262ff]/10 p-4 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-[#4262ff] dark:text-[#8b9eff]">Reach</span>
+                  <Users className="size-3.5 text-[#4262ff]" aria-hidden="true" />
+                </div>
+                <p className="text-2xl font-bold text-foreground">
+                  {insightTotals.reach.toLocaleString()}
+                </p>
+                <p className="text-[10px] text-[#6b6f7e]">Unique accounts reached</p>
+              </div>
+
+              <div className="rounded-2xl border border-[#0fbcb0]/30 bg-[#c3faf5]/30 dark:bg-[#187574]/10 p-4 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-[#187574] dark:text-[#c3faf5]">Impressions</span>
+                  <Eye className="size-3.5 text-[#0fbcb0]" aria-hidden="true" />
+                </div>
+                <p className="text-2xl font-bold text-foreground">
+                  {insightTotals.impressions.toLocaleString()}
+                </p>
+                <p className="text-[10px] text-[#6b6f7e]">Total views in the period</p>
+              </div>
+
+              <div className="rounded-2xl border border-[#ffd8f4]/50 bg-[#fde0f0]/30 dark:bg-[#7d2663]/10 p-4 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-[#7d2663] dark:text-[#ffd8f4]">Profile views</span>
+                  <BarChart3 className="size-3.5 text-[#7d2663]" aria-hidden="true" />
+                </div>
+                <p className="text-2xl font-bold text-foreground">
+                  {insightTotals.profileViews.toLocaleString()}
+                </p>
+                <p className="text-[10px] text-[#6b6f7e]">Visits to your profile</p>
+              </div>
+
+              <div className="rounded-2xl border border-[#ffd02f]/40 bg-[#fff8e0]/50 dark:bg-[#746019]/10 p-4 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-[#746019] dark:text-[#ffd02f]">Conversion rate</span>
+                  <TrendingUp className="size-3.5 text-[#746019] dark:text-[#ffd02f]" aria-hidden="true" />
+                </div>
+                <p className="text-2xl font-bold text-foreground">
+                  {conversionRate === null ? "—" : `${conversionRate}%`}
+                </p>
+                <p className="text-[10px] text-[#6b6f7e]">
+                  {insightTotals.impressions > 0
+                    ? `${totalDms} DMs ÷ ${insightTotals.impressions.toLocaleString()} impressions`
+                    : "No impressions recorded yet"}
                 </p>
               </div>
             </div>

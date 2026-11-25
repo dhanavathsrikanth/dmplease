@@ -2,11 +2,11 @@ import { Suspense } from "react";
 import { connection } from "next/server";
 import Link from "next/link";
 import {
-  Megaphone,
   Plus,
   BookOpen,
   Tag,
   Calendar,
+  CheckCircle2,
 } from "lucide-react";
 import { getCurrentProfile } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
@@ -34,15 +34,24 @@ function CampaignsSkeleton() {
   );
 }
 
-export default function CampaignsPage() {
+export default function CampaignsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ created?: string }>;
+}) {
   return (
     <Suspense fallback={<CampaignsSkeleton />}>
-      <CampaignsContent />
+      <CampaignsContent searchParams={searchParams} />
     </Suspense>
   );
 }
 
-async function CampaignsContent() {
+async function CampaignsContent({
+  searchParams,
+}: {
+  searchParams: Promise<{ created?: string }>;
+}) {
+  const { created } = await searchParams;
   await connection();
   const profile = await getCurrentProfile();
   const supabase = await createClient();
@@ -89,6 +98,16 @@ async function CampaignsContent() {
           </Link>
         </Button>
       </div>
+
+      {created === "1" && (
+        <div
+          role="status"
+          className="flex items-center gap-2.5 rounded-2xl border border-emerald-300/50 bg-emerald-50/60 dark:bg-emerald-950/20 px-4 py-3 text-xs font-semibold text-emerald-800 dark:text-emerald-300"
+        >
+          <CheckCircle2 className="size-4 shrink-0" aria-hidden="true" />
+          Campaign published. Comment your keyword from another account to test it.
+        </div>
+      )}
 
       {/* ── Interactive Campaigns List (Switch active/pause, delete dialog, tabs) ── */}
       <CampaignsList

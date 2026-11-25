@@ -77,11 +77,12 @@ export interface WebhookEntry {
         id?: string;
       };
       media_id?: string;
+      story_id?: string;
     };
   }>;
   messaging?: Array<{
     timestamp?: number;
-    sender?: { id?: string };
+    sender?: { id?: string; username?: string };
     recipient?: { id?: string };
     postback?: { mid?: string; title?: string; payload?: string };
     read?: { watermark?: number; seq?: number };
@@ -91,7 +92,13 @@ export interface WebhookEntry {
       is_echo?: boolean;
       is_deleted?: boolean;
       is_unsupported?: boolean;
-      attachments?: Array<{ type?: string }>;
+      reply_to_story?: { media_id?: string; user_id?: string };
+      attachments?: Array<{
+        type?: string;
+        title?: string;
+        url?: string;
+        media_id?: string;
+      }>;
     };
   }>;
 }
@@ -114,6 +121,26 @@ export interface WebhookReadEvent {
   instagramAccountId: string;
   userId: string;
   watermark?: number;
+}
+
+export interface WebhookStoryEvent {
+  instagramAccountId: string;
+  externalId: string;
+  senderId: string;
+  senderName?: string;
+  mediaId?: string;
+  text?: string;
+  kind: "MENTION" | "REPLY";
+}
+
+export interface WebhookShareEvent {
+  instagramAccountId: string;
+  messageId: string;
+  senderId: string;
+  senderName?: string;
+  mediaId?: string;
+  title?: string;
+  url?: string;
 }
 
 export interface WebhookPayload {
@@ -281,6 +308,90 @@ export function parseReadEvents(payload: WebhookPayload): WebhookReadEvent[] {
         userId,
         watermark: messaging.read.watermark,
       });
+    }
+  }
+
+  return events;
+}
+
+/**
+ * Story mentions arrive as `changes` entries (field `story_mentions` / `mentions`);
+ * story replies arrive as messaging entries with `message.reply_to_story`.
+ */
+export function parseStoryEvents(payload: WebhookPayload): WebhookStoryEvent[] {
+  const events: WebhookStoryEvent[] = [];
+  if (payload.object !== "instagram") return events;
+
+  for (const entry of payload.entry ?? []) {
+    const accountId = entry.id;
+    if (!accountId) continue;
+
+    for (const change of entry.changes ?? []) {
+      if (change.field !== "story_mentions" && change.field !== "mentions") continue;
+      const value = change.value;
+      const senderId = value?.from?.id;
+      if (!senderId || senderId === accountId) continue;
+
+      events.push({
+        instagramAccountId: accountId,
+        externalId: value?.id ?? `${change.field}:${senderId}:${value?.media_id ?? ""}`,
+        senderId,
+        senderName: value?.from?.username,
+        mediaId: value?.media_id ?? value?.story_id,
+        text: value?.text,
+        kind: "MENTION",
+      });
+    }
+
+    for (const messaging of entry.messaging ?? []) {
+      const message = messaging.message;
+      const story = message?.reply_to_story;
+      if (!story || message?.is_echo || message?.is_deleted || message?.is_unsupported) continue;
+      const senderId = messaging.sender?.id;
+      if (!senderId || senderId === accountId) continue;
+
+      events.push({
+        instagramAccountId: accountId,
+        externalId: message.mid ?? `story-reply:${senderId}:${story.media_id ?? ""}`,
+        senderId,
+        senderName: messaging.sender?.username,
+        mediaId: story.media_id,
+        text: message.text,
+        kind: "REPLY",
+      });
+    }
+  }
+
+  return events;
+}
+
+/** A follower sharing your post/reel into your DMs opens a conversion window. */
+export function parseShareEvents(payload: WebhookPayload): WebhookShareEvent[] {
+  const events: WebhookShareEvent[] = [];
+  if (payload.object !== "instagram") return events;
+
+  for (const entry of payload.entry ?? []) {
+    const accountId = entry.id ?? entry.messaging?.[0]?.recipient?.id;
+    if (!accountId) continue;
+
+    for (const messaging of entry.messaging ?? []) {
+      const message = messaging.message;
+      if (!message || message.is_echo || message.is_deleted || message.is_unsupported) continue;
+      const senderId = messaging.sender?.id;
+      if (!senderId || senderId === accountId) continue;
+
+      for (const attachment of message.attachments ?? []) {
+        if (attachment.type !== "share") continue;
+        events.push({
+          instagramAccountId: accountId,
+          messageId: message.mid ?? attachment.media_id ?? senderId,
+          senderId,
+          senderName: messaging.sender?.username,
+          mediaId: attachment.media_id,
+          title: attachment.title,
+          url: attachment.url,
+        });
+      }
     }
   }
 

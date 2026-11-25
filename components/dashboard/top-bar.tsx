@@ -30,14 +30,15 @@ interface TopBarProps {
 
 const pageTitles: Record<string, { title: string; category: string }> = {
   "/dashboard": { title: "Dashboard", category: "Workspace" },
-  "/dashboard/overview": { title: "Overview & Analytics", category: "Workspace" },
-  "/dashboard/inbox": { title: "Direct Inbox", category: "Workspace" },
-  "/dashboard/campaigns": { title: "Campaigns & Automations", category: "Automation" },
-  "/dashboard/campaigns/new": { title: "New Campaign", category: "Automation" },
-  "/dashboard/inbox-automations": { title: "Inbox Automations", category: "Automation" },
-  "/dashboard/logs": { title: "DM Execution Logs", category: "Automation" },
+  "/dashboard/overview": { title: "Analytics", category: "Workspace" },
+  "/dashboard/inbox": { title: "Inbox", category: "Workspace" },
+  "/dashboard/contacts": { title: "Contacts", category: "Workspace" },
+  "/dashboard/campaigns": { title: "Campaigns", category: "Automations" },
+  "/dashboard/campaigns/new": { title: "New campaign", category: "Automations" },
+  "/dashboard/inbox-automations": { title: "Auto-replies", category: "Automations" },
+  "/dashboard/logs": { title: "Activity Log", category: "Automations" },
   "/dashboard/settings": { title: "Settings", category: "Platform" },
-  "/dashboard/diagnostics": { title: "System Diagnostics", category: "Platform" },
+  "/dashboard/diagnostics": { title: "System Health", category: "Platform" },
 };
 
 export function TopBar({
@@ -69,6 +70,7 @@ export function TopBar({
                 variant="ghost"
                 size="icon"
                 onClick={onToggleCollapse}
+                aria-label="Toggle sidebar"
                 className="hidden md:flex size-8 rounded-full text-muted-foreground hover:text-foreground"
               >
                 <PanelLeft className="size-4" />
@@ -84,6 +86,7 @@ export function TopBar({
                 variant="ghost"
                 size="icon"
                 onClick={onOpenMobile}
+                aria-label="Open navigation"
                 className="md:hidden size-8 rounded-full text-muted-foreground hover:text-foreground"
               >
                 <PanelLeft className="size-4" />
@@ -96,7 +99,7 @@ export function TopBar({
 
           {/* Breadcrumb Display */}
           <div className="flex items-center gap-1.5 text-xs">
-            <span className="text-[#6b6f7e] hidden sm:inline font-medium">
+            <span className="text-[#6b6f7e] dark:text-[#9aa0ad] hidden sm:inline font-medium">
               {pageInfo.category}
             </span>
             <span className="text-[#c7cad5] hidden sm:inline">/</span>
@@ -149,6 +152,7 @@ export function TopBar({
                 variant="ghost"
                 size="icon"
                 onClick={handleSignOut}
+                aria-label="Sign out"
                 className="size-8 rounded-full text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
               >
                 <LogOut className="size-3.5" />

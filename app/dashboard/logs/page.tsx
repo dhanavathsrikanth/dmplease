@@ -1,12 +1,10 @@
 import { Suspense } from "react";
 import { connection } from "next/server";
 import {
-  History,
   CheckCircle2,
   Clock,
   Inbox,
   AlertCircle,
-  Terminal,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";

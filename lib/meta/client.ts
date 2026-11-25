@@ -7,15 +7,17 @@ const INSTAGRAM_GRAPH_URL = `https://graph.instagram.com/${META_API_VERSION}`;
 
 export type MetaAuthProvider = "facebook" | "instagram";
 
-/**
- * Selects the appropriate Meta Graph host based on token prefix:
- * Direct Instagram Login tokens begin with "IG", while Facebook Login
- * user/page tokens begin with "EAA" and target graph.facebook.com.
- */
-function getGraphBaseUrl(accessToken: string): string {
-  return accessToken.trim().startsWith("IG")
-    ? INSTAGRAM_GRAPH_URL
-    : META_BASE_URL;
+/** Normalised shape of a Meta Graph API error payload. */
+export interface MetaApiError {
+  code?: number;
+  message?: string;
+  error?: { code?: number; message?: string };
+  [key: string]: unknown;
+}
+
+function toMetaApiError(error: unknown): MetaApiError {
+  if (error && typeof error === "object") return error as MetaApiError;
+  return { message: error instanceof Error ? error.message : String(error) };
 }
 
 export interface MetaTokenExchangeResponse {
@@ -361,7 +363,20 @@ export async function fetchInstagramAccountsForToken(
     )}&access_token=${encodeURIComponent(accessToken)}`;
     const res = await fetch(url);
     if (res.ok) {
-      const json: any = await res.json();
+      const json = (await res.json()) as {
+        data?: Array<{
+          id: string;
+          name?: string;
+          access_token?: string;
+          instagram_business_account?: {
+            id: string;
+            username?: string;
+            name?: string;
+            profile_picture_url?: string;
+            followers_count?: number;
+          };
+        }>;
+      };
       if (Array.isArray(json.data)) {
         for (const page of json.data) {
           if (page.instagram_business_account) {
@@ -369,7 +384,7 @@ export async function fetchInstagramAccountsForToken(
             accounts.push({
               instagramBusinessId: ig.id,
               facebookPageId: page.id,
-              username: ig.username,
+              username: ig.username || page.name || "unknown",
               displayName: ig.name || page.name,
               profilePictureUrl: ig.profile_picture_url,
               followersCount: ig.followers_count || 0,
@@ -510,7 +525,7 @@ export async function sendPrivateReply(
   instagramAccountId: string,
   commentId: string,
   message: string
-): Promise<{ recipient_id?: string; message_id?: string; error?: any }> {
+): Promise<{ recipient_id?: string; message_id?: string; error?: MetaApiError }> {
   try {
     const url = `${INSTAGRAM_GRAPH_URL}/${instagramAccountId}/messages`;
     const res = await fetch(url, {
@@ -532,7 +547,7 @@ export async function sendPrivateReply(
     }
     return data;
   } catch (err) {
-    return { error: err };
+    return { error: toMetaApiError(err) };
   }
 }
 
@@ -546,7 +561,7 @@ export async function sendPrivateReplyWithButton(
   text: string,
   buttonTitle: string,
   buttonUrlOrPayload: string
-): Promise<{ recipient_id?: string; message_id?: string; error?: any }> {
+): Promise<{ recipient_id?: string; message_id?: string; error?: MetaApiError }> {
   try {
     const url = `${INSTAGRAM_GRAPH_URL}/${instagramAccountId}/messages`;
     const isUrl = buttonUrlOrPayload.startsWith("http://") || buttonUrlOrPayload.startsWith("https://");
@@ -591,7 +606,7 @@ export async function sendPrivateReplyWithButton(
     }
     return data;
   } catch (err) {
-    return { error: err };
+    return { error: toMetaApiError(err) };
   }
 }
 
@@ -603,7 +618,7 @@ export async function sendDirectMessage(
   instagramAccountId: string,
   recipientUserId: string,
   text: string
-): Promise<{ recipient_id?: string; message_id?: string; error?: any }> {
+): Promise<{ recipient_id?: string; message_id?: string; error?: MetaApiError }> {
   const url = `${INSTAGRAM_GRAPH_URL}/${instagramAccountId}/messages`;
   const res = await fetch(url, {
     method: "POST",
@@ -629,7 +644,7 @@ export async function postPublicCommentReply(
   accessToken: string,
   commentId: string,
   message: string
-): Promise<{ id?: string; error?: any }> {
+): Promise<{ id?: string; error?: MetaApiError }> {
   try {
     const url = `${INSTAGRAM_GRAPH_URL}/${commentId}/replies`;
     const res = await fetch(url, {
@@ -649,7 +664,7 @@ export async function postPublicCommentReply(
     return data;
   } catch (err) {
     console.warn(`[Meta Client] postPublicCommentReply exception:`, err);
-    return { error: err };
+    return { error: toMetaApiError(err) };
   }
 }
 

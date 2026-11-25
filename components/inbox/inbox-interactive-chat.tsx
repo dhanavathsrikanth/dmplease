@@ -1,14 +1,14 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import {
   Search,
   CheckCircle2,
   Send,
   Loader2,
   AlertCircle,
-  Inbox,
-  Sparkles,
+  MessageCircle,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -16,15 +16,30 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
+export interface StoredMessage {
+  id: string;
+  direction: "inbound" | "outbound";
+  senderType: "contact" | "bot" | "agent";
+  text: string;
+  time: string;
+  status?: string | null;
+}
+
 export interface ConversationItem {
   id: string;
+  conversationId?: string;
+  workspaceId: string;
+  instagramAccountId?: string | null;
   recipientId: string;
   username: string;
   initials: string;
   lastMessage: string;
   time: string;
   keyword: string;
+  keywordLabel?: string;
   status: string;
+  /** Present for real stored conversations; absent for legacy log-derived rows. */
+  messages?: StoredMessage[];
 }
 
 interface MessageBubble {
@@ -74,10 +89,13 @@ export function InboxInteractiveChat({
     setSendError(null);
 
     try {
-      const res = await fetch("/api/instagram/send-dm", {
+      const res = await fetch("/api/inbox/reply", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          workspaceId: activeConv.workspaceId,
+          conversationId: activeConv.conversationId,
+          instagramAccountId: activeConv.instagramAccountId,
           recipientId: activeConv.recipientId,
           recipientUsername: activeConv.username,
           message: messageToSend,
@@ -116,7 +134,26 @@ export function InboxInteractiveChat({
   };
 
   if (conversations.length === 0) {
-    return null;
+    return (
+      <Card
+        role="status"
+        className="rounded-2xl border border-dashed border-[#e0e2e8] dark:border-border/80 shadow-subtle p-10 text-center space-y-3"
+      >
+        <div className="size-11 rounded-2xl bg-[#fff8e0] text-[#746019] dark:bg-[#746019]/30 dark:text-[#ffd02f] flex items-center justify-center mx-auto">
+          <MessageCircle className="size-5" aria-hidden="true" />
+        </div>
+        <div className="space-y-1">
+          <p className="font-semibold text-base text-foreground">No conversations yet</p>
+          <p className="text-xs text-[#555a6a] dark:text-muted-foreground max-w-sm mx-auto">
+            When someone comments a trigger keyword, their automated DM conversation appears here.
+            Connect an Instagram account and create a campaign to get started.
+          </p>
+        </div>
+        <Button asChild size="sm" className="rounded-full font-semibold text-xs mt-2 bg-[#1c1c1e] text-white dark:bg-[#ffd02f] dark:text-[#1c1c1e] px-6 h-9">
+          <Link href="/dashboard/campaigns/new">Create a campaign</Link>
+        </Button>
+      </Card>
+    );
   }
 
   return (
@@ -202,27 +239,69 @@ export function InboxInteractiveChat({
             variant="tag-yellow"
             className="text-[10px] font-semibold py-0.5 px-3 rounded-full"
           >
-            Trigger: {activeConv?.keyword}
+            {activeConv?.keywordLabel || "Trigger"}: {activeConv?.keyword}
           </Badge>
         </div>
 
         {/* Messages Stream */}
         <div className="flex-1 p-5 overflow-y-auto space-y-4 text-xs">
-          <div className="text-center">
-            <span className="px-3 py-1 rounded-full bg-[#f7f8fa] dark:bg-muted/60 text-[10px] font-medium text-[#6b6f7e] border border-[#e0e2e8] dark:border-border/60">
-              User commented &ldquo;{activeConv?.keyword}&rdquo; &bull; Auto-DM dispatched
-            </span>
-          </div>
-
-          {/* Outgoing automated message */}
-          <div className="flex justify-end">
-            <div className="max-w-md rounded-2xl bg-[#1c1c1e] text-white p-4 space-y-1.5 shadow-card dark:bg-white dark:text-[#1c1c1e]">
-              <p className="leading-relaxed font-sans">{activeConv?.lastMessage}</p>
-              <p className="text-[9px] text-neutral-400 dark:text-neutral-600 text-right flex items-center justify-end gap-1 pt-1">
-                <CheckCircle2 className="size-2.5 text-[#00b473] inline" /> {activeConv?.time}
+          {activeConv?.messages ? (
+            activeConv.messages.length > 0 ? (
+              activeConv.messages.map((message) => (
+                <div
+                  key={message.id}
+                  className={`flex ${message.direction === "inbound" ? "justify-start" : "justify-end"}`}
+                >
+                  <div
+                    className={`max-w-md rounded-2xl p-4 space-y-1.5 shadow-card ${
+                      message.direction === "inbound"
+                        ? "bg-[#f7f8fa] dark:bg-muted/60 text-foreground border border-[#e0e2e8] dark:border-border/60"
+                        : "bg-[#1c1c1e] text-white dark:bg-white dark:text-[#1c1c1e]"
+                    }`}
+                  >
+                    <p className="leading-relaxed font-sans whitespace-pre-wrap break-words">
+                      {message.text}
+                    </p>
+                    <p
+                      className={`text-[9px] text-right flex items-center justify-end gap-1 pt-1 ${
+                        message.direction === "inbound"
+                          ? "text-[#6b6f7e]"
+                          : "text-neutral-400 dark:text-neutral-600"
+                      }`}
+                    >
+                      {message.direction === "outbound" && (
+                        <CheckCircle2 className="size-2.5 text-[#00b473] inline" />
+                      )}
+                      {message.senderType === "agent" ? "Manual reply · " : ""}
+                      {message.time}
+                    </p>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="py-6 text-center text-[11px] text-muted-foreground">
+                No messages in this thread yet.
               </p>
-            </div>
-          </div>
+            )
+          ) : (
+            <>
+              <div className="text-center">
+                <span className="px-3 py-1 rounded-full bg-[#f7f8fa] dark:bg-muted/60 text-[10px] font-medium text-[#6b6f7e] border border-[#e0e2e8] dark:border-border/60">
+                  User commented &ldquo;{activeConv?.keyword}&rdquo; &bull; Auto-DM dispatched
+                </span>
+              </div>
+
+              {/* Outgoing automated message */}
+              <div className="flex justify-end">
+                <div className="max-w-md rounded-2xl bg-[#1c1c1e] text-white p-4 space-y-1.5 shadow-card dark:bg-white dark:text-[#1c1c1e]">
+                  <p className="leading-relaxed font-sans">{activeConv?.lastMessage}</p>
+                  <p className="text-[9px] text-neutral-400 dark:text-neutral-600 text-right flex items-center justify-end gap-1 pt-1">
+                    <CheckCircle2 className="size-2.5 text-[#00b473] inline" /> {activeConv?.time}
+                  </p>
+                </div>
+              </div>
+            </>
+          )}
 
           {/* Any manual replies sent in this session */}
           {currentExtra.map((msg) => (

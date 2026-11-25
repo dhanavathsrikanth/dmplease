@@ -4,17 +4,15 @@ import { useState } from "react";
 import Link from "next/link";
 import {
   Megaphone,
-  Plus,
   MessageCircle,
   Search,
   Trash2,
   AlertTriangle,
   Loader2,
-  ExternalLink,
-  CheckCircle2,
-  Tag,
   ShieldCheck,
   Check,
+  RotateCcw,
+  History,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -65,6 +63,10 @@ export function CampaignsList({
   const [deleteTarget, setDeleteTarget] = useState<AutomationItem | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [rerunTarget, setRerunTarget] = useState<AutomationItem | null>(null);
+  const [rerunCount, setRerunCount] = useState<number | null>(null);
+  const [rerunBusy, setRerunBusy] = useState(false);
+  const [rerunError, setRerunError] = useState<string | null>(null);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -118,6 +120,62 @@ export function CampaignsList({
       showToast("Error deleting campaign");
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  const previewRerun = async (auto: AutomationItem) => {
+    setRerunTarget(auto);
+    setRerunCount(null);
+    setRerunError(null);
+    setRerunBusy(true);
+
+    try {
+      const res = await fetch("/api/campaigns/rerun", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ campaignId: auto.id, days: 7, dryRun: true }),
+      });
+      const data = (await res.json()) as { count?: number; error?: string };
+      if (!res.ok || typeof data.count !== "number") {
+        setRerunError(data.error || "Could not preview this re-run.");
+      } else {
+        setRerunCount(data.count);
+      }
+    } catch {
+      setRerunError("Network error while checking recent comments.");
+    } finally {
+      setRerunBusy(false);
+    }
+  };
+
+  const confirmRerun = async () => {
+    if (!rerunTarget) return;
+    setRerunBusy(true);
+    setRerunError(null);
+
+    try {
+      const res = await fetch("/api/campaigns/rerun", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ campaignId: rerunTarget.id, days: 7, dryRun: false }),
+      });
+      const data = (await res.json()) as {
+        success?: boolean;
+        queued?: number;
+        error?: string;
+      };
+      if (!res.ok || !data.success) {
+        setRerunError(data.error || "Could not queue this re-run.");
+      } else {
+        const name = rerunTarget.name;
+        setRerunTarget(null);
+        setRerunCount(null);
+        showToast(`Queued ${data.queued ?? 0} DM(s) for "${name}"`);
+      }
+    } catch {
+      setRerunError("Network error while queueing the re-run.");
+    } finally {
+      setRerunBusy(false);
     }
   };
 
@@ -319,6 +377,18 @@ export function CampaignsList({
                     </div>
 
                     <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => previewRerun(auto)}
+                      aria-label={`Re-run last 7 days for ${auto.name}`}
+                      title="Re-run last 7 days"
+                      className="rounded-full h-8 px-3 text-[11px] font-semibold gap-1.5"
+                    >
+                      <RotateCcw className="size-3.5" />
+                      <span className="hidden lg:inline">Re-run last 7 days</span>
+                    </Button>
+
+                    <Button
                       variant="ghost"
                       size="icon"
                       onClick={() => setDeleteTarget(auto)}
@@ -394,6 +464,89 @@ export function CampaignsList({
                 </>
               ) : (
                 "Delete Campaign"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Re-run preview & confirmation */}
+      <Dialog
+        open={Boolean(rerunTarget)}
+        onOpenChange={(open) => {
+          if (!open && !rerunBusy) {
+            setRerunTarget(null);
+            setRerunCount(null);
+            setRerunError(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md rounded-3xl p-6">
+          <DialogHeader className="space-y-2">
+            <div className="size-10 rounded-2xl bg-[#f5f3ff] text-[#4262ff] dark:bg-[#4262ff]/20 flex items-center justify-center">
+              <History className="size-5" />
+            </div>
+            <DialogTitle className="text-lg font-bold font-rubik text-foreground">
+              Re-run last 7 days?
+            </DialogTitle>
+            <DialogDescription className="text-xs text-[#555a6a] dark:text-muted-foreground leading-relaxed">
+              Apply &ldquo;{rerunTarget?.name}&rdquo; to recent comments that match its keywords.
+              People already contacted in the last 24 hours are skipped automatically.
+            </DialogDescription>
+          </DialogHeader>
+
+          {rerunBusy && rerunCount === null && !rerunError ? (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground" role="status">
+              <Loader2 className="size-3.5 animate-spin" />
+              Checking recent comments...
+            </div>
+          ) : rerunCount !== null ? (
+            <div className="rounded-2xl border border-[#ffd02f]/40 bg-[#fff8e0]/60 dark:bg-[#746019]/20 p-4">
+              <p className="text-2xl font-bold text-foreground">{rerunCount}</p>
+              <p className="text-xs text-[#555a6a] dark:text-muted-foreground mt-0.5">
+                matching commenter{rerunCount === 1 ? "" : "s"} will receive this DM.
+              </p>
+            </div>
+          ) : null}
+
+          {rerunError && (
+            <div
+              role="alert"
+              aria-live="assertive"
+              className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive flex items-center gap-2"
+            >
+              <AlertTriangle className="size-4 shrink-0" />
+              {rerunError}
+            </div>
+          )}
+
+          <DialogFooter className="gap-2 sm:gap-0 pt-3">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={rerunBusy}
+              onClick={() => {
+                setRerunTarget(null);
+                setRerunCount(null);
+                setRerunError(null);
+              }}
+              className="rounded-full text-xs font-semibold h-9"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={rerunBusy || rerunError !== null || rerunCount === null}
+              onClick={confirmRerun}
+              className="rounded-full text-xs font-semibold h-9 bg-[#1c1c1e] text-white dark:bg-[#ffd02f] dark:text-[#1c1c1e]"
+            >
+              {rerunBusy ? (
+                <>
+                  <Loader2 className="size-3.5 mr-1.5 animate-spin" />
+                  Queueing...
+                </>
+              ) : (
+                "Queue DMs"
               )}
             </Button>
           </DialogFooter>

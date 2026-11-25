@@ -73,11 +73,11 @@ export default function ErrorPage({
 }) {
   return (
     <div className="min-h-screen flex bg-background text-foreground">
-      <div className="flex-1 flex items-center justify-center px-6 py-12 lg:px-12">
+      <main className="flex-1 flex items-center justify-center px-6 py-12 lg:px-12">
         <Suspense fallback={<div className="w-full max-w-sm animate-pulse h-80" />}>
           <ErrorContent searchParams={searchParams} />
         </Suspense>
-      </div>
+      </main>
       <AuthSidePanel />
     </div>
   );

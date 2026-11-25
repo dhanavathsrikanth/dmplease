@@ -10,6 +10,7 @@ import {
   Radio,
   ShieldCheck,
   Timer,
+  MousePointerClick,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -90,6 +91,38 @@ async function DiagnosticsContent() {
 
   const metaHealth = await checkMetaApiLatency();
   const webhookHealth = await getWebhookHealth(24 * 7);
+
+  // Real 24h safety / tracking counts for this user's workspaces.
+  const last24Hours = new Date(Date.now() - 24 * 3600000).toISOString();
+  let safetySends = 0;
+  let trackedClicks = 0;
+  let activityError = false;
+
+  if (workspaceIds.length > 0) {
+    const [safetyResult, clicksResult] = await Promise.all([
+      supabase
+        .from("safety_events")
+        .select("id", { count: "exact", head: true })
+        .in("workspace_id", workspaceIds)
+        .gte("created_at", last24Hours),
+      supabase
+        .from("link_clicks")
+        .select("id", { count: "exact", head: true })
+        .in("workspace_id", workspaceIds)
+        .gte("created_at", last24Hours),
+    ]);
+
+    if (safetyResult.error || clicksResult.error) {
+      console.warn(
+        "[diagnostics] Could not load activity counts:",
+        safetyResult.error?.message || clicksResult.error?.message
+      );
+      activityError = true;
+    } else {
+      safetySends = safetyResult.count ?? 0;
+      trackedClicks = clicksResult.count ?? 0;
+    }
+  }
 
   const signingConfigured = hasWebhookSigningSecret();
   const verifyTokenConfigured = hasSecret("META_VERIFY_TOKEN") || hasSecret("WEBHOOK_VERIFY_TOKEN");
@@ -181,7 +214,9 @@ async function DiagnosticsContent() {
     },
   ];
 
-  const attentionCount = checks.filter((check) => check.status === "degraded").length;
+  const attentionCount = checks.filter(
+    (check) => check.status === "degraded" || check.status === "unconfigured"
+  ).length;
 
   return (
     <div className="space-y-6 max-w-4xl animate-in fade-in duration-300 antialiased selection:bg-[#ffd02f] selection:text-[#1c1c1e]">
@@ -223,6 +258,44 @@ async function DiagnosticsContent() {
           </p>
         </div>
       </div>
+
+      <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 shadow-subtle p-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-start gap-3.5">
+            <div className="size-10 rounded-xl flex items-center justify-center shrink-0 border bg-[#f5f3ff] text-[#4262ff] border-[#4262ff]/30 dark:bg-[#4262ff]/20 dark:text-[#8b9eff] dark:border-[#4262ff]/40">
+              <MousePointerClick className="size-5" aria-hidden="true" />
+            </div>
+            <div className="space-y-1">
+              <p className="font-semibold text-xs sm:text-sm text-foreground">
+                Automation activity
+              </p>
+              <p className="text-xs text-[#555a6a] dark:text-muted-foreground leading-relaxed">
+                Safety decisions and tracked button clicks recorded across your workspaces.
+              </p>
+              {activityError && (
+                <p className="text-[11px] text-amber-700 dark:text-amber-300 font-medium">
+                  Fix: Activity tables could not be read. Check your Supabase connection.
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-6 self-end sm:self-center shrink-0">
+            <div className="text-right">
+              <p className="text-lg font-mono font-medium text-foreground">
+                {activityError ? "—" : safetySends}
+              </p>
+              <p className="text-[10px] font-mono text-[#6b6f7e]">Safety sends (24h)</p>
+            </div>
+            <div className="text-right">
+              <p className="text-lg font-mono font-medium text-foreground">
+                {activityError ? "—" : trackedClicks}
+              </p>
+              <p className="text-[10px] font-mono text-[#6b6f7e]">Tracked link clicks (24h)</p>
+            </div>
+          </div>
+        </div>
+      </Card>
 
       <ul className="grid gap-3.5" aria-label="System health checks">
         {checks.map((check) => {

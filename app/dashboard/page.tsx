@@ -7,14 +7,11 @@ import {
   MessageCircle,
   Plus,
   ArrowRight,
-  Instagram,
   CheckCircle2,
   Clock,
-  ShieldCheck,
   Send,
   Users,
   Activity,
-  Terminal,
 } from "lucide-react";
 import { getCurrentProfile, getCurrentUser } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
@@ -23,6 +20,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { GettingStarted } from "@/components/dashboard/getting-started";
 
 export const metadata = {
   title: "Dashboard - dmplease",
@@ -77,6 +75,7 @@ async function DashboardContent() {
   const health = await getWebhookHealth(24 * 7);
 
   let connectedUsername: string | null = null;
+  let ruleCount = 0;
   let totalDmsSent = 0;
   let deliverySampleCount = 0;
   let deliveredCount = 0;
@@ -99,6 +98,12 @@ async function DashboardContent() {
     if (accounts && accounts.length > 0) {
       connectedUsername = accounts[0].username;
     }
+
+    const { count: rulesCount } = await supabase
+      .from("dm_rules")
+      .select("*", { count: "exact", head: true })
+      .in("workspace_id", workspaceIds);
+    ruleCount = rulesCount || 0;
 
     const { count } = await supabase
       .from("dm_logs")
@@ -184,28 +189,13 @@ async function DashboardContent() {
         </div>
       </div>
 
-      {/* ── Instagram Connection Banner (if not connected) ── */}
-      {!connectedUsername && (
-        <div className="rounded-3xl border border-[#ffd02f]/40 bg-[#fff8e0]/60 dark:bg-[#746019]/20 text-foreground p-5 sm:p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-subtle">
-          <div className="flex items-center gap-3.5">
-            <div className="size-10 rounded-2xl bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-600 flex items-center justify-center text-white shrink-0 shadow-xs">
-              <Instagram className="size-5" />
-            </div>
-            <div>
-              <p className="font-semibold text-sm text-foreground flex items-center gap-2">
-                Connect your Instagram Professional Account
-                <span className="size-2 rounded-full bg-[#ffd02f] animate-pulse" />
-              </p>
-              <p className="text-xs text-[#555a6a] dark:text-muted-foreground mt-0.5">
-                Enable Meta Graph webhooks to automatically detect comments on your posts and reels in real-time.
-              </p>
-            </div>
-          </div>
-          <Button asChild size="sm" className="rounded-full shrink-0 font-semibold text-xs h-9 px-5 bg-[#1c1c1e] hover:bg-[#2c2c34] text-white shadow-xs dark:bg-white dark:text-[#1c1c1e]">
-            <Link href="/dashboard/settings">Connect Account</Link>
-          </Button>
-        </div>
-      )}
+      {/* ── First-run guided setup ── */}
+      <GettingStarted
+        connected={Boolean(connectedUsername)}
+        campaignCount={allAutomations.length}
+        ruleCount={ruleCount}
+        dmCount={totalDmsSent}
+      />
 
       {/* ── 4 Miro Pastel Hero Metric Cards with Liquid Glass ── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -304,7 +294,7 @@ async function DashboardContent() {
         <div className="lg:col-span-2 space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-xs font-bold tracking-wider text-[#6b6f7e] uppercase">
+              <h2 className="text-xs font-bold tracking-wider text-[#6b6f7e] dark:text-[#9aa0ad] uppercase">
                 Active Comment Campaigns
               </h2>
               <p className="text-xs text-[#555a6a] dark:text-muted-foreground mt-0.5">
@@ -385,11 +375,11 @@ async function DashboardContent() {
         {/* Column 3: Live DM Delivery Activity (Miro Stream Style) */}
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-xs font-bold tracking-wider text-[#6b6f7e] uppercase flex items-center gap-1.5">
+            <h2 className="text-xs font-bold tracking-wider text-[#6b6f7e] dark:text-[#9aa0ad] uppercase flex items-center gap-1.5">
               <span className="size-2 rounded-full bg-[#00b473] animate-pulse" />
               Live Ingestion Stream
             </h2>
-            <Link href="/dashboard/logs" className="text-[11px] font-medium text-[#4262ff] hover:underline">
+            <Link href="/dashboard/logs" className="text-[11px] font-medium text-[#4262ff] dark:text-[#8fa6ff] hover:underline">
               view all &rarr;
             </Link>
           </div>

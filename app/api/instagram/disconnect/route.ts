@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { getCurrentUser } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
@@ -7,7 +7,7 @@ import { decryptToken } from "@/lib/meta/vault";
 import { unsubscribeInstagramAccountFromWebhooks } from "@/lib/meta/client";
 import { hasDatabaseUrl } from "@/lib/config";
 
-export async function POST(request: NextRequest) {
+export async function POST() {
   const user = await getCurrentUser();
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -89,10 +89,10 @@ export async function POST(request: NextRequest) {
     revalidatePath("/dashboard/overview");
 
     return NextResponse.json({ success: true, disconnected: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[Instagram Disconnect Error]:", error);
     return NextResponse.json(
-      { error: error?.message || "Failed to disconnect Instagram account" },
+      { error: error instanceof Error ? error.message : "Failed to disconnect Instagram account" },
       { status: 500 }
     );
   }

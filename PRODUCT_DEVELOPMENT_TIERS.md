@@ -403,3 +403,80 @@ gantt
 ---
 
 **Maintenance rule:** Tick a checkbox only when its Acceptance Criteria is demonstrably true. When a tier is complete, add a dated "Completed" note under its heading and link to the PR/release that shipped it.
+
+---
+
+## 11. Tier 0 implementation status — 2026-11-25
+
+### Shipped in code
+- ✅ **T0.1** Webhook now verifies HMAC synchronously, records a job, and returns 200 immediately. All processing runs via Next.js `after()` in `lib/meta/webhook-processor.ts`; failures are recorded on the job instead of being swallowed. `maxDuration = 60`.
+- ✅ **T0.2** Fail-closed secrets: `lib/config.ts` centralises all secret reads; no hardcoded production fallbacks. Vault decrypts legacy keys for compatibility but always encrypts with the current key. OAuth state accepts legacy signatures for in-flight flows only.
+- ✅ **T0.3** `/api/cron/refresh-tokens` requires `Authorization: Bearer CRON_SECRET`; `vercel.json` schedules it daily at 03:00 UTC. Refresh results log account IDs, never tokens.
+- ✅ **T0.5** All fabricated dashboard metrics removed. Delivery rate, unique leads, and processing time are now computed from `dm_logs` and the webhook ledger. Landing-page copy no longer claims sub-280ms/99.8% as fact; sample dashboard data is labelled as such.
+- ✅ **T0.6** `NEXT_POST` now resolves the latest published media before matching; campaign creation validates input with zod and surfaces field-level errors in the builder. Follow-gate is now a real, visible toggle in the campaign builder.
+- ✅ **T0.7** Vitest suite added: 25 passing tests across config, signature verification, webhook parsers, retry/personalisation/post-scope logic, and campaign validation (`npm test`). Lint is scoped to source files (`npm run lint` → clean). `npx tsc --noEmit` → clean.
+- ✅ **T0.8** All `[YOUR-PASSWORD]` string-sniffing replaced by `hasDatabaseUrl()` in `lib/config.ts`; the stale `/protected` redirect was removed.
+
+### Manual steps still required by the operator
+- ✅ **T0.1 / T0.4 — `supabase/migrations/20261125_tier0_hardening.sql` is applied and verified.** Via Supabase MCP: `webhook_events` exists with the expected columns, and `automations`, `instagram_accounts`, `dm_logs`, and `webhook_events` all have RLS enabled. Workspace-member policies are in place. (Older permissive policies also remain; they can be removed later.)
+- ⚠️ **T0.3 — set `CRON_SECRET` in Vercel** to the same value used locally. It was generated in `.env` / `.env.local` for local development.
+- ⚠️ **Run `npx prisma generate` once the dev server is stopped** so the generated client includes the `WebhookEvent` model. The runtime code uses parameterised raw SQL, so it does not depend on this step.
+- ⚠️ **T0.7 — Playwright E2E smoke test** is not yet added; unit coverage is in place.
+
+### UI/UX improvements made in Tier 0
+- Diagnostics is now an honest, scannable health report: each check has a real measurement, a plain-language description, an actionable "Fix:" hint, and an `aria-live` summary banner. The fake compute-benchmark and fake rate-limit text were removed.
+- Global keyboard focus rings and `prefers-reduced-motion` support added in `app/globals.css`.
+- Role/`aria-hidden` attributes added to decorative icons and error banners; campaign publish errors now show per-field guidance.
+- The phone simulator now shows the selected post's caption, and the previously inert follow-gate setting is exposed as a real control.
+
+### Verification log — second pass (2026-11-25)
+- `npm run lint` → clean. `npx tsc --noEmit` → clean. `npm test` → 25/25 passing. `npm run build` → success (40 static/PPR pages, all API routes compiled).
+- Supabase MCP: project URL matches env; `webhook_events` columns verified; RLS enabled on `automations`, `instagram_accounts`, `dm_logs`, `webhook_events`; `is_workspace_member()` verified as `SECURITY DEFINER`.
+- Live API: signed webhook → 200 (warm 23–47 ms), unsigned → 401, handshake → 200 + challenge; cron without auth → 401, with token → 200.
+- Browser: all nine dashboard screens rendered with zero console errors. Lighthouse on auth screens: **Accessibility 1.0, Best Practices 1.0, SEO 1.0**.
+- Fixes made during verification: `<main>` landmark on all auth pages; `robots.txt` route plus public-path allowlist in the auth proxy; `searchParams` moved inside Suspense on the analytics page; inbox empty state instead of a blank page; diagnostics summary now counts "Not configured" as needing attention.
+- Not exercised locally: real Instagram DM delivery (no connected account / no localhost OAuth redirect) and durable webhook-job writes (`DATABASE_URL` still a placeholder in `.env`/`.env.local`). Both code paths are implemented and compile; they need real credentials to run.
+
+---
+
+## 12. Tier 1 implementation status — 2026-11-25
+
+### Database (applied via Supabase MCP)
+- `20261125_tier1_core.sql` → `contacts`, `conversations`, `messages`, `dm_rules`, `comment_events`, `pending_dms`, `link_clicks`, `safety_events` + new `automations` columns (`dm_variants`, `collect_field`, `opening_message`, `hourly_cap`), indexes and workspace-scoped RLS.
+- `20261125_tier1_insights.sql` → `insight_snapshots` with RLS.
+- Prisma schema mirrored; client regenerated successfully.
+
+### Shipped
+- ✅ **T1.1** Real inbound-DM keyword rules with whole-word matching, priority, once-per-N-days, contact + conversation + message history, and a real inbox instead of log-synthesised threads.
+- ✅ **T1.2** Story mention/reply parsers, dedupe via message external IDs, and a real rule editor replacing the fake cards. Story rules are suppressed to the highest-priority live rule.
+- ✅ **T1.3** Postback routing: `OPTIN:` (follow verification + DM release), `TAG:` (contact tag), with the 24-hour messaging window treated as open.
+- ✅ **T1.4** Safety engine: per-account token-bucket limiter with hourly caps and queued overflow, randomised delays, DM variant rotation, viral-spike throttling, pre-launch validation, 24h duplicate guard, and live safety counts in diagnostics.
+- ✅ **T1.5** Meta Insights fetcher + daily cron + manual refresh, snapshots stored in `insight_snapshots`, conversion rate shown on analytics with honest empty state.
+- ✅ **T1.6** Signed `/go/[slug]` tracked links with click ledger; redirects are public (fixed an auth-proxy bug that sent followers to login).
+- ✅ **T1.7** Lead capture via `collect_field` + reply parsing/validation, contacts page with search and CSV export.
+- ✅ **T1.8** Comment events persisted for retro re-runs; dry-run count + confirmation UI + `after()` background dispatch.
+- ✅ **T1.9** Share-to-DM parser and rule trigger.
+- ✅ **T1.10** Analytics extended with Insights, conversion rate and refresh control.
+- ✅ **T1.11** Ask-to-follow: opening message with opt-in button, one-time follow verification, then DM release.
+- ✅ **T1.12** Bulk multi-account connection: `/api/instagram/accounts` lists accounts available to the stored Meta token with connected flags; `/api/instagram/accounts/connect` creates one isolated workspace per selected account; Settings shows a searchable checklist with live "Create N workspaces".
+
+### Verification
+- `npm run lint`, `npx tsc --noEmit`, `npm test` (34/34), `npm run build` — all clean.
+- Browser: all Tier 1 screens render with zero console errors; rule create → list → delete verified end-to-end against Supabase; tracked link verified to return 302 to the destination.
+- Signed webhook with mixed comment/story/DM/postback/share payload → 200 in ~200 ms; no unhandled errors.
+
+### Caveats
+- Live DM delivery and durable job writes still require a real `DATABASE_URL` and a connected Instagram account (localhost is not an approved OAuth redirect).
+- The limiter is per-process; the `safety_events` table is the cross-instance audit trail, not a global distributed cap.
+- All twelve Tier 1 items are implemented. Bulk connect requires a first connected account (it reuses that token for `/me/accounts`); localhost is not an approved OAuth redirect, so the full Meta-Business multi-select path could not be exercised locally.
+
+---
+
+## 13. First-time creator UX pass — 2026-11-25
+
+- **Guided setup on the Dashboard:** a dismissible "Get started" checklist with four real-state steps (connect account → create campaign → add auto-reply rule → send a test DM), progress bar, and a direct action on each step. It hides itself once all four are complete.
+- **Plain-language navigation:** sidebar and breadcrumbs now read Analytics, Inbox, Contacts, Campaigns, Auto-replies, Activity Log, Settings, System Health — no internal "DM Execution Logs" / "Inbox Automations" jargon.
+- **Onboarding honesty and clarity:** Instagram is marked Recommended; the second path is accurately labelled "Meta Business" (Messenger is a Tier 2 item); fake claims ("140ms", "100% Policy Safe") removed; attribution is optional with a Skip button; the final screen explains how to test the first campaign.
+- **Campaign builder:** added a plain-language "New here?" helper and a success banner on the campaigns list after publishing (`?created=1`).
+- **Accessibility:** added aria-labels to the sidebar toggle, mobile nav, theme switcher and sign-out buttons; fixed low-contrast muted labels in dark mode. Dashboard Lighthouse is back to **Accessibility 1.0 / Best Practices 1.0 / SEO 1.0** with zero console errors.
+- All automated checks remain green: lint, typecheck, 34 tests, production build.

@@ -11,8 +11,6 @@ import {
   Check,
   ExternalLink,
   Loader2,
-  Film,
-  Zap,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -196,7 +194,7 @@ export function CampaignBuilder({ initialHandle }: CampaignBuilderProps = {}) {
       if (res.success) {
         setPublishStatus("success");
         setTimeout(() => {
-          router.push("/dashboard/campaigns");
+          router.push("/dashboard/campaigns?created=1");
           router.refresh();
         }, 500);
       } else {
@@ -275,6 +273,14 @@ export function CampaignBuilder({ initialHandle }: CampaignBuilderProps = {}) {
             )}
           </Button>
         </div>
+      </div>
+
+      <div className="flex items-start gap-2.5 rounded-2xl border border-[#e0e2e8] dark:border-border/80 bg-[#f7f8fa] dark:bg-muted/30 px-4 py-3 text-xs text-[#555a6a] dark:text-muted-foreground">
+        <Sparkles className="size-4 mt-0.5 text-[#ffd02f] shrink-0" aria-hidden="true" />
+        <p className="leading-relaxed">
+          <span className="font-semibold text-foreground">New here?</span> Choose where the trigger applies, add a keyword, write your DM, then launch.
+          You can change every setting later.
+        </p>
       </div>
 
       {errorMsg && (
@@ -619,6 +625,25 @@ export function CampaignBuilder({ initialHandle }: CampaignBuilderProps = {}) {
                 className="h-9 text-xs rounded-lg bg-[#f7f8fa] dark:bg-muted/40"
               />
             )}
+          </Card>
+
+          {/* STEP 5: Optional Follow Gate */}
+          <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 p-5 shadow-subtle space-y-2">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <h4 className="font-semibold text-xs sm:text-sm text-foreground">
+                  Ask followers to follow first
+                </h4>
+                <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground mt-0.5">
+                  Only people who follow your account receive the DM. Others are skipped.
+                </p>
+              </div>
+              <Switch
+                checked={followGateEnabled}
+                onCheckedChange={setFollowGateEnabled}
+                aria-label="Require followers before sending the DM"
+              />
+            </div>
           </Card>
         </div>
 

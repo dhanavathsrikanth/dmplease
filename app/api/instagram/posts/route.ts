@@ -1,11 +1,11 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/profile";
 import { prisma } from "@/lib/prisma";
 import { decryptToken } from "@/lib/meta/vault";
 import { getUserMedia } from "@/lib/meta/client";
 import { hasDatabaseUrl } from "@/lib/config";
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   const user = await getCurrentUser();
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -39,7 +39,10 @@ export async function GET(request: NextRequest) {
   try {
     const media = await getUserMedia(accessToken, 24);
     return NextResponse.json({ success: true, media });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Could not load media" },
+      { status: 500 }
+    );
   }
 }

@@ -5,16 +5,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Check,
-  Instagram,
   CheckCircle2,
   AlertCircle,
-  ShieldCheck,
   ArrowRight,
-  Sparkles,
-  MessageCircle,
   Zap,
-  Phone,
-  Layers,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -228,8 +222,8 @@ export function OnboardingWizard({
                       </span>
                     </h1>
                     <p className="mt-3 text-[15px] sm:text-[16px] text-[#6b7280] dark:text-zinc-400 font-normal leading-relaxed">
-                      Start with any channel you like — <br className="hidden sm:inline" />
-                      you can connect more later.
+                      Connect an account and we&apos;ll set up your first campaign for you.
+                      <br className="hidden sm:inline" /> Takes about a minute — you can change everything later.
                     </p>
                   </div>
 
@@ -273,10 +267,10 @@ export function OnboardingWizard({
                           <InstagramLogoIcon className="size-8 shrink-0 group-hover:scale-105 transition-transform" />
                           <div className="text-left">
                             <p className="font-semibold text-sm text-[#111827] dark:text-zinc-100">
-                              Instagram
+                              Instagram <span className="ml-1.5 text-[10px] font-bold uppercase tracking-wide text-[#6c47ff]">Recommended</span>
                             </p>
                             <p className="text-[11px] text-[#6b7280] dark:text-zinc-400">
-                              Comment-to-DM &amp; reel automation
+                              Comment-to-DM, stories &amp; reel automation
                             </p>
                           </div>
                         </div>
@@ -294,10 +288,10 @@ export function OnboardingWizard({
                           <MetaInfinityIcon className="size-8 shrink-0 group-hover:scale-105 transition-transform" />
                           <div className="text-left">
                             <p className="font-semibold text-sm text-[#111827] dark:text-zinc-100">
-                              Facebook Messenger
+                              Meta Business
                             </p>
                             <p className="text-[11px] text-[#6b7280] dark:text-zinc-400">
-                              Pages, business inbox &amp; ad triggers
+                              Multiple Instagram accounts &amp; business pages
                             </p>
                           </div>
                         </div>
@@ -357,13 +351,13 @@ export function OnboardingWizard({
                   </p>
                   <div className="p-2.5 rounded-xl bg-violet-50 dark:bg-zinc-800/60 border border-violet-100 dark:border-zinc-700 text-[11px] text-violet-900 dark:text-violet-200 flex items-center gap-1.5">
                     <Zap className="size-3 text-[#6c47ff] shrink-0" />
-                    <span>Auto-DM dispatched in 140ms</span>
+                    <span>Delivered automatically via the Meta Graph API</span>
                   </div>
                 </div>
 
                 <div className="relative z-10 flex items-center justify-between text-[11px] text-zinc-700 font-medium pt-2">
-                  <span>10,000+ automations delivered</span>
-                  <span className="font-bold">100% Policy Safe</span>
+                  <span>You choose every keyword and message</span>
+                  <span className="font-bold">Official Meta Graph API</span>
                 </div>
               </div>
             </div>
@@ -542,7 +536,7 @@ export function OnboardingWizard({
                   How did you <span className="text-[#6c47ff]">find us?</span>
                 </h2>
                 <p className="text-xs sm:text-sm text-[#6b7280] dark:text-zinc-400 mt-1">
-                  Helps our engineering team optimize future integrations.
+                  Optional — it only helps us improve the setup flow. Skip if you&apos;d rather not answer.
                 </p>
               </div>
 
@@ -579,14 +573,25 @@ export function OnboardingWizard({
                 >
                   &larr; Back
                 </Button>
-                <Button
-                  size="sm"
-                  disabled={isSubmitting}
-                  onClick={() => handleFinish()}
-                  className="rounded-full px-6 font-semibold text-xs h-10 bg-gradient-to-r from-[#6c47ff] to-[#4262ff] text-white shadow-md hover:opacity-95"
-                >
-                  {isSubmitting ? "Launching..." : "Launch Automation 🚀"}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={isSubmitting}
+                    onClick={() => void handleFinish("Not shared")}
+                    className="rounded-full text-xs text-zinc-500"
+                  >
+                    Skip for now
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={isSubmitting}
+                    onClick={() => void handleFinish()}
+                    className="rounded-full px-6 font-semibold text-xs h-10 bg-gradient-to-r from-[#6c47ff] to-[#4262ff] text-white shadow-md hover:opacity-95"
+                  >
+                    {isSubmitting ? "Setting up..." : "Finish setup"}
+                  </Button>
+                </div>
               </div>
             </div>
           )}
@@ -604,8 +609,10 @@ export function OnboardingWizard({
                 <h2 className="font-rubik text-3xl font-extrabold text-[#111827] dark:text-white">
                   You&apos;re All Set!
                 </h2>
-                <p className="text-xs sm:text-sm text-zinc-500 dark:text-zinc-400 mt-2 max-w-sm mx-auto">
-                  Your automation is listening for &ldquo;{triggerKeyword}&rdquo; comments and will reply instantly with direct messages.
+                <p className="text-xs sm:text-sm text-zinc-500 dark:text-zinc-400 mt-2 max-w-md mx-auto leading-relaxed">
+                  Your first campaign is ready. When someone comments{" "}
+                  <span className="font-mono font-bold px-1.5 py-0.5 rounded bg-[#6c47ff]/10 text-[#6c47ff]">{triggerKeyword}</span>{" "}
+                  on your post, dmplease sends them a DM automatically. To test it, comment that word from another account.
                 </p>
               </div>
 

@@ -14,6 +14,7 @@ import {
   IconActivityHeartbeat,
   IconSelector,
   IconCheck,
+  IconAddressBook,
 } from "@tabler/icons-react";
 import { cn } from "@/lib/utils";
 import { useWorkspace } from "@/lib/workspace-context";
@@ -39,23 +40,24 @@ const navSections = [
     label: "Workspace",
     items: [
       { label: "Dashboard", href: "/dashboard", icon: IconLayoutDashboard },
-      { label: "Overview", href: "/dashboard/overview", icon: IconDeviceAnalytics },
-      { label: "Direct Inbox", href: "/dashboard/inbox", icon: IconMessages },
+      { label: "Analytics", href: "/dashboard/overview", icon: IconDeviceAnalytics },
+      { label: "Inbox", href: "/dashboard/inbox", icon: IconMessages },
+      { label: "Contacts", href: "/dashboard/contacts", icon: IconAddressBook },
     ],
   },
   {
     label: "Automation",
     items: [
       { label: "Campaigns", href: "/dashboard/campaigns", icon: IconSpeakerphone },
-      { label: "Inbox Automations", href: "/dashboard/inbox-automations", icon: IconRobot },
-      { label: "DM Logs", href: "/dashboard/logs", icon: IconTimeline },
+      { label: "Auto-replies", href: "/dashboard/inbox-automations", icon: IconRobot },
+      { label: "Activity Log", href: "/dashboard/logs", icon: IconTimeline },
     ],
   },
   {
     label: "Platform",
     items: [
       { label: "Settings", href: "/dashboard/settings", icon: IconAdjustmentsHorizontal },
-      { label: "Diagnostics", href: "/dashboard/diagnostics", icon: IconActivityHeartbeat },
+      { label: "System Health", href: "/dashboard/diagnostics", icon: IconActivityHeartbeat },
     ],
   },
 ];
@@ -105,7 +107,7 @@ export function AppSidebar({
         {navSections.map((section) => (
           <div key={section.label} className="space-y-1">
             {!collapsed && (
-              <p className="px-2.5 text-[10px] font-mono font-medium text-muted-foreground/80 uppercase tracking-wider mb-1.5">
+              <p className="px-2.5 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-wider mb-1.5">
                 {section.label}
               </p>
             )}
@@ -162,7 +164,7 @@ export function AppSidebar({
                   <p className="text-xs font-semibold text-foreground truncate">
                     {currentWorkspace?.name || "Personal Workspace"}
                   </p>
-                  <p className="text-[10px] text-[#6b6f7e] truncate capitalize font-medium">
+                  <p className="text-[10px] text-[#6b6f7e] dark:text-[#9aa0ad] truncate capitalize font-medium">
                     {currentWorkspace?.role?.toLowerCase() || "Owner"}
                   </p>
                 </div>

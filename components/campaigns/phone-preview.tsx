@@ -54,7 +54,7 @@ export function PhonePreview({
             "px-4 py-1.5 rounded-full transition-all text-xs font-semibold",
             activeTab === "dm"
               ? "bg-[#1c1c1e] text-white shadow-xs dark:bg-white dark:text-[#1c1c1e]"
-              : "text-[#6b6f7e] hover:text-foreground"
+              : "text-[#6b6f7e] dark:text-[#9aa0ad] hover:text-foreground"
           )}
         >
           Direct Message View
@@ -66,7 +66,7 @@ export function PhonePreview({
             "px-4 py-1.5 rounded-full transition-all text-xs font-semibold",
             activeTab === "post"
               ? "bg-[#1c1c1e] text-white shadow-xs dark:bg-white dark:text-[#1c1c1e]"
-              : "text-[#6b6f7e] hover:text-foreground"
+              : "text-[#6b6f7e] dark:text-[#9aa0ad] hover:text-foreground"
           )}
         >
           Post & Comment View
@@ -198,6 +198,13 @@ export function PhonePreview({
                   </div>
                 )}
               </div>
+
+              {postCaption && (
+                <p className="px-3 py-1.5 text-[10px] leading-snug text-neutral-600 dark:text-neutral-300 line-clamp-2">
+                  <span className="font-semibold">{instagramHandle}</span>{" "}
+                  {postCaption}
+                </p>
+              )}
 
               {/* Post Actions Bar */}
               <div className="p-2.5 flex items-center justify-between text-neutral-600 dark:text-neutral-400 border-b border-neutral-100 dark:border-neutral-800">

@@ -96,10 +96,10 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json({ success: true, messageId: result.message_id });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("[send-dm] Error:", err);
     return NextResponse.json(
-      { success: false, error: err?.message || "Internal server error" },
+      { success: false, error: err instanceof Error ? err.message : "Internal server error" },
       { status: 500 }
     );
   }
