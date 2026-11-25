@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseTrackedLink } from "@/lib/tracking";
-import { prisma } from "@/lib/prisma";
-import { hasDatabaseUrl } from "@/lib/config";
+import { getAdminDb, hasAdminDb } from "@/lib/db-admin";
 
 /** Tracked campaign link: verifies the signature, records the click, redirects. */
 export async function GET(
@@ -15,18 +14,15 @@ export async function GET(
     return NextResponse.redirect(new URL("/?link=invalid", request.url), 302);
   }
 
-  if (hasDatabaseUrl()) {
+  if (hasAdminDb()) {
     try {
-      await prisma.$executeRaw`
-        INSERT INTO link_clicks (workspace_id, automation_id, contact_id, token, referrer)
-        VALUES (
-          ${payload.workspaceId}::uuid,
-          ${payload.automationId ?? null}::uuid,
-          ${payload.contactId ?? null}::uuid,
-          ${slug},
-          ${request.headers.get("referer") ?? null}
-        )
-      `;
+      await getAdminDb().from("link_clicks").insert({
+        workspace_id: payload.workspaceId,
+        automation_id: payload.automationId ?? null,
+        contact_id: payload.contactId ?? null,
+        token: slug,
+        referrer: request.headers.get("referer") ?? null,
+      });
     } catch (error) {
       // Click tracking must never block a follower from reaching the link.
       console.warn("[tracking] Could not record click:", error);

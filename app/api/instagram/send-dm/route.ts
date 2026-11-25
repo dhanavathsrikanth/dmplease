@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { decryptToken } from "@/lib/meta/vault";
 import { sendDirectMessage } from "@/lib/meta/client";
-import { prisma } from "@/lib/prisma";
+import { getAdminDb, hasAdminDb } from "@/lib/db-admin";
 
 /**
  * POST /api/instagram/send-dm
@@ -72,18 +72,18 @@ export async function POST(request: NextRequest) {
 
     // Log the manual DM
     try {
-      await prisma.dmLog.create({
-        data: {
-          workspaceId,
-          instagramAccountId: account.id,
-          automationId: null,
-          recipientId,
-          recipientUsername: recipientUsername || "instagram_user",
-          triggerKeyword: "MANUAL_REPLY",
-          dmMessage: message.trim(),
+      if (hasAdminDb()) {
+        await getAdminDb().from("dm_logs").insert({
+          workspace_id: workspaceId,
+          instagram_account_id: account.id,
+          automation_id: null,
+          recipient_id: recipientId,
+          recipient_username: recipientUsername || "instagram_user",
+          trigger_keyword: "MANUAL_REPLY",
+          dm_message: message.trim(),
           status: success ? "SENT" : "FAILED",
-        },
-      });
+        });
+      }
     } catch (logErr) {
       console.warn("[send-dm] Log creation failed:", logErr);
     }

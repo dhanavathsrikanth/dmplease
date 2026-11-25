@@ -1,16 +1,12 @@
 import { timingSafeEqual } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { connection } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { getAdminDb, hasAdminDb } from "@/lib/db-admin";
 import { decryptToken, encryptToken, needsReEncryption } from "@/lib/meta/vault";
 import { refreshLongLivedToken } from "@/lib/meta/client";
-import { getCronSecret, hasDatabaseUrl } from "@/lib/config";
+import { getCronSecret } from "@/lib/config";
 
-/**
- * Scheduled cron: refresh 60-day Instagram tokens expiring within 14 days.
- * Requires Authorization: Bearer <CRON_SECRET>.
- */
-
+/** Scheduled cron: refresh 60-day Instagram tokens expiring within 14 days. */
 function isAuthorized(request: NextRequest): boolean {
   const header = request.headers.get("authorization") || "";
   let secret: string;
@@ -27,77 +23,57 @@ function isAuthorized(request: NextRequest): boolean {
 
 export async function GET(request: NextRequest) {
   if (!isAuthorized(request)) {
-    return NextResponse.json(
-      { error: "Unauthorized" },
-      { status: 401, headers: { "Cache-Control": "no-store" } }
-    );
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-
   await connection();
 
-  if (!hasDatabaseUrl()) {
-    return NextResponse.json({
-      status: "skipped",
-      message: "Database connection is not configured for cron.",
-    });
+  if (!hasAdminDb()) {
+    return NextResponse.json({ status: "skipped", message: "Admin database not configured" });
   }
 
-  try {
-    const soon = new Date(Date.now() + 14 * 24 * 3600 * 1000);
-    const accounts = await prisma.instagramAccount.findMany({
-      where: {
-        accessToken: { not: null },
-        tokenExpiresAt: { lte: soon },
-      },
-      select: { id: true, workspaceId: true, accessToken: true },
-    });
+  const db = getAdminDb();
+  const soon = new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString();
+  const { data: accounts, error } = await db
+    .from("instagram_accounts")
+    .select("id, access_token")
+    .not("access_token", "is", null)
+    .lte("token_expires_at", soon);
 
-    const results: Array<{
-      accountId: string;
-      refreshed: boolean;
-      migratedKey?: boolean;
-      error?: string;
-    }> = [];
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
 
-    for (const account of accounts) {
-      if (!account.accessToken) continue;
-      const migratedKey = needsReEncryption(account.accessToken);
+  const results: Array<{ accountId: string; refreshed: boolean; migratedKey?: boolean; error?: string }> = [];
 
-      try {
-        const plainToken = decryptToken(account.accessToken);
-        const { accessToken, expiresIn } = await refreshLongLivedToken(plainToken);
-
-        await prisma.instagramAccount.update({
-          where: { id: account.id },
-          data: {
-            accessToken: encryptToken(accessToken),
-            tokenExpiresAt: new Date(Date.now() + expiresIn * 1000),
-            updatedAt: new Date(),
-          },
-        });
-
-        results.push({ accountId: account.id, refreshed: true, migratedKey });
-      } catch (error) {
-        // Never include the token itself in logs or responses.
-        const message = error instanceof Error ? error.message : "Unknown error";
-        console.error(`[cron] Token refresh failed for account ${account.id}: ${message}`);
-        results.push({ accountId: account.id, refreshed: false, error: message });
-      }
+  for (const account of accounts ?? []) {
+    if (!account.access_token) continue;
+    const migratedKey = needsReEncryption(account.access_token);
+    try {
+      const plainToken = decryptToken(account.access_token);
+      const { accessToken, expiresIn } = await refreshLongLivedToken(plainToken);
+      const { error: updateError } = await db
+        .from("instagram_accounts")
+        .update({
+          access_token: encryptToken(accessToken),
+          token_expires_at: new Date(Date.now() + expiresIn * 1000).toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", account.id);
+      if (updateError) throw updateError;
+      results.push({ accountId: account.id, refreshed: true, migratedKey });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      console.error(`[cron] Token refresh failed for ${account.id}: ${message}`);
+      results.push({ accountId: account.id, refreshed: false, error: message });
     }
-
-    const refreshed = results.filter((r) => r.refreshed).length;
-    return NextResponse.json({
-      success: true,
-      processed: accounts.length,
-      refreshed,
-      failed: results.length - refreshed,
-      results,
-    });
-  } catch (error) {
-    console.error("[cron] Token refresh job failed:", error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Cron failed" },
-      { status: 500 }
-    );
   }
+
+  const refreshed = results.filter((result) => result.refreshed).length;
+  return NextResponse.json({
+    success: true,
+    processed: (accounts ?? []).length,
+    refreshed,
+    failed: results.length - refreshed,
+    results,
+  });
 }

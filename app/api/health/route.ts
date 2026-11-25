@@ -13,6 +13,7 @@ import { hasWebhookSigningSecret } from "@/lib/meta/webhook";
 export async function GET() {
   const checks = {
     databaseUrl: hasDatabaseUrl(),
+    supabaseServiceKey: hasSecret("SUPABASE_SERVICE_ROLE_KEY"),
     metaAppId: hasSecret("META_APP_ID") || hasSecret("INSTAGRAM_APP_ID"),
     webhookSigning: hasWebhookSigningSecret(),
     webhookVerifyToken:
@@ -28,9 +29,9 @@ export async function GET() {
       ready,
       environment: isProduction() ? "production" : "development",
       checks,
-      hint: checks.databaseUrl
+      hint: checks.supabaseServiceKey
         ? undefined
-        : "Set DATABASE_URL to the Supabase pooler connection string (port 6543) in your deployment environment, then redeploy.",
+        : "Set SUPABASE_SERVICE_ROLE_KEY so backend writes can use Supabase's HTTPS API.",
     },
     {
       status: ready ? 200 : 503,

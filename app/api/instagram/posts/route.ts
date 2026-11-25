@@ -1,9 +1,8 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/profile";
-import { prisma } from "@/lib/prisma";
+import { createClient } from "@/lib/supabase/server";
 import { decryptToken } from "@/lib/meta/vault";
 import { getUserMedia } from "@/lib/meta/client";
-import { hasDatabaseUrl } from "@/lib/config";
 
 export async function GET() {
   const user = await getCurrentUser();
@@ -11,19 +10,25 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // 1. Check if token configured in DB
+  // 1. Find the signed-in creator's connected account via RLS-protected reads.
   let accessToken: string | null = null;
-  const hasDb = hasDatabaseUrl();
+  const supabase = await createClient();
+  const { data: workspaces } = await supabase
+    .from("workspaces")
+    .select("id")
+    .eq("owner_id", user.id);
 
-  if (hasDb) {
-    const account = await prisma.instagramAccount.findFirst({
-      where: {
-        workspace: { ownerId: user.id },
-      },
-    });
-    if (account?.accessToken) {
+  const workspaceIds = (workspaces ?? []).map((workspace) => workspace.id);
+  if (workspaceIds.length > 0) {
+    const { data: accounts } = await supabase
+      .from("instagram_accounts")
+      .select("access_token")
+      .in("workspace_id", workspaceIds)
+      .limit(1);
+    const stored = accounts?.[0]?.access_token;
+    if (stored) {
       try {
-        accessToken = decryptToken(account.accessToken);
+        accessToken = decryptToken(stored);
       } catch {}
     }
   }

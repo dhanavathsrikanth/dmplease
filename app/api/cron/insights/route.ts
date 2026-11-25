@@ -1,11 +1,10 @@
 import { timingSafeEqual } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { connection } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { getCronSecret, hasDatabaseUrl } from "@/lib/config";
+import { getAdminDb, hasAdminDb } from "@/lib/db-admin";
+import { getCronSecret } from "@/lib/config";
 import { refreshInsightsForWorkspaces } from "@/lib/meta/insights-sync";
 
-/** Daily scheduled refresh of Meta Insights for every connected workspace. */
 function isAuthorized(request: NextRequest): boolean {
   const header = request.headers.get("authorization") || "";
   let secret: string;
@@ -20,21 +19,26 @@ function isAuthorized(request: NextRequest): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+/** Daily scheduled refresh of Meta Insights for every connected workspace. */
 export async function GET(request: NextRequest) {
   if (!isAuthorized(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   await connection();
 
-  if (!hasDatabaseUrl()) {
-    return NextResponse.json({ status: "skipped", message: "Database not configured" });
+  if (!hasAdminDb()) {
+    return NextResponse.json({ status: "skipped", message: "Admin database not configured" });
   }
 
   try {
-    const rows = await prisma.$queryRaw<Array<{ workspace_id: string }>>`
-      SELECT DISTINCT workspace_id::text FROM instagram_accounts WHERE access_token IS NOT NULL
-    `;
-    const summary = await refreshInsightsForWorkspaces(rows.map((row) => row.workspace_id));
+    const { data, error } = await getAdminDb()
+      .from("instagram_accounts")
+      .select("workspace_id")
+      .not("access_token", "is", null);
+    if (error) throw error;
+
+    const workspaceIds = [...new Set((data ?? []).map((row) => row.workspace_id as string))];
+    const summary = await refreshInsightsForWorkspaces(workspaceIds);
     return NextResponse.json({ success: true, ...summary });
   } catch (error) {
     return NextResponse.json(

@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { getAdminDb, hasAdminDb } from "@/lib/db-admin";
 import { decryptToken } from "@/lib/meta/vault";
 import {
   checkIsFollower,
@@ -26,7 +26,6 @@ import {
   type WebhookCommentEvent,
   type WebhookPayload,
 } from "@/lib/meta/webhook";
-import { hasDatabaseUrl } from "@/lib/config";
 
 export type EventOutcome = "sent" | "skipped" | "failed" | "ignored";
 
@@ -162,18 +161,29 @@ export function matchesRuleKeywords(keywords: string[], text: string): boolean {
   return keywords.some((keyword) => words.has(keyword.toLowerCase().trim()));
 }
 
-// ── Persistence helpers (raw SQL keeps compatibility with the current client) ─
+// ── Persistence helpers (Supabase HTTPS REST via service role) ──────────────
+
+function nowIso() {
+  return new Date().toISOString();
+}
 
 async function getAccount(instagramId: string) {
-  if (!hasDatabaseUrl()) return null;
+  if (!hasAdminDb()) return null;
   try {
-    const rows = await prisma.$queryRaw<
-      Array<{ id: string; workspace_id: string; access_token: string | null }>
-    >`
-      SELECT id::text, workspace_id::text, access_token
-      FROM instagram_accounts WHERE instagram_id = ${instagramId} LIMIT 1
-    `;
-    return rows[0] ?? null;
+    const { data, error } = await getAdminDb()
+      .from("instagram_accounts")
+      .select("id, workspace_id, access_token")
+      .eq("instagram_id", instagramId)
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    return data
+      ? {
+          id: data.id as string,
+          workspace_id: data.workspace_id as string,
+          access_token: (data.access_token as string | null) ?? null,
+        }
+      : null;
   } catch {
     return null;
   }
@@ -196,16 +206,22 @@ async function ensureContact(
   username?: string | null,
   source = "comment"
 ): Promise<string | null> {
-  if (!hasDatabaseUrl()) return null;
+  if (!hasAdminDb()) return null;
   try {
-    const rows = await prisma.$queryRaw<Array<{ id: string }>>`
-      INSERT INTO contacts (workspace_id, instagram_id, username, source)
-      VALUES (${workspaceId}::uuid, ${instagramId}, ${username ?? null}, ${source})
-      ON CONFLICT (workspace_id, instagram_id)
-      DO UPDATE SET username = COALESCE(EXCLUDED.username, contacts.username), updated_at = now()
-      RETURNING id::text AS id
-    `;
-    return rows[0]?.id ?? null;
+    const payload: Record<string, unknown> = {
+      workspace_id: workspaceId,
+      instagram_id: instagramId,
+      source,
+      updated_at: nowIso(),
+    };
+    if (username) payload.username = username;
+    const { data, error } = await getAdminDb()
+      .from("contacts")
+      .upsert(payload, { onConflict: "workspace_id,instagram_id" })
+      .select("id")
+      .single();
+    if (error) throw error;
+    return (data?.id as string) ?? null;
   } catch (error) {
     console.warn("[webhook] ensureContact failed:", error);
     return null;
@@ -217,16 +233,24 @@ async function ensureConversation(
   instagramAccountId: string | null,
   contactId: string
 ): Promise<string | null> {
-  if (!hasDatabaseUrl()) return null;
+  if (!hasAdminDb()) return null;
   try {
-    const rows = await prisma.$queryRaw<Array<{ id: string }>>`
-      INSERT INTO conversations (workspace_id, instagram_account_id, contact_id)
-      VALUES (${workspaceId}::uuid, ${instagramAccountId}::uuid, ${contactId}::uuid)
-      ON CONFLICT (contact_id, instagram_account_id)
-      DO UPDATE SET last_message_at = now(), status = 'open'
-      RETURNING id::text AS id
-    `;
-    return rows[0]?.id ?? null;
+    const { data, error } = await getAdminDb()
+      .from("conversations")
+      .upsert(
+        {
+          workspace_id: workspaceId,
+          contact_id: contactId,
+          ...(instagramAccountId ? { instagram_account_id: instagramAccountId } : {}),
+          status: "open",
+          last_message_at: nowIso(),
+        },
+        { onConflict: "contact_id,instagram_account_id" }
+      )
+      .select("id")
+      .single();
+    if (error) throw error;
+    return (data?.id as string) ?? null;
   } catch (error) {
     console.warn("[webhook] ensureConversation failed:", error);
     return null;
@@ -242,20 +266,26 @@ async function recordMessage(input: {
   text: string;
   status?: string | null;
 }): Promise<boolean> {
-  if (!hasDatabaseUrl()) return false;
+  if (!hasAdminDb()) return false;
   try {
-    await prisma.$executeRaw`
-      INSERT INTO messages (workspace_id, conversation_id, external_id, direction, sender_type, content_type, content, delivery_status)
-      VALUES (
-        ${input.workspaceId}::uuid, ${input.conversationId}::uuid, ${input.externalId ?? null},
-        ${input.direction}, ${input.senderType}, 'text',
-        jsonb_build_object('text', ${input.text}), ${input.status ?? null}
-      )
-      ON CONFLICT (conversation_id, external_id) DO NOTHING
-    `;
-    await prisma.$executeRaw`
-      UPDATE conversations SET last_message_at = now() WHERE id = ${input.conversationId}::uuid
-    `;
+    const payload: Record<string, unknown> = {
+      workspace_id: input.workspaceId,
+      conversation_id: input.conversationId,
+      external_id: input.externalId ?? null,
+      direction: input.direction,
+      sender_type: input.senderType,
+      content_type: "text",
+      content: { text: input.text },
+      delivery_status: input.status ?? null,
+    };
+    const { error } = await getAdminDb()
+      .from("messages")
+      .upsert(payload, { onConflict: "conversation_id,external_id", ignoreDuplicates: true });
+    if (error) throw error;
+    await getAdminDb()
+      .from("conversations")
+      .update({ last_message_at: nowIso() })
+      .eq("id", input.conversationId);
     return true;
   } catch (error) {
     console.warn("[webhook] recordMessage failed:", error);
@@ -269,12 +299,14 @@ async function recordSafety(input: {
   recipientId?: string | null;
   kind?: string;
 }): Promise<void> {
-  if (!hasDatabaseUrl()) return;
+  if (!hasAdminDb()) return;
   try {
-    await prisma.$executeRaw`
-      INSERT INTO safety_events (workspace_id, instagram_account_id, recipient_id, kind)
-      VALUES (${input.workspaceId}::uuid, ${input.instagramAccountId ?? null}::uuid, ${input.recipientId ?? null}, ${input.kind ?? "dm"})
-    `;
+    await getAdminDb().from("safety_events").insert({
+      workspace_id: input.workspaceId,
+      instagram_account_id: input.instagramAccountId ?? null,
+      recipient_id: input.recipientId ?? null,
+      kind: input.kind ?? "dm",
+    });
   } catch {
     // Safety ledger is best-effort.
   }
@@ -284,17 +316,18 @@ async function getRules(
   workspaceId: string,
   triggerTypes: string[]
 ): Promise<DmRule[]> {
-  if (!hasDatabaseUrl()) return [];
+  if (!hasAdminDb()) return [];
   try {
-    return await prisma.$queryRaw<DmRule[]>`
-      SELECT id::text, workspace_id::text, name, trigger_type, keywords, message,
-             variants, button_text, button_url, collect_field, once_per_days, priority
-      FROM dm_rules
-      WHERE workspace_id = ${workspaceId}::uuid
-        AND active = true
-        AND trigger_type = ANY(${triggerTypes}::text[])
-      ORDER BY priority DESC, created_at ASC
-    `;
+    const { data, error } = await getAdminDb()
+      .from("dm_rules")
+      .select("id, workspace_id, name, trigger_type, keywords, message, variants, button_text, button_url, collect_field, once_per_days, priority")
+      .eq("workspace_id", workspaceId)
+      .eq("active", true)
+      .in("trigger_type", triggerTypes)
+      .order("priority", { ascending: false })
+      .order("created_at", { ascending: true });
+    if (error) throw error;
+    return (data ?? []) as DmRule[];
   } catch {
     return [];
   }
@@ -306,18 +339,20 @@ async function recentlyMessaged(
   ruleId: string,
   days: number
 ): Promise<boolean> {
-  if (!hasDatabaseUrl()) return false;
+  if (!hasAdminDb()) return false;
   try {
-    const rows = await prisma.$queryRaw<Array<{ exists: boolean }>>`
-      SELECT EXISTS (
-        SELECT 1 FROM safety_events
-        WHERE workspace_id = ${workspaceId}::uuid
-          AND recipient_id = ${recipientId}
-          AND kind = ${`rule:${ruleId}`}
-          AND created_at > now() - (${days}::text || ' days')::interval
-      ) AS exists
-    `;
-    return rows[0]?.exists ?? false;
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    const { data, error } = await getAdminDb()
+      .from("safety_events")
+      .select("id")
+      .eq("workspace_id", workspaceId)
+      .eq("recipient_id", recipientId)
+      .eq("kind", `rule:${ruleId}`)
+      .gt("created_at", since)
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    return Boolean(data);
   } catch {
     return false;
   }
@@ -328,13 +363,23 @@ async function persistCommentEvent(
   accountId: string | null,
   event: WebhookCommentEvent
 ): Promise<void> {
-  if (!hasDatabaseUrl()) return;
+  if (!hasAdminDb()) return;
   try {
-    await prisma.$executeRaw`
-      INSERT INTO comment_events (workspace_id, instagram_account_id, external_id, media_id, commenter_id, commenter_username, text)
-      VALUES (${workspaceId}::uuid, ${accountId}::uuid, ${event.commentId}, ${event.mediaId}, ${event.commenterId}, ${event.commenterName ?? null}, ${event.commentText})
-      ON CONFLICT (workspace_id, external_id) DO NOTHING
-    `;
+    const { error } = await getAdminDb()
+      .from("comment_events")
+      .upsert(
+        {
+          workspace_id: workspaceId,
+          instagram_account_id: accountId,
+          external_id: event.commentId,
+          media_id: event.mediaId,
+          commenter_id: event.commenterId,
+          commenter_username: event.commenterName ?? null,
+          text: event.commentText,
+        },
+        { onConflict: "workspace_id,external_id", ignoreDuplicates: true }
+      );
+    if (error) throw error;
   } catch (error) {
     console.warn("[webhook] Could not persist comment event:", error);
   }
@@ -353,18 +398,27 @@ async function createPending(input: {
   buttonUrl?: string | null;
   collectField?: string | null;
 }): Promise<string | null> {
-  if (!hasDatabaseUrl()) return null;
+  if (!hasAdminDb()) return null;
   try {
-    const rows = await prisma.$queryRaw<Array<{ id: string }>>`
-      INSERT INTO pending_dms (workspace_id, kind, automation_id, rule_id, instagram_account_id,
-        recipient_id, comment_id, message, button_text, button_url, collect_field)
-      VALUES (${input.workspaceId}::uuid, ${input.kind}, ${input.automationId ?? null}::uuid,
-        ${input.ruleId ?? null}::uuid, ${input.instagramAccountId ?? null}::uuid,
-        ${input.recipientId}, ${input.commentId ?? null}, ${input.message ?? null},
-        ${input.buttonText ?? null}, ${input.buttonUrl ?? null}, ${input.collectField ?? null})
-      RETURNING id::text AS id
-    `;
-    return rows[0]?.id ?? null;
+    const { data, error } = await getAdminDb()
+      .from("pending_dms")
+      .insert({
+        workspace_id: input.workspaceId,
+        kind: input.kind,
+        automation_id: input.automationId ?? null,
+        rule_id: input.ruleId ?? null,
+        instagram_account_id: input.instagramAccountId ?? null,
+        recipient_id: input.recipientId,
+        comment_id: input.commentId ?? null,
+        message: input.message ?? null,
+        button_text: input.buttonText ?? null,
+        button_url: input.buttonUrl ?? null,
+        collect_field: input.collectField ?? null,
+      })
+      .select("id")
+      .single();
+    if (error) throw error;
+    return (data?.id as string) ?? null;
   } catch (error) {
     console.warn("[webhook] Could not create pending DM:", error);
     return null;
@@ -372,31 +426,40 @@ async function createPending(input: {
 }
 
 async function consumePending(id: string) {
-  if (!hasDatabaseUrl()) return null;
+  if (!hasAdminDb()) return null;
   try {
-    const rows = await prisma.$queryRaw<
-      Array<{
-        id: string; workspace_id: string; kind: string; automation_id: string | null;
-        rule_id: string | null; instagram_account_id: string | null;
-        recipient_id: string; comment_id: string | null; message: string | null;
-        button_text: string | null; button_url: string | null; collect_field: string | null;
-      }>
-    >`
-      SELECT id::text, workspace_id::text, kind, automation_id::text, rule_id::text,
-             instagram_account_id::text, recipient_id, comment_id, message,
-             button_text, button_url, collect_field
-      FROM pending_dms WHERE id = ${id}::uuid AND expires_at > now() LIMIT 1
-    `;
-    return rows[0] ?? null;
+    const { data, error } = await getAdminDb()
+      .from("pending_dms")
+      .select("id, workspace_id, kind, automation_id, rule_id, instagram_account_id, recipient_id, comment_id, message, button_text, button_url, collect_field")
+      .eq("id", id)
+      .gt("expires_at", nowIso())
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return null;
+    return {
+      id: data.id as string,
+      workspace_id: data.workspace_id as string,
+      kind: data.kind as string,
+      automation_id: (data.automation_id as string | null) ?? null,
+      rule_id: (data.rule_id as string | null) ?? null,
+      instagram_account_id: (data.instagram_account_id as string | null) ?? null,
+      recipient_id: data.recipient_id as string,
+      comment_id: (data.comment_id as string | null) ?? null,
+      message: (data.message as string | null) ?? null,
+      button_text: (data.button_text as string | null) ?? null,
+      button_url: (data.button_url as string | null) ?? null,
+      collect_field: (data.collect_field as string | null) ?? null,
+    };
   } catch {
     return null;
   }
 }
 
 async function deletePending(id: string): Promise<void> {
-  if (!hasDatabaseUrl()) return;
+  if (!hasAdminDb()) return;
   try {
-    await prisma.$executeRaw`DELETE FROM pending_dms WHERE id = ${id}::uuid`;
+    await getAdminDb().from("pending_dms").delete().eq("id", id);
   } catch {
     // Best effort.
   }
@@ -408,34 +471,20 @@ async function markContactLedger(
   field: "opted_in_at" | "follow_verified_at" | "email" | "phone" | "display_name",
   value: string
 ): Promise<void> {
-  if (!hasDatabaseUrl()) return;
+  if (!hasAdminDb()) return;
   try {
-    if (field === "email") {
-      await prisma.$executeRaw`
-        UPDATE contacts SET email = ${value}, updated_at = now()
-        WHERE workspace_id = ${workspaceId}::uuid AND instagram_id = ${recipientId}
-      `;
-    } else if (field === "phone") {
-      await prisma.$executeRaw`
-        UPDATE contacts SET phone = ${value}, updated_at = now()
-        WHERE workspace_id = ${workspaceId}::uuid AND instagram_id = ${recipientId}
-      `;
-    } else if (field === "display_name") {
-      await prisma.$executeRaw`
-        UPDATE contacts SET display_name = ${value}, updated_at = now()
-        WHERE workspace_id = ${workspaceId}::uuid AND instagram_id = ${recipientId}
-      `;
-    } else if (field === "opted_in_at") {
-      await prisma.$executeRaw`
-        UPDATE contacts SET opted_in_at = now(), updated_at = now()
-        WHERE workspace_id = ${workspaceId}::uuid AND instagram_id = ${recipientId}
-      `;
-    } else {
-      await prisma.$executeRaw`
-        UPDATE contacts SET follow_verified_at = now(), updated_at = now()
-        WHERE workspace_id = ${workspaceId}::uuid AND instagram_id = ${recipientId}
-      `;
-    }
+    const patch: Record<string, unknown> = { updated_at: nowIso() };
+    if (field === "email") patch.email = value;
+    else if (field === "phone") patch.phone = value;
+    else if (field === "display_name") patch.display_name = value;
+    else if (field === "opted_in_at") patch.opted_in_at = nowIso();
+    else patch.follow_verified_at = nowIso();
+
+    await getAdminDb()
+      .from("contacts")
+      .update(patch)
+      .eq("workspace_id", workspaceId)
+      .eq("instagram_id", recipientId);
   } catch (error) {
     console.warn("[webhook] Could not update contact:", error);
   }
@@ -540,17 +589,15 @@ async function sendCommentDm(input: {
     }
   }
 
-  await prisma.dmLog.create({
-    data: {
-      workspaceId: input.workspaceId,
-      instagramAccountId: input.accountDbId,
-      automationId: auto.id,
-      recipientId: input.recipientId,
-      recipientUsername: input.username || "instagram_user",
-      triggerKeyword: input.keyword,
-      dmMessage: text,
-      status: succeeded ? "SENT" : "FAILED",
-    },
+  await getAdminDb().from("dm_logs").insert({
+    workspace_id: input.workspaceId,
+    instagram_account_id: input.accountDbId,
+    automation_id: auto.id,
+    recipient_id: input.recipientId,
+    recipient_username: input.username || "instagram_user",
+    trigger_keyword: input.keyword,
+    dm_message: text,
+    status: succeeded ? "SENT" : "FAILED",
   });
 
   if (input.contactId) {
@@ -583,7 +630,7 @@ export async function processCommentEventForAutomation(
   event: WebhookCommentEvent,
   auto: AutomationLike
 ): Promise<{ sent: boolean; skipped?: string }> {
-  if (!hasDatabaseUrl()) return { sent: false, skipped: "Database unavailable" };
+  if (!hasAdminDb()) return { sent: false, skipped: "Database unavailable" };
 
   const account = await getAccount(event.instagramAccountId);
   if (!account) return { sent: false, skipped: "Account not connected" };
@@ -597,15 +644,15 @@ export async function processCommentEventForAutomation(
     return { sent: false, skipped: "Post scope mismatch" };
   }
 
-  const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const existing = await prisma.dmLog.findFirst({
-    where: {
-      automationId: auto.id,
-      recipientId: event.commenterId,
-      sentAt: { gte: dayAgo },
-    },
-    select: { id: true },
-  });
+  const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { data: existing } = await getAdminDb()
+    .from("dm_logs")
+    .select("id")
+    .eq("automation_id", auto.id)
+    .eq("recipient_id", event.commenterId)
+    .gte("sent_at", dayAgo)
+    .limit(1)
+    .maybeSingle();
   if (existing) return { sent: false, skipped: "Already messaged in 24h" };
 
   const contactId = await ensureContact(
@@ -616,10 +663,12 @@ export async function processCommentEventForAutomation(
   );
 
   if (auto.followGateEnabled && contactId) {
-    const rows = await prisma.$queryRaw<Array<{ opted_in_at: Date | null }>>`
-      SELECT opted_in_at FROM contacts WHERE id = ${contactId}::uuid LIMIT 1
-    `;
-    const optedIn = Boolean(rows[0]?.opted_in_at);
+    const { data: contactRow } = await getAdminDb()
+      .from("contacts")
+      .select("opted_in_at")
+      .eq("id", contactId)
+      .maybeSingle();
+    const optedIn = Boolean(contactRow?.opted_in_at);
     if (!optedIn) {
       const opening = auto.openingMessage || "Tap below to get your {keyword}. 👇";
       const pendingId = await createPending({
@@ -771,7 +820,7 @@ export async function processWebhookPayload(
     errors: [],
   };
   const latencies: number[] = [];
-  const dbAvailable = hasDatabaseUrl();
+  const dbAvailable = hasAdminDb();
 
   if (!dbAvailable) {
     result.errors.push("DATABASE_URL is not configured; webhook events were not persisted.");
@@ -794,21 +843,23 @@ export async function processWebhookPayload(
       }
       await persistCommentEvent(account.workspace_id, account.id, event);
 
-      const recentComments = await prisma.$queryRaw<Array<{ count: bigint }>>`
-        SELECT count(*)::bigint AS count FROM comment_events
-        WHERE workspace_id = ${account.workspace_id}::uuid AND received_at > now() - interval '5 minutes'
-      `;
-      if (isViralSpike(Number(recentComments[0]?.count ?? 0))) {
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      const { count: recentCount } = await getAdminDb()
+        .from("comment_events")
+        .select("id", { count: "exact", head: true })
+        .eq("workspace_id", account.workspace_id)
+        .gte("received_at", fiveMinutesAgo);
+      if (isViralSpike(recentCount ?? 0)) {
         console.warn("[safety] Viral spike detected — throttling delivery");
         await jitter(500, 2000);
       }
 
-      const automations = await prisma.automation.findMany({
-        where: {
-          active: true,
-          workspace: { instagramAccounts: { some: { instagramId: event.instagramAccountId } } },
-        },
-      });
+      const { data: automationRows } = await getAdminDb()
+        .from("automations")
+        .select("*")
+        .eq("workspace_id", account.workspace_id)
+        .eq("active", true);
+      const automations = (automationRows ?? []) as AutomationLike[];
 
       if (automations.length === 0) {
         result.events.push({ kind: "comment", accountId: event.instagramAccountId, outcome: "skipped", detail: "No active automation" });
@@ -866,16 +917,16 @@ export async function processWebhookPayload(
       }
 
       // A reply to a lead-capture question is stored on the contact first.
-      const pendingRows = await prisma.$queryRaw<
-        Array<{ id: string; collect_field: string | null }>
-      >`
-        SELECT id::text, collect_field FROM pending_dms
-        WHERE workspace_id = ${account.workspace_id}::uuid
-          AND recipient_id = ${event.senderId}
-          AND kind = 'collect' AND expires_at > now()
-        ORDER BY created_at DESC LIMIT 1
-      `;
-      const pending = pendingRows[0];
+      const { data: pendingRows } = await getAdminDb()
+        .from("pending_dms")
+        .select("id, collect_field")
+        .eq("workspace_id", account.workspace_id)
+        .eq("recipient_id", event.senderId)
+        .eq("kind", "collect")
+        .gt("expires_at", nowIso())
+        .order("created_at", { ascending: false })
+        .limit(1);
+      const pending = pendingRows?.[0];
       if (pending?.collect_field) {
         const field = pending.collect_field;
         if (field === "email" && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(event.messageText)) {
@@ -961,10 +1012,24 @@ export async function processWebhookPayload(
         await markContactLedger(pending.workspace_id, event.userId, "follow_verified_at", new Date().toISOString());
 
         if (pending.comment_id && pending.automation_id) {
-          const auto = await prisma.automation.findUnique({
-            where: { id: pending.automation_id },
-            select: { id: true, workspaceId: true, dmMessage: true, buttonText: true, buttonUrl: true, publicReplyEnabled: true, publicReplyMessages: true, hourlyCap: true, dmVariants: true },
-          });
+          const { data: autoRow } = await getAdminDb()
+            .from("automations")
+            .select("id, workspace_id, dm_message, button_text, button_url, public_reply_enabled, public_reply_messages, hourly_cap, dm_variants")
+            .eq("id", pending.automation_id)
+            .maybeSingle();
+          const auto: AutomationLike | null = autoRow
+            ? {
+                id: autoRow.id,
+                workspaceId: autoRow.workspace_id,
+                dmMessage: autoRow.dm_message,
+                buttonText: autoRow.button_text,
+                buttonUrl: autoRow.button_url,
+                publicReplyEnabled: autoRow.public_reply_enabled,
+                publicReplyMessages: autoRow.public_reply_messages,
+                hourlyCap: autoRow.hourly_cap,
+                dmVariants: autoRow.dm_variants,
+              }
+            : null;
           if (auto) {
             await sendCommentDm({
               token,
@@ -988,12 +1053,21 @@ export async function processWebhookPayload(
       }
 
       if (action === "TAG" && value) {
-        if (hasDatabaseUrl()) {
-          await prisma.$executeRaw`
-            UPDATE contacts SET tags = array_append(tags, ${value}), updated_at = now()
-            WHERE workspace_id = ${account.workspace_id}::uuid AND instagram_id = ${event.userId}
-            AND NOT (${value} = ANY(tags))
-          `;
+        if (hasAdminDb()) {
+          const { data: taggedContact } = await getAdminDb()
+            .from("contacts")
+            .select("tags")
+            .eq("workspace_id", account.workspace_id)
+            .eq("instagram_id", event.userId)
+            .maybeSingle();
+          const tags = (taggedContact?.tags as string[] | null) ?? [];
+          if (!tags.includes(value)) {
+            await getAdminDb()
+              .from("contacts")
+              .update({ tags: [...tags, value], updated_at: nowIso() })
+              .eq("workspace_id", account.workspace_id)
+              .eq("instagram_id", event.userId);
+          }
         }
         result.events.push({ kind: "postback", accountId: event.instagramAccountId, outcome: "sent", detail: `Tagged: ${value}` });
         result.sent++;
