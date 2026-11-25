@@ -67,7 +67,10 @@ export function getQstashSigningKeys(): { current: string; next: string } {
 
 export function getQstash(): Client {
   if (!qstash) {
-    qstash = new Client({ token: cleanEnv("QSTASH_TOKEN") });
+    qstash = new Client({
+      token: cleanEnv("QSTASH_TOKEN"),
+      ...(cleanEnv("QSTASH_URL") ? { baseUrl: cleanEnv("QSTASH_URL") } : {}),
+    });
   }
   return qstash;
 }
