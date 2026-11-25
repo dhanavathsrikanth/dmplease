@@ -1,0 +1,235 @@
+{
+  "version": 1,
+  "runId": "8d7e10e3-f1b3-46c1-aebd-2de295bdb165",
+  "tasks": [
+    {
+      "id": "70f63614-3277-49bb-9878-6bc19a4fba57",
+      "type": "warehouse",
+      "status": "not needed",
+      "dependsOn": [
+        "9a65b62b-abca-4b27-9b85-373dbb7b8fd9",
+        "5d57fcbd-45e8-4026-b151-5463da8cb083",
+        "8f44b68d-4971-498a-a7c4-16f0b458c397",
+        "732f9ca9-7e76-4e47-a350-7d20362328a9",
+        "92d918a1-9e05-470e-b596-0f3607ad6e0c",
+        "dcd4576e-0f55-4d8d-afd9-f6ffd60d7c6f",
+        "c85db598-233c-4704-a0a1-d9827e61c1f1",
+        "bf86f80a-34c8-45ef-a242-e7fe70785108",
+        "f3848c0d-6bf8-422c-8f06-93a99863ccf5"
+      ],
+      "inputs": {
+        "sources": [
+          {
+            "kind": "Cloudflare",
+            "label": "Cloudflare",
+            "mode": "in-cli",
+            "matchedSignal": "found `CLOUDFLARE_TUNNEL_URL` in `.env.local`"
+          },
+          {
+            "kind": "Resend",
+            "label": "Resend",
+            "mode": "in-cli",
+            "matchedSignal": "found `RESEND_API_KEY` in `.env.example`"
+          },
+          {
+            "kind": "Supabase",
+            "label": "Supabase",
+            "mode": "in-cli",
+            "matchedSignal": "found `@supabase/supabase-js` in package.json"
+          }
+        ]
+      },
+      "attempts": 0,
+      "maxAttempts": 2,
+      "enqueuedBy": "orchestrator",
+      "optional": true,
+      "createdAt": "2026-11-25T18:59:15.733Z",
+      "skipReason": "user-declined",
+      "handoff": {
+        "goals": "Connect your data sources",
+        "did": "Nothing — the user chose to skip this step when offered it.",
+        "forNextAgent": "This step was offered and declined, so it did no work. Report it as skipped at the user’s request, not as failed."
+      },
+      "finishedAt": "2026-11-25T18:59:44.192Z"
+    },
+    {
+      "id": "9a65b62b-abca-4b27-9b85-373dbb7b8fd9",
+      "type": "install",
+      "status": "done",
+      "dependsOn": [],
+      "inputs": {},
+      "attempts": 1,
+      "maxAttempts": 2,
+      "enqueuedBy": "orchestrator",
+      "createdAt": "2026-11-25T18:59:44.113Z",
+      "startedAt": "2026-11-25T18:59:44.198Z",
+      "handoff": {
+        "goals": "Install the documented PostHog SDK using this project's package manager so it is declared in the manifest and resolved in the lockfile.",
+        "did": "Read the Next.js library documentation, which specifies `posthog-js@1`, then used the detected npm package manager to run `npm install --save posthog-js@1`. This added the browser client SDK for upcoming client initialization, automatic capture, session replay, and client-side product events. I did not add `posthog-node`: although this Next.js app has server routes, no existing server-side PostHog event sending is present; a later instrumentation task can add it if it introduces server event capture.",
+        "forNextAgent": "Import the installed browser SDK as `posthog` from `posthog-js`. The resolved manifest version is `^1.455.1`. The app is a Next.js App Router project with `app/` routes. Configure it in the framework-prescribed `instrumentation-client.ts` in a later task.",
+        "filesTouched": [
+          "package.json",
+          "package-lock.json"
+        ],
+        "evidence": "`npm install --save posthog-js@1` completed successfully: it added 12 packages and audited 523. Reading `package.json` afterwards confirms `posthog-js`: `^1.455.1` under dependencies.",
+        "assumptions": "Server SDK installation was not needed for this install-only step because the current app has no existing server-side PostHog sends. If later work adds server capture, it should install `posthog-node@6` as documented.",
+        "conflict": "",
+        "reportSection": "",
+        "packages": []
+      },
+      "finishedAt": "2026-11-25T19:00:39.136Z"
+    },
+    {
+      "id": "5d57fcbd-45e8-4026-b151-5463da8cb083",
+      "type": "init",
+      "status": "done",
+      "dependsOn": [],
+      "inputs": {},
+      "attempts": 1,
+      "maxAttempts": 2,
+      "enqueuedBy": "orchestrator",
+      "createdAt": "2026-11-25T18:59:44.118Z",
+      "startedAt": "2026-11-25T18:59:44.204Z",
+      "handoff": {
+        "goals": "Initialize the Next.js browser PostHog SDK once, configure its public environment variables through wizard tools, and document those variables for developers.",
+        "did": "Created `instrumentation-client.ts` for the Next.js 15.3+ initialization point. It imports the singleton default export from `posthog-js`, reads `NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN` and `NEXT_PUBLIC_POSTHOG_HOST`, and calls `posthog.init()` at module top level only when both are configured. It enables exception capture and development debug mode while retaining default autocapture and session recording. In development, missing configuration throws the required clear error; production safely remains uninitialized. Added `posthog-js` to `package.json` dependencies. Added documented placeholder values for both public PostHog keys to `.env.example`. Used the environment tool to add the real configured public token and EU host to `.env`. This init point supplies baseline browser events, automatic page/click/form capture, session replay, and exception capture; later client call sites should import the same `posthog` default from `posthog-js`.",
+        "forNextAgent": "Use `import posthog from \"posthog-js\"` from client components for any subsequent browser identify, reset, capture, feature-flag, or exception calls; do not initialize a second client or add a provider. The project uses App Router and a Next.js version line compatible with `instrumentation-client.ts`. No Content-Security-Policy was found in application source, so no `script-src`, `connect-src`, or `worker-src` directives were changed. `package-lock.json` did not contain a `posthog-js` entry even though the SDK is present under `node_modules`; a package-manager install should regenerate the lockfile before a clean CI install.",
+        "filesTouched": [
+          "instrumentation-client.ts",
+          "package.json",
+          ".env.example",
+          ".env"
+        ],
+        "evidence": "Verified `instrumentation-client.ts` contains one guarded top-level `posthog.init()` using environment variables; `package.json` declares `posthog-js`; `.env.example` documents both keys with placeholders; and `check_env_keys` confirmed both public PostHog keys are present in `.env`. Confirmed no CSP directives in `app/`. Per instructions, no builds, linters, or tests were run.",
+        "assumptions": "The installed `next: latest` resolves to Next.js 15.3 or newer, supported by the matching `eslint-config-next` 15.3.1 declaration and the provided framework pattern.",
+        "conflict": "`package-lock.json` lacks the new posthog-js lock entry and should be regenerated with npm before clean-lockfile CI.",
+        "reportSection": "",
+        "packages": []
+      },
+      "finishedAt": "2026-11-25T19:00:40.502Z"
+    },
+    {
+      "id": "8f44b68d-4971-498a-a7c4-16f0b458c397",
+      "type": "identify",
+      "status": "running",
+      "dependsOn": [
+        "9a65b62b-abca-4b27-9b85-373dbb7b8fd9",
+        "5d57fcbd-45e8-4026-b151-5463da8cb083"
+      ],
+      "inputs": {},
+      "attempts": 1,
+      "maxAttempts": 2,
+      "enqueuedBy": "orchestrator",
+      "createdAt": "2026-11-25T18:59:44.136Z",
+      "startedAt": "2026-11-25T19:00:41.291Z"
+    },
+    {
+      "id": "732f9ca9-7e76-4e47-a350-7d20362328a9",
+      "type": "error-tracking",
+      "status": "running",
+      "dependsOn": [
+        "9a65b62b-abca-4b27-9b85-373dbb7b8fd9",
+        "5d57fcbd-45e8-4026-b151-5463da8cb083"
+      ],
+      "inputs": {},
+      "attempts": 1,
+      "maxAttempts": 2,
+      "enqueuedBy": "orchestrator",
+      "createdAt": "2026-11-25T18:59:44.139Z",
+      "startedAt": "2026-11-25T19:00:41.293Z"
+    },
+    {
+      "id": "92d918a1-9e05-470e-b596-0f3607ad6e0c",
+      "type": "capture",
+      "status": "pending",
+      "dependsOn": [
+        "9a65b62b-abca-4b27-9b85-373dbb7b8fd9",
+        "5d57fcbd-45e8-4026-b151-5463da8cb083",
+        "8f44b68d-4971-498a-a7c4-16f0b458c397"
+      ],
+      "inputs": {},
+      "attempts": 0,
+      "maxAttempts": 2,
+      "enqueuedBy": "orchestrator",
+      "createdAt": "2026-11-25T18:59:44.142Z"
+    },
+    {
+      "id": "dcd4576e-0f55-4d8d-afd9-f6ffd60d7c6f",
+      "type": "ai-observability",
+      "status": "pending",
+      "dependsOn": [
+        "92d918a1-9e05-470e-b596-0f3607ad6e0c"
+      ],
+      "inputs": {},
+      "attempts": 0,
+      "maxAttempts": 2,
+      "enqueuedBy": "orchestrator",
+      "optional": true,
+      "createdAt": "2026-11-25T18:59:44.144Z"
+    },
+    {
+      "id": "c85db598-233c-4704-a0a1-d9827e61c1f1",
+      "type": "dashboard",
+      "status": "pending",
+      "dependsOn": [
+        "92d918a1-9e05-470e-b596-0f3607ad6e0c",
+        "9a65b62b-abca-4b27-9b85-373dbb7b8fd9",
+        "5d57fcbd-45e8-4026-b151-5463da8cb083",
+        "8f44b68d-4971-498a-a7c4-16f0b458c397"
+      ],
+      "inputs": {},
+      "attempts": 0,
+      "maxAttempts": 2,
+      "enqueuedBy": "orchestrator",
+      "createdAt": "2026-11-25T18:59:44.149Z"
+    },
+    {
+      "id": "bf86f80a-34c8-45ef-a242-e7fe70785108",
+      "type": "logs",
+      "status": "pending",
+      "dependsOn": [
+        "dcd4576e-0f55-4d8d-afd9-f6ffd60d7c6f"
+      ],
+      "inputs": {},
+      "attempts": 0,
+      "maxAttempts": 2,
+      "enqueuedBy": "orchestrator",
+      "optional": true,
+      "createdAt": "2026-11-25T18:59:44.152Z"
+    },
+    {
+      "id": "f3848c0d-6bf8-422c-8f06-93a99863ccf5",
+      "type": "review",
+      "status": "pending",
+      "dependsOn": [
+        "9a65b62b-abca-4b27-9b85-373dbb7b8fd9",
+        "5d57fcbd-45e8-4026-b151-5463da8cb083",
+        "8f44b68d-4971-498a-a7c4-16f0b458c397",
+        "732f9ca9-7e76-4e47-a350-7d20362328a9",
+        "92d918a1-9e05-470e-b596-0f3607ad6e0c",
+        "dcd4576e-0f55-4d8d-afd9-f6ffd60d7c6f",
+        "bf86f80a-34c8-45ef-a242-e7fe70785108"
+      ],
+      "inputs": {},
+      "attempts": 0,
+      "maxAttempts": 2,
+      "enqueuedBy": "orchestrator",
+      "createdAt": "2026-11-25T18:59:44.154Z"
+    },
+    {
+      "id": "675dfc6d-6f60-4b4e-a513-96a8eb77edf4",
+      "type": "report",
+      "status": "pending",
+      "dependsOn": [
+        "c85db598-233c-4704-a0a1-d9827e61c1f1",
+        "f3848c0d-6bf8-422c-8f06-93a99863ccf5",
+        "70f63614-3277-49bb-9878-6bc19a4fba57"
+      ],
+      "inputs": {},
+      "attempts": 0,
+      "maxAttempts": 2,
+      "enqueuedBy": "orchestrator",
+      "createdAt": "2026-11-25T18:59:44.158Z"
+    }
+  ]
+}

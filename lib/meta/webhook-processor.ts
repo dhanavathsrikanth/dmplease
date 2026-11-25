@@ -18,6 +18,7 @@ import {
   randomizedDelay,
 } from "@/lib/meta/safety";
 import { getQstash, getQstashWorkerUrl, hasQstash } from "@/lib/upstash";
+import { recordMetricEvent } from "@/lib/metrics";
 import { createTrackedLink } from "@/lib/tracking";
 import {
   parseCommentEvents,
@@ -592,6 +593,11 @@ async function sendCommentDm(input: {
       instagramAccountId: input.accountDbId,
       recipientId: input.recipientId,
     });
+    await recordMetricEvent({
+      kind: "dm_sent",
+      creatorId: input.workspaceId,
+      targetId: auto.id,
+    });
 
     if (auto.publicReplyEnabled) {
       const replies = auto.publicReplyMessages ?? [];
@@ -822,6 +828,13 @@ async function processDirectRule(input: {
     recipientId: input.recipientId,
     kind: `rule:${rule.id}`,
   });
+  if (succeeded) {
+    await recordMetricEvent({
+      kind: "dm_sent",
+      creatorId: input.workspaceId,
+      targetId: rule.id,
+    });
+  }
 
   if (conversationId) {
     await recordMessage({
@@ -968,6 +981,11 @@ export async function processWebhookPayload(
           text: event.messageText,
         });
       }
+      await recordMetricEvent({
+        kind: "dm_reply",
+        creatorId: account.workspace_id,
+        targetId: account.id,
+      });
 
       // A reply to a lead-capture question is stored on the contact first.
       const { data: pendingRows } = await getAdminDb()

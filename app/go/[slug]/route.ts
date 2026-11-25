@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseTrackedLink } from "@/lib/tracking";
+import { recordMetricEvent } from "@/lib/metrics";
 import { getAdminDb, hasAdminDb } from "@/lib/db-admin";
 
 /** Tracked campaign link: verifies the signature, records the click, redirects. */
@@ -13,6 +14,12 @@ export async function GET(
   if (!payload) {
     return NextResponse.redirect(new URL("/?link=invalid", request.url), 302);
   }
+
+  await recordMetricEvent({
+    kind: "dm_link_click",
+    creatorId: payload.workspaceId,
+    targetId: payload.automationId ?? payload.workspaceId,
+  });
 
   if (hasAdminDb()) {
     try {

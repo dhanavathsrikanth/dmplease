@@ -22,6 +22,7 @@ import { Progress } from "@/components/ui/progress";
 import { getCurrentProfile } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
 import { getWebhookHealth } from "@/lib/meta/webhook-events";
+import { getWorkspaceAnalytics } from "@/lib/analytics";
 
 export const metadata = {
   title: "Analytics & Performance - dmplease",
@@ -91,6 +92,10 @@ async function OverviewContent({ searchParams }: PageProps) {
 
   const workspaceIds = (profile?.ownedWorkspaces || []).map((w) => w.id);
   const health = await getWebhookHealth(24 * 7);
+  const analyticsDays = range === "7d" ? 7 : range === "30d" ? 30 : 90;
+  const analytics = workspaceIds[0]
+    ? await getWorkspaceAnalytics(workspaceIds[0], analyticsDays)
+    : null;
 
   let totalDms = 0;
   let deliveredDms = 0;
@@ -446,6 +451,37 @@ async function OverviewContent({ searchParams }: PageProps) {
                     : "No impressions recorded yet"}
                 </p>
               </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border shadow-subtle">
+        <CardHeader className="pb-3 border-b border-[#e0e2e8] dark:border-border/60">
+          <CardTitle className="text-base font-semibold tracking-tight">Conversion funnel</CardTitle>
+          <CardDescription className="text-xs mt-0.5 text-[#555a6a] dark:text-muted-foreground">
+            Daily rollups plus today&apos;s live counters from Redis — last {analyticsDays} days.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="pt-5">
+          {!analytics || analytics.summary.dmSent === 0 ? (
+            <p role="status" className="text-xs text-muted-foreground py-4 text-center">
+              No conversion events yet. They appear here as soon as a DM is sent or a tracked link is clicked.
+            </p>
+          ) : (
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              {[
+                { label: "DMs sent", value: analytics.summary.dmSent.toLocaleString(), hint: "Automated deliveries" },
+                { label: "Link clicks", value: analytics.summary.dmLinkClicks.toLocaleString(), hint: `${analytics.summary.dmCtrPct}% click-through` },
+                { label: "Follower replies", value: analytics.summary.dmReplies.toLocaleString(), hint: `${analytics.summary.dmReplyRatePct}% reply rate` },
+                { label: "Bio clicks", value: analytics.summary.bioClicks.toLocaleString(), hint: "Link-in-bio clicks" },
+              ].map((item) => (
+                <div key={item.label} className="rounded-2xl border border-[#e0e2e8] dark:border-border p-4 space-y-1">
+                  <p className="text-[11px] font-semibold text-muted-foreground">{item.label}</p>
+                  <p className="text-2xl font-bold text-foreground">{item.value}</p>
+                  <p className="text-[10px] text-[#6b6f7e]">{item.hint}</p>
+                </div>
+              ))}
             </div>
           )}
         </CardContent>
