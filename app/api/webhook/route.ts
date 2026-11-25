@@ -120,7 +120,15 @@ export async function POST(request: NextRequest) {
   });
 
   return NextResponse.json(
-    { success: true, status: "EVENT_RECEIVED", eventId },
+    {
+      success: true,
+      status: "EVENT_RECEIVED",
+      eventId,
+      storage: eventId ? "recorded" : "unavailable",
+      hint: eventId
+        ? undefined
+        : "DATABASE_URL is not configured; automations cannot run. See /api/health.",
+    },
     { status: 200, headers: NO_STORE }
   );
 }
