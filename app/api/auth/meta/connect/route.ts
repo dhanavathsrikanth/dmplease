@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/profile";
 import { signOAuthState } from "@/lib/meta/client";
+import { cleanEnv } from "@/lib/config";
 
 export async function GET(request: NextRequest) {
   const nextParam = request.nextUrl.searchParams.get("next") || "/dashboard/settings";
@@ -19,7 +20,7 @@ export async function GET(request: NextRequest) {
 
   const rawOrigin = (isLocal && (process.env.TUNNEL_URL || process.env.CLOUDFLARE_TUNNEL_URL))
     ? (process.env.TUNNEL_URL || process.env.CLOUDFLARE_TUNNEL_URL)!
-    : (process.env.APP_URL || `${proto}://${host}`);
+    : (cleanEnv("APP_URL") || `${proto}://${host}`);
 
   const origin = rawOrigin
     .replace(/^[\uFEFF\u200B-\u200D\s]+|[\uFEFF\u200B-\u200D\s]+$/g, "")

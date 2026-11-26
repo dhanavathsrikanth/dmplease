@@ -11,7 +11,7 @@ import {
 import { encryptToken } from "@/lib/meta/vault";
 import { createClient } from "@/lib/supabase/server";
 import { prisma } from "@/lib/prisma";
-import { hasDatabaseUrl } from "@/lib/config";
+import { cleanEnv, hasDatabaseUrl } from "@/lib/config";
 import { captureServerEvent } from "@/lib/posthog-server";
 
 export async function GET(request: NextRequest) {
@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
   // Determine and sanitize origin to strip any invisible BOM (\uFEFF) or trailing whitespace
   const rawOrigin = (isLocal && (process.env.TUNNEL_URL || process.env.CLOUDFLARE_TUNNEL_URL))
     ? (process.env.TUNNEL_URL || process.env.CLOUDFLARE_TUNNEL_URL)!
-    : (process.env.APP_URL || `${proto}://${host}`);
+    : (cleanEnv("APP_URL") || `${proto}://${host}`);
 
   const origin = rawOrigin
     .replace(/^[\uFEFF\u200B-\u200D\s]+|[\uFEFF\u200B-\u200D\s]+$/g, "")

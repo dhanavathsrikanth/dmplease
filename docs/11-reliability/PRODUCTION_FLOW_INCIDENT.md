@@ -14,7 +14,21 @@ The system is **receiving comments correctly**. It failed in two separate places
 2. **Wrong Graph API host (the real DM blocker)** — DMs, public replies and webhook subscriptions used `graph.instagram.com`, which only accepts Instagram Basic Display (`IG...`) tokens. This account uses a Facebook-linked **system-user** token (`EAA...`), which is valid and has `instagram_manage_messages`, but `graph.instagram.com` rejects it with `OAuthException 190: Invalid OAuth access token - Cannot parse access token`. Sending the same token to `graph.facebook.com` works. Fixed by selecting the host from the token prefix.
 3. **Corrupt `META_APP_ID` in Vercel Production** — the stored value had a leading `U+FFFD`, so `debug_token` failed with "Invalid application ID". Rewritten from the clean local value; app token now validates.
 4. **Failed DMs blocked all future DMs for 24h** — the duplicate guard counted `dm_logs` rows with status `FAILED` as "already messaged". After the first rejection, every later comment from that follower was skipped. Fixed by filtering on `status = 'SENT'`.
-5. **PostHog server events were sometimes lost** at invocation shutdown (`still queued when shutdown ended`). Fixed by direct awaited `capture/` POSTs.
+5. **Postback delivery crashed on `Invalid URL`** — the opt-in follow-up builds a tracked link from `NEXT_PUBLIC_SITE_URL`, which had a leading `U+FEFF` in Vercel. `new URL()` threw, so tapping "Get it" produced no DM. Rewritten to `https://dmplease.vercel.app`; `cleanEnv()` now centralises BOM removal.
+6. **PostHog server events were sometimes lost** at invocation shutdown (`still queued when shutdown ended`). Fixed by direct awaited `capture/` POSTs.
+
+### Opt-in postback incident (2026-11-26 04:57 UTC)
+
+The opening DM with the "Get it" button was delivered correctly, but tapping it produced no guide. Evidence:
+
+```json
+webhook_events.error = "Postback OPTIN:dce1223a-... failed: Invalid URL"
+env_urls.NEXT_PUBLIC_SITE_URL = { "present": true, "valid": false, "firstCodepoint": 65279 }
+env_urls.APP_URL = { "present": true, "valid": false, "firstCodepoint": 65279 }
+bom_check = { "NEXT_PUBLIC_SITE_URL": true, "APP_URL": true, all others: false }
+```
+
+`65279` is `U+FEFF` (BOM). `new URL("\ufeffhttps://…")` throws `Invalid URL`, so the follow-up crashed before sending. Both variables were rewritten in Vercel to `https://dmplease.vercel.app` and `cleanEnv()` was moved into `lib/config.ts` and applied to every URL read in the webhook and OAuth paths.
 
 ### Follow-up incident (2026-11-26 04:43 UTC)
 

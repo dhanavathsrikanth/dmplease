@@ -2,12 +2,9 @@ import { Redis } from "@upstash/redis";
 import { Ratelimit } from "@upstash/ratelimit";
 import { Client } from "@upstash/qstash";
 
-/** Strips BOM/zero-width characters that can arrive from copied env values. */
-export function cleanEnv(name: string): string {
-  return (process.env[name] || "")
-    .replace(/[\uFEFF\u200B-\u200D]/g, "")
-    .trim();
-}
+import { cleanEnv } from "@/lib/config";
+
+export { cleanEnv };
 
 /** Server-only Upstash clients. All calls are HTTPS, so they work from Vercel. */
 

@@ -17,6 +17,18 @@ export function isProduction(): boolean {
 }
 
 /**
+ * Reads an env value and strips BOM/zero-width characters that can be copied
+ * into Vercel env vars. We have seen a leading U+FEFF break new URL() and
+ * Meta app-token validation in production, so every URL/secret read should go
+ * through this helper.
+ */
+export function cleanEnv(name: string): string {
+  return (process.env[name] || "")
+    .replace(/[\uFEFF\u200B-\u200D]/g, "")
+    .trim();
+}
+
+/**
  * Returns a configured secret, or a development-only fallback.
  * Throws in production when the variable is missing.
  */

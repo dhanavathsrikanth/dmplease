@@ -157,7 +157,43 @@ export async function GET(request: NextRequest) {
     });
   }
 
+  const urlCheck = (value: string | undefined) => {
+    try {
+      const parsed = new URL(value || "http://localhost:3000");
+      return { present: Boolean(value), valid: true, origin: parsed.origin };
+    } catch {
+      return {
+        present: Boolean(value),
+        valid: false,
+        firstCodepoint: value ? String(value).charCodeAt(0) : null,
+      };
+    }
+  };
+
   return NextResponse.json({
+    env_urls: {
+      NEXT_PUBLIC_SITE_URL: urlCheck(process.env.NEXT_PUBLIC_SITE_URL),
+      APP_URL: urlCheck(process.env.APP_URL),
+    },
+    bom_check: Object.fromEntries(
+      [
+        "NEXT_PUBLIC_SITE_URL",
+        "APP_URL",
+        "META_APP_ID",
+        "META_APP_SECRET",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "NEXT_PUBLIC_SUPABASE_URL",
+        "UPSTASH_REDIS_REST_URL",
+        "UPSTASH_REDIS_REST_TOKEN",
+        "QSTASH_TOKEN",
+        "QSTASH_CURRENT_SIGNING_KEY",
+        "QSTASH_NEXT_SIGNING_KEY",
+        "CRON_SECRET",
+        "TOKEN_VAULT_SECRET",
+        "NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN",
+        "NEXT_PUBLIC_POSTHOG_HOST",
+      ].map((key) => [key, process.env[key]?.charCodeAt(0) === 65279])
+    ),
     app_credentials: {
       configured_app_id: process.env.META_APP_ID ?? null,
       app_token_valid: appCheck.ok,

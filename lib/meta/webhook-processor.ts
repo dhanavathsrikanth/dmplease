@@ -1,4 +1,5 @@
 import { getAdminDb, hasAdminDb } from "@/lib/db-admin";
+import { cleanEnv } from "@/lib/config";
 import { decryptToken } from "@/lib/meta/vault";
 import { captureServerEvent } from "@/lib/posthog-server";
 import {
@@ -674,7 +675,7 @@ async function sendCommentDm(input: {
           input.commentId,
           text,
           personalizeMessage(auto.buttonText, vars),
-          `${new URL(process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000").origin}/go/${trackedUrl}`
+          `${new URL(cleanEnv("NEXT_PUBLIC_SITE_URL") || "http://localhost:3000").origin}/go/${trackedUrl}`
         )
       : sendPrivateReply(input.token, input.accountId, input.commentId, text);
 
@@ -940,7 +941,7 @@ async function processDirectRule(input: {
           input.token,
           input.accountId,
           input.recipientId,
-          `${text}\n\n${rule.button_text}: ${`${new URL(process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000").origin}/go/${trackedUrl}`}`
+          `${text}\n\n${rule.button_text}: ${`${new URL(cleanEnv("NEXT_PUBLIC_SITE_URL") || "http://localhost:3000").origin}/go/${trackedUrl}`}`
         )
       : sendDirectMessage(input.token, input.accountId, input.recipientId, text)
   );
