@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-img-element */
 import { Suspense } from "react";
 import { connection } from "next/server";
 import {
@@ -6,11 +7,13 @@ import {
   User,
   CheckCircle2,
   AlertCircle,
+  BadgeCheck,
 } from "lucide-react";
 import { getCurrentProfile, getCurrentUser } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
 import { DisconnectButton } from "@/components/settings/disconnect-button";
 import { BulkConnect } from "@/components/settings/bulk-connect";
+import { VerifiedBadgeToggle } from "@/components/settings/verified-badge-toggle";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -71,12 +74,17 @@ async function SettingsContent({
     webhookSubscribed: boolean;
     tokenStatus: string | null;
     tokenLastError: string | null;
+    profilePictureUrl: string | null;
+    isVerified: boolean;
+    isVerifiedManual: boolean;
   } | null = null;
 
   if (workspaceIds.length > 0) {
     const { data: accounts } = await supabase
       .from("instagram_accounts")
-      .select("username, webhook_subscribed, token_status, token_last_error")
+      .select(
+        "username, webhook_subscribed, token_status, token_last_error, profile_picture_url, is_verified, is_verified_manual"
+      )
       .in("workspace_id", workspaceIds)
       .limit(1);
 
@@ -86,6 +94,9 @@ async function SettingsContent({
         webhookSubscribed: accounts[0].webhook_subscribed,
         tokenStatus: accounts[0].token_status,
         tokenLastError: accounts[0].token_last_error,
+        profilePictureUrl: accounts[0].profile_picture_url,
+        isVerified: Boolean(accounts[0].is_verified_manual || accounts[0].is_verified),
+        isVerifiedManual: Boolean(accounts[0].is_verified_manual),
       };
     }
   }
@@ -164,12 +175,29 @@ async function SettingsContent({
           </CardHeader>
           <CardContent className="pt-5 space-y-4 text-sm">
             {isConnected ? (
+              <>
               <div className="p-4 rounded-xl border border-[#e0e2e8] dark:border-border bg-[#f7f8fa] dark:bg-muted/30 flex items-center justify-between">
-                <div>
-                  <p className="font-semibold text-foreground text-xs sm:text-sm">@{instagramHandle}</p>
-                  <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground mt-0.5">
-                    Webhook subscribed: Comments & Direct Messages
-                  </p>
+                <div className="flex items-center gap-3 min-w-0">
+                  {connectedAccount?.profilePictureUrl ? (
+                    <img
+                      src={connectedAccount.profilePictureUrl}
+                      alt=""
+                      className="size-10 rounded-full object-cover shrink-0"
+                    />
+                  ) : (
+                    <div className="size-10 rounded-full bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-600 shrink-0" />
+                  )}
+                  <div className="min-w-0">
+                    <p className="font-semibold text-foreground text-xs sm:text-sm flex items-center gap-1 truncate">
+                      @{instagramHandle}
+                      {connectedAccount?.isVerified && (
+                        <BadgeCheck className="size-3.5 text-sky-500 fill-sky-500 text-white shrink-0" />
+                      )}
+                    </p>
+                    <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground mt-0.5">
+                      Webhook subscribed: Comments & Direct Messages
+                    </p>
+                  </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <Button asChild size="sm" variant="outline" className="rounded-full text-xs h-9 px-4 border-[#c7cad5]">
@@ -178,6 +206,13 @@ async function SettingsContent({
                   <DisconnectButton />
                 </div>
               </div>
+              {connectedAccount && (
+                <VerifiedBadgeToggle
+                  initialChecked={connectedAccount.isVerified}
+                  detectedByMeta={Boolean(connectedAccount.isVerified && !connectedAccount.isVerifiedManual)}
+                />
+              )}
+              </>
             ) : (
               <div className="space-y-3">
                 <p className="text-xs text-[#555a6a] dark:text-muted-foreground leading-relaxed">

@@ -223,6 +223,9 @@ export async function GET(request: NextRequest) {
           instagram_id: account.instagramBusinessId,
           username: account.username,
           name: account.displayName || account.username,
+          profile_picture_url: account.profilePictureUrl ?? null,
+          followers_count: account.followersCount ?? null,
+          is_verified: account.isVerified ?? null,
           access_token: encryptedToken,
           token_status: tokenStatus,
           token_last_error: account.pageToken

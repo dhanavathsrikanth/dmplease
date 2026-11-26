@@ -3,6 +3,7 @@ import { connection } from "next/server";
 import { getCurrentProfile } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
 import { decryptToken } from "@/lib/meta/vault";
+import { syncInstagramProfile } from "@/lib/meta/profile-sync";
 
 export async function GET() {
   await connection();
@@ -15,17 +16,27 @@ export async function GET() {
     let accountId: string | null = null;
     let accessToken: string | null = null;
     let username: string | null = null;
+    let profilePictureUrl: string | null = null;
+    let isVerified = false;
+    let followersCount: number | null = null;
 
     if (workspaceIds.length > 0) {
       const { data: accounts } = await supabase
         .from("instagram_accounts")
-        .select("instagram_id, access_token, username")
+        .select(
+          "instagram_id, access_token, username, profile_picture_url, followers_count, is_verified, is_verified_manual"
+        )
         .in("workspace_id", workspaceIds)
         .limit(1);
 
       if (accounts && accounts.length > 0) {
         accountId = accounts[0].instagram_id;
         username = accounts[0].username;
+        profilePictureUrl = accounts[0].profile_picture_url ?? null;
+        followersCount = accounts[0].followers_count ?? null;
+        isVerified = Boolean(
+          accounts[0].is_verified_manual || accounts[0].is_verified
+        );
         if (accounts[0].access_token) {
           try {
             accessToken = decryptToken(accounts[0].access_token);
@@ -39,10 +50,26 @@ export async function GET() {
     if (!accessToken || !accountId) {
       return NextResponse.json({
         success: true,
-        account: username ? { id: accountId, username } : null,
+        account: username
+          ? {
+              id: accountId,
+              username,
+              profilePictureUrl,
+              isVerified,
+              followersCount,
+            }
+          : null,
         media: [],
         error: "No connected Instagram account found",
       });
+    }
+
+    // Best-effort refresh of the real avatar / verified signal for the preview.
+    const synced = await syncInstagramProfile();
+    if (synced) {
+      profilePictureUrl = synced.profilePictureUrl ?? profilePictureUrl;
+      followersCount = synced.followersCount ?? followersCount;
+      isVerified = Boolean(synced.isVerified || synced.isVerifiedManual || isVerified);
     }
 
     const url = `https://graph.facebook.com/v21.0/${accountId}/media?fields=id,caption,media_type,media_url,thumbnail_url,permalink,timestamp&limit=9&access_token=${accessToken}`;
@@ -53,7 +80,15 @@ export async function GET() {
       console.error("Meta Graph API Media error:", errData);
       return NextResponse.json({
         success: false,
-        account: username ? { id: accountId, username } : null,
+        account: username
+          ? {
+              id: accountId,
+              username,
+              profilePictureUrl,
+              isVerified,
+              followersCount,
+            }
+          : null,
         media: [],
         error: "Failed to fetch from Instagram Graph API",
       });
@@ -84,6 +119,9 @@ export async function GET() {
       account: {
         id: accountId,
         username: username || "yourbrand",
+        profilePictureUrl,
+        isVerified,
+        followersCount,
       },
       media,
     });

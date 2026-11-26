@@ -6,9 +6,13 @@ import {
   MessageCircle,
   Send,
   Bookmark,
-  CheckCircle2,
   ExternalLink,
   Instagram,
+  ArrowLeft,
+  Video,
+  Plus,
+  Smile,
+  Globe2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -23,6 +27,70 @@ interface PhonePreviewProps {
   publicReplyEnabled?: boolean;
   publicReplyMessage?: string | null;
   instagramHandle?: string;
+  profilePictureUrl?: string | null;
+  isVerified?: boolean;
+  followersCount?: number | null;
+}
+
+/** Mirrors the production formatter so the preview shows the exact DM text. */
+function previewText(message: string, link: string) {
+  const text = (message || "Hey! Thanks for your comment. Here is your link: {link}")
+    .replace(/{username}/gi, "there")
+    .replace(/{link}/gi, link || "https://dmplease.vercel.app/guide");
+  return text
+    .replace(/https?:\/\/[^\s<]+/g, (url) => `\n\n${url.replace(/[.,;:!?)\]}]+$/g, "")}\n`)
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/\n[ \t]+/g, "\n")
+    .trim();
+}
+
+function VerifiedMark({ verified }: { verified: boolean }) {
+  if (!verified) return null;
+  return (
+    <span
+      title="Verified"
+      className="inline-grid size-3.5 shrink-0 place-items-center rounded-full bg-[#0095f6] text-white"
+    >
+      <svg viewBox="0 0 12 12" className="size-2.5" aria-hidden="true">
+        <path
+          d="M2.2 6.2 4.7 8.6 9.8 3.4"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </span>
+  );
+}
+
+function Avatar({
+  src,
+  handle,
+  size = "md",
+}: {
+  src?: string | null;
+  handle: string;
+  size?: "sm" | "md";
+}) {
+  const dimension = size === "sm" ? "size-6" : "size-9";
+  return src ? (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={src}
+      alt={`@${handle}`}
+      className={cn(dimension, "rounded-full object-cover shrink-0 ring-1 ring-black/5")}
+    />
+  ) : (
+    <div
+      className={cn(
+        dimension,
+        "rounded-full shrink-0 bg-gradient-to-tr from-[#f9ce34] via-[#ee2a7b] to-[#6228d7]"
+      )}
+    />
+  );
 }
 
 export function PhonePreview({
@@ -36,229 +104,233 @@ export function PhonePreview({
   publicReplyEnabled,
   publicReplyMessage,
   instagramHandle = "yourbrand",
+  profilePictureUrl = null,
+  isVerified = false,
+  followersCount = null,
 }: PhonePreviewProps) {
   const [activeTab, setActiveTab] = useState<"dm" | "post">("dm");
-
-  const formattedDm = dmMessage
-    ? dmMessage.replace(/{username}/gi, "@follower").replace(/{link}/gi, buttonUrl || "https://trydmplease.com")
-    : "Hey! Thanks for commenting. Here is your link: https://trydmplease.com";
+  const formattedDm = previewText(dmMessage, buttonUrl || "");
+  const linkMatch = formattedDm.match(/https?:\/\/[^\s]+/);
+  const linkUrl = linkMatch?.[0] || buttonUrl || "";
+  let linkHost = "";
+  try {
+    linkHost = new URL(linkUrl).hostname.replace(/^www\./, "");
+  } catch {
+    linkHost = "dmplease.vercel.app";
+  }
 
   return (
     <div className="flex flex-col items-center">
-      {/* ── Miro-Style Preview Switcher Pill (Liquid Glass) ── */}
-      <div className="flex items-center gap-1 p-1 glass-pill rounded-full text-xs font-semibold mb-5 shadow-xs">
-        <button
-          type="button"
-          onClick={() => setActiveTab("dm")}
-          className={cn(
-            "px-4 py-1.5 rounded-full transition-all text-xs font-semibold",
-            activeTab === "dm"
-              ? "bg-[#1c1c1e] text-white shadow-xs dark:bg-white dark:text-[#1c1c1e]"
-              : "text-[#6b6f7e] dark:text-[#9aa0ad] hover:text-foreground"
-          )}
-        >
-          Direct Message View
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab("post")}
-          className={cn(
-            "px-4 py-1.5 rounded-full transition-all text-xs font-semibold",
-            activeTab === "post"
-              ? "bg-[#1c1c1e] text-white shadow-xs dark:bg-white dark:text-[#1c1c1e]"
-              : "text-[#6b6f7e] dark:text-[#9aa0ad] hover:text-foreground"
-          )}
-        >
-          Post & Comment View
-        </button>
+      <div className="flex items-center gap-1 p-1 rounded-full border border-[#e0e2e8] dark:border-border/80 bg-[#f7f8fa] dark:bg-muted/30 text-xs font-semibold mb-5">
+        {(["dm", "post"] as const).map((tab) => (
+          <button
+            key={tab}
+            type="button"
+            onClick={() => setActiveTab(tab)}
+            className={cn(
+              "px-4 py-1.5 rounded-full transition-colors text-[11px]",
+              activeTab === tab
+                ? "bg-[#1c1c1e] text-white shadow-sm dark:bg-white dark:text-[#1c1c1e]"
+                : "text-[#6b6f7e] dark:text-[#9aa0ad] hover:text-foreground"
+            )}
+          >
+            {tab === "dm" ? "Direct Message" : "Post & Comment"}
+          </button>
+        ))}
       </div>
 
-      {/* ── Realistic Phone Frame ── */}
-      <div className="w-[320px] h-[610px] rounded-[44px] bg-neutral-950 p-3 shadow-2xl ring-1 ring-neutral-800 relative select-none">
-        {/* Dynamic Island / Speaker */}
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 w-24 h-5 bg-black rounded-full z-30 flex items-center justify-end px-2.5">
-          <div className="size-2 rounded-full bg-neutral-800" />
-        </div>
+      {/* Phone frame */}
+      <div className="w-[320px] h-[620px] rounded-[46px] bg-[#0b0b0d] p-[9px] shadow-[0_30px_70px_-20px_rgba(0,0,0,0.55)] ring-1 ring-black/20 relative select-none">
+        <div className="absolute top-[18px] left-1/2 -translate-x-1/2 w-[92px] h-[22px] bg-black rounded-full z-30" />
 
-        {/* Screen Bezel */}
-        <div className="w-full h-full bg-white dark:bg-neutral-900 rounded-[34px] overflow-hidden flex flex-col justify-between relative text-neutral-900 dark:text-neutral-100 text-xs">
-          
-          {/* Status Bar */}
-          <div className="h-10 pt-2 px-6 flex items-center justify-between text-[11px] font-semibold z-20">
+        <div className="w-full h-full bg-white dark:bg-[#000] rounded-[38px] overflow-hidden flex flex-col relative text-[#262626] dark:text-[#f5f5f5]">
+          {/* Status bar */}
+          <div className="h-11 pt-3 px-6 flex items-center justify-between text-[11px] font-semibold tracking-tight z-20">
             <span>9:41</span>
-            <div className="flex items-center gap-1.5 text-[10px]">
-              <span>5G</span>
-              <div className="w-4 h-2 rounded-xs border border-current p-0.5">
-                <div className="h-full w-full bg-current rounded-2xs" />
-              </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px]">5G</span>
+              <svg viewBox="0 0 18 12" className="w-4 h-3 fill-current" aria-hidden="true">
+                <rect x="0" y="7" width="3" height="5" rx="1" />
+                <rect x="5" y="4" width="3" height="8" rx="1" />
+                <rect x="10" y="2" width="3" height="10" rx="1" />
+                <rect x="15" y="0" width="3" height="12" rx="1" opacity="0.35" />
+              </svg>
+              <svg viewBox="0 0 24 12" className="w-5 h-3" aria-hidden="true">
+                <rect x="0.5" y="0.5" width="20" height="11" rx="3" fill="none" stroke="currentColor" />
+                <rect x="2.5" y="2.5" width="15" height="7" rx="1.5" fill="currentColor" />
+                <rect x="22" y="4" width="1.5" height="4" rx="1" fill="currentColor" />
+              </svg>
             </div>
           </div>
 
-          {/* ═══════════════════════════════════════════════════════════ */}
-          {/* TAB 1: Direct Message View                                 */}
-          {/* ═══════════════════════════════════════════════════════════ */}
-          {activeTab === "dm" && (
-            <div className="flex-1 flex flex-col justify-between overflow-hidden">
-              {/* Instagram Direct Header */}
-              <div className="px-4 py-2 border-b border-neutral-100 dark:border-neutral-800 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="size-8 rounded-full bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-600 p-0.5">
-                    <div className="w-full h-full rounded-full bg-white dark:bg-neutral-900 flex items-center justify-center font-bold text-[10px]">
-                      HW
-                    </div>
-                  </div>
-                  <div>
-                    <p className="font-semibold text-xs flex items-center gap-1">
-                      {instagramHandle}
-                      <CheckCircle2 className="size-3 text-sky-500 fill-sky-500 text-white" />
-                    </p>
-                    <p className="text-[10px] text-neutral-400">Instagram</p>
-                  </div>
+          {activeTab === "dm" ? (
+            <>
+              {/* Instagram Direct header */}
+              <div className="px-3.5 py-2 border-b border-[#dbdbdb] dark:border-[#262626] flex items-center gap-2.5">
+                <ArrowLeft className="size-4 shrink-0" />
+                <Avatar src={profilePictureUrl} handle={instagramHandle} />
+                <div className="min-w-0 flex-1">
+                  <p className="flex items-center gap-1 font-semibold text-[12px] leading-tight truncate">
+                    <span className="truncate">{instagramHandle}</span>
+                    <VerifiedMark verified={isVerified} />
+                  </p>
+                  <p className="text-[10px] text-[#8e8e8e] leading-tight">
+                    {followersCount !== null
+                      ? `${followersCount.toLocaleString()} followers · Instagram`
+                      : "Instagram"}
+                  </p>
                 </div>
-                <Instagram className="size-4 text-neutral-400" />
+                <Video className="size-4 text-[#8e8e8e] shrink-0" />
               </div>
 
-              {/* Message Stream */}
-              <div className="flex-1 p-3.5 space-y-3 overflow-y-auto flex flex-col justify-end">
-                <div className="text-center">
-                  <span className="text-[10px] text-neutral-400 bg-neutral-100 dark:bg-neutral-800/80 px-2 py-0.5 rounded-full">
-                    Triggered by &ldquo;{triggerKeyword || "START"}&rdquo;
+              {/* Thread */}
+              <div className="flex-1 overflow-y-auto px-3.5 py-4 flex flex-col justify-end gap-3 bg-white dark:bg-black">
+                <div className="flex items-center gap-2 my-1">
+                  <div className="h-px flex-1 bg-[#dbdbdb] dark:bg-[#262626]" />
+                  <span className="text-[10px] text-[#8e8e8e] whitespace-nowrap">
+                    Commented “{triggerKeyword || "START"}”
                   </span>
+                  <div className="h-px flex-1 bg-[#dbdbdb] dark:bg-[#262626]" />
                 </div>
 
-                {/* Sent DM Bubble */}
-                <div className="flex flex-col items-end space-y-1">
-                  <div className="max-w-[240px] rounded-2xl rounded-tr-xs bg-neutral-900 text-white dark:bg-white dark:text-neutral-950 p-3 space-y-2.5 shadow-sm">
-                    <p className="text-xs leading-relaxed break-words whitespace-pre-wrap">
-                      {formattedDm}
-                    </p>
+                {/* Incoming follower message */}
+                <div className="flex items-end gap-2">
+                  <div className="size-6 rounded-full bg-[#efefef] dark:bg-[#363636] grid place-items-center text-[9px] font-semibold text-[#8e8e8e] shrink-0">
+                    F
+                  </div>
+                  <div className="max-w-[210px] rounded-[20px] rounded-bl-sm bg-[#efefef] dark:bg-[#262626] px-3 py-2 text-[12px] leading-[1.45] break-words whitespace-pre-wrap">
+                    {triggerKeyword || "START"}
+                  </div>
+                </div>
 
-                    {/* Interactive Button in DM */}
-                    {buttonText && (
-                      <div className="pt-1">
-                        <div className="w-full py-1.5 px-3 rounded-xl bg-white/20 dark:bg-neutral-900/15 border border-white/30 dark:border-neutral-900/20 text-center font-semibold text-[11px] flex items-center justify-center gap-1.5">
-                          <span>{buttonText}</span>
-                          <ExternalLink className="size-3 shrink-0" />
+                {/* Brand reply — Instagram gradient bubble */}
+                <div className="flex flex-col items-end gap-1">
+                  <div className="max-w-[248px] rounded-[20px] rounded-br-sm px-3 py-2.5 text-[12px] leading-[1.45] text-white bg-gradient-to-br from-[#515bd4] via-[#d62976] to-[#f58529] break-words whitespace-pre-wrap shadow-sm">
+                    <p>{formattedDm}</p>
+
+                    {linkUrl && (
+                      <div className="mt-2.5 rounded-xl bg-black/25 border border-white/25 overflow-hidden">
+                        <div className="flex items-center gap-2 px-2.5 py-2">
+                          <span className="grid size-7 place-items-center rounded-lg bg-white/20 shrink-0">
+                            <Globe2 className="size-3.5" />
+                          </span>
+                          <div className="min-w-0">
+                            <p className="truncate font-semibold text-[11px]">
+                              {linkHost}
+                            </p>
+                            <p className="truncate text-[10px] text-white/75">
+                              Open link
+                            </p>
+                          </div>
+                          <ExternalLink className="size-3 ml-auto opacity-80" />
                         </div>
                       </div>
                     )}
+
+                    {buttonText && (
+                      <div className="mt-2 flex items-center justify-center gap-1.5 rounded-full bg-white/95 px-3 py-1.5 text-[11px] font-semibold text-[#262626]">
+                        <span>{buttonText}</span>
+                        <ExternalLink className="size-3" />
+                      </div>
+                    )}
                   </div>
-                  <span className="text-[9px] text-neutral-400 pr-1 flex items-center gap-1">
-                    <CheckCircle2 className="size-2.5 text-emerald-500" /> Delivered instantly
-                  </span>
+                  <span className="text-[9px] text-[#8e8e8e] pr-1">Seen · now</span>
                 </div>
+
+                {publicReplyEnabled && (
+                  <p className="text-center text-[10px] text-[#8e8e8e]">
+                    Public reply: {publicReplyMessage || "Sent you a DM! 📩"}
+                  </p>
+                )}
               </div>
 
-              {/* Fake DM input */}
-              <div className="p-3 border-t border-neutral-100 dark:border-neutral-800 flex items-center gap-2">
-                <div className="flex-1 h-8 rounded-full bg-neutral-100 dark:bg-neutral-800 px-3 flex items-center text-[11px] text-neutral-400">
+              {/* Composer */}
+              <div className="px-3 py-2 border-t border-[#dbdbdb] dark:border-[#262626] flex items-center gap-2.5">
+                <Plus className="size-4 shrink-0" />
+                <div className="flex-1 h-8 rounded-full border border-[#dbdbdb] dark:border-[#363636] px-3 flex items-center text-[11px] text-[#8e8e8e]">
                   Message...
                 </div>
-                <div className="size-7 rounded-full bg-neutral-100 dark:bg-neutral-800 flex items-center justify-center text-neutral-400">
-                  <Send className="size-3.5" />
-                </div>
+                <Smile className="size-4 shrink-0" />
+                <Heart className="size-4 shrink-0" />
+                <Send className="size-4 shrink-0 text-[#0095f6]" />
               </div>
-            </div>
-          )}
-
-          {/* ═══════════════════════════════════════════════════════════ */}
-          {/* TAB 2: Post & Public Comment View                          */}
-          {/* ═══════════════════════════════════════════════════════════ */}
-          {activeTab === "post" && (
-            <div className="flex-1 flex flex-col justify-between overflow-hidden">
-              {/* Post Header */}
-              <div className="px-3 py-1.5 flex items-center gap-2 border-b border-neutral-100 dark:border-neutral-800">
-                <div className="size-6 rounded-full bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-600 p-0.5">
-                  <div className="w-full h-full rounded-full bg-white dark:bg-neutral-900 flex items-center justify-center font-bold text-[8px]">
-                    HW
-                  </div>
-                </div>
-                <span className="font-semibold text-[11px]">{instagramHandle}</span>
+            </>
+          ) : (
+            <>
+              {/* Instagram post */}
+              <div className="px-3 py-2 flex items-center gap-2 border-b border-[#dbdbdb] dark:border-[#262626]">
+                <Avatar src={profilePictureUrl} handle={instagramHandle} size="sm" />
+                <p className="flex items-center gap-1 font-semibold text-[11px]">
+                  <span className="truncate">{instagramHandle}</span>
+                  <VerifiedMark verified={isVerified} />
+                </p>
               </div>
 
-              {/* Post Image / Reel Thumbnail */}
-              <div className="relative aspect-square w-full bg-neutral-100 dark:bg-neutral-800 overflow-hidden flex items-center justify-center">
+              <div className="aspect-square w-full bg-[#efefef] dark:bg-[#1a1a1a] overflow-hidden grid place-items-center">
                 {postThumbnailUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={postThumbnailUrl}
-                    alt="Post"
+                    alt="Selected post"
                     className="w-full h-full object-cover"
                   />
                 ) : (
-                  <div className="text-center p-4 text-neutral-400 space-y-1">
+                  <div className="text-center text-[#8e8e8e] px-6 space-y-2">
                     <Instagram className="size-8 mx-auto stroke-1" />
-                    <p className="text-[10px] font-medium">
+                    <p className="text-[10px] leading-snug">
                       {postScope === "ANY_POST"
-                        ? "Applies to Any Post / Reel"
+                        ? "Responds to every post and reel"
                         : postScope === "NEXT_POST"
-                        ? "Applies to Next Upload"
-                        : "Post Selected"}
+                          ? "Starts with your next upload"
+                          : "Attached to the selected post"}
                     </p>
                   </div>
                 )}
               </div>
 
-              {postCaption && (
-                <p className="px-3 py-1.5 text-[10px] leading-snug text-neutral-600 dark:text-neutral-300 line-clamp-2">
-                  <span className="font-semibold">{instagramHandle}</span>{" "}
-                  {postCaption}
-                </p>
-              )}
-
-              {/* Post Actions Bar */}
-              <div className="p-2.5 flex items-center justify-between text-neutral-600 dark:text-neutral-400 border-b border-neutral-100 dark:border-neutral-800">
-                <div className="flex items-center gap-3">
-                  <Heart className="size-4" />
-                  <MessageCircle className="size-4 text-neutral-900 dark:text-white" />
-                  <Send className="size-4" />
+              <div className="px-3 py-2 flex items-center justify-between">
+                <div className="flex items-center gap-3.5">
+                  <Heart className="size-[18px]" />
+                  <MessageCircle className="size-[18px] -scale-x-100" />
+                  <Send className="size-[18px]" />
                 </div>
-                <Bookmark className="size-4" />
+                <Bookmark className="size-[18px]" />
               </div>
 
-              {/* Simulated Comments Section */}
-              <div className="flex-1 p-3 space-y-2 overflow-y-auto text-[11px]">
-                {/* Follower Comment */}
+              <div className="px-3 pb-2 text-[11px] leading-snug">
+                <p className="line-clamp-2">
+                  <span className="font-semibold mr-1">{instagramHandle}</span>
+                  {postCaption || "Your caption appears here."}
+                </p>
+              </div>
+
+              <div className="flex-1 px-3 py-2 border-t border-[#dbdbdb] dark:border-[#262626] space-y-3 overflow-y-auto">
                 <div className="flex items-start gap-2">
-                  <div className="size-5 rounded-full bg-neutral-200 dark:bg-neutral-700 shrink-0 font-bold text-[8px] flex items-center justify-center">
+                  <div className="size-5 rounded-full bg-[#efefef] dark:bg-[#363636] grid place-items-center text-[9px] text-[#8e8e8e] shrink-0">
                     F
                   </div>
-                  <div>
-                    <p>
-                      <span className="font-bold">follower_user</span>{" "}
-                      <span className="font-semibold text-neutral-900 dark:text-white">
-                        {triggerKeyword || "START"}
-                      </span>{" "}
-                      please! 🙌
-                    </p>
-                    <span className="text-[9px] text-neutral-400">1m ago &bull; Reply</span>
-                  </div>
+                  <p className="text-[11px]">
+                    <span className="font-semibold mr-1">follower</span>
+                    <span className="font-semibold">{triggerKeyword || "START"}</span> please! 🙌
+                    <span className="block text-[9px] text-[#8e8e8e] mt-0.5">1m · Reply</span>
+                  </p>
                 </div>
-
-                {/* Bot Auto-Reply (if enabled) */}
                 {publicReplyEnabled && (
                   <div className="flex items-start gap-2 pl-6">
-                    <div className="size-4 rounded-full bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 shrink-0 font-bold text-[7px] flex items-center justify-center">
-                      dm
-                    </div>
-                    <div>
-                      <p>
-                        <span className="font-bold">{instagramHandle}</span>{" "}
-                        <span className="text-neutral-600 dark:text-neutral-300">
-                          {publicReplyMessage || "Sent you a DM! 📩"}
-                        </span>
-                      </p>
-                      <span className="text-[9px] text-neutral-400">Just now &bull; Reply</span>
-                    </div>
+                    <Avatar src={profilePictureUrl} handle={instagramHandle} size="sm" />
+                    <p className="text-[11px]">
+                      <span className="font-semibold mr-1">{instagramHandle}</span>
+                      {publicReplyMessage || "Sent you a DM! 📩"}
+                      <span className="block text-[9px] text-[#8e8e8e] mt-0.5">Now · Reply</span>
+                    </p>
                   </div>
                 )}
               </div>
-            </div>
+            </>
           )}
 
-          {/* Home Indicator */}
-          <div className="h-4 flex items-center justify-center">
-            <div className="w-24 h-1 bg-neutral-300 dark:bg-neutral-700 rounded-full" />
+          <div className="h-5 flex items-center justify-center">
+            <div className="w-24 h-1 rounded-full bg-[#262626] dark:bg-[#efefef]" />
           </div>
         </div>
       </div>

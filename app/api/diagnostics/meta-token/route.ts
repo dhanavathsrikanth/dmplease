@@ -102,6 +102,15 @@ export async function GET(request: NextRequest) {
     const facebookMessagesProbe = await probe(
       `https://graph.facebook.com/${row.instagram_id}/messages?fields=id&access_token=${encodeURIComponent(token)}`
     );
+    const profileProbe = await probe(
+      `https://graph.facebook.com/${row.instagram_id}?fields=id,username,name,profile_picture_url,followers_count,is_verified&access_token=${encodeURIComponent(token)}`
+    );
+    const profileBasicProbe = await probe(
+      `https://graph.facebook.com/${row.instagram_id}?fields=id,username,name,profile_picture_url,followers_count&access_token=${encodeURIComponent(token)}`
+    );
+    const pageProbe = await probe(
+      `https://graph.facebook.com/me/accounts?fields=id,name,is_verified,instagram_business_account{id}&access_token=${encodeURIComponent(token)}`
+    );
 
     const pagesData: Array<{ access_token?: string }> = Array.isArray(pages.json.data)
       ? (pages.json.data as Array<{ access_token?: string }>)
@@ -153,6 +162,26 @@ export async function GET(request: NextRequest) {
       messages_probe_graph_facebook: {
         ok: facebookMessagesProbe.ok,
         error: facebookMessagesProbe.error,
+      },
+      profile_basic_probe: {
+        ok: profileBasicProbe.ok,
+        error: profileBasicProbe.error,
+        has_profile_picture: Boolean(profileBasicProbe.json.profile_picture_url),
+        profile_picture_url: profileBasicProbe.json.profile_picture_url ?? null,
+        followers_count: profileBasicProbe.json.followers_count ?? null,
+      },
+      page_verification_probe: {
+        ok: pageProbe.ok,
+        error: pageProbe.error,
+        count: Array.isArray(pageProbe.json.data) ? pageProbe.json.data.length : 0,
+      },
+      profile_probe: {
+        ok: profileProbe.ok,
+        error: profileProbe.error,
+        fields: Object.keys(profileProbe.json),
+        is_verified: profileProbe.json.is_verified ?? null,
+        has_profile_picture: Boolean(profileProbe.json.profile_picture_url),
+        followers_count: profileProbe.json.followers_count ?? null,
       },
     });
   }

@@ -100,6 +100,9 @@ export function CampaignBuilder({
   const router = useRouter();
 
   const [instagramHandle, setInstagramHandle] = useState(initialHandle || "yourbrand");
+  const [profilePictureUrl, setProfilePictureUrl] = useState<string | null>(null);
+  const [isVerified, setIsVerified] = useState(false);
+  const [followersCount, setFollowersCount] = useState<number | null>(null);
 
   // Campaign State
   const [name, setName] = useState(
@@ -168,6 +171,24 @@ export function CampaignBuilder({
     dmMessage.trim().length > 0 &&
     !isMissingPost &&
     publishStatus === "idle";
+
+  // Load the real account identity for the preview (avatar, blue tick, handle)
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/instagram/media")
+      .then((res) => res.json())
+      .then((json) => {
+        if (cancelled || !json?.account) return;
+        if (json.account.username) setInstagramHandle(json.account.username);
+        setProfilePictureUrl(json.account.profilePictureUrl ?? null);
+        setIsVerified(Boolean(json.account.isVerified));
+        setFollowersCount(json.account.followersCount ?? null);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Load real media from Instagram when specific post is chosen
   useEffect(() => {
@@ -742,6 +763,9 @@ export function CampaignBuilder({
             publicReplyEnabled={publicReplyEnabled}
             publicReplyMessage={publicReplyMessage}
             instagramHandle={instagramHandle}
+            profilePictureUrl={profilePictureUrl}
+            isVerified={isVerified}
+            followersCount={followersCount}
           />
         </div>
       </div>

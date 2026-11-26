@@ -51,6 +51,8 @@ export interface MetaAccountInfo {
   displayName?: string;
   profilePictureUrl?: string;
   followersCount: number;
+  /** Verified badge comes from the linked Facebook Page, never from IG User. */
+  isVerified?: boolean | null;
   pageToken?: string;
 }
 
@@ -375,6 +377,7 @@ interface FacebookPage {
   id: string;
   name?: string;
   access_token?: string;
+  is_verified?: boolean;
   instagram_business_account?: LinkedIgAccount | null;
 }
 
@@ -386,6 +389,7 @@ function toAccount(page: FacebookPage, ig: LinkedIgAccount): MetaAccountInfo {
     displayName: ig.name || page.name || ig.username || "Instagram account",
     profilePictureUrl: ig.profile_picture_url,
     followersCount: ig.followers_count || 0,
+    isVerified: page.is_verified ?? null,
     pageToken: page.access_token,
   };
 }
@@ -464,7 +468,7 @@ export async function fetchInstagramAccountsForToken(
 
   // ── Facebook Login: discover Pages and their linked Instagram accounts ────
   const fields =
-    "id,name,access_token,instagram_business_account{id,username,name,profile_picture_url,followers_count}";
+    "id,name,access_token,is_verified,instagram_business_account{id,username,name,profile_picture_url,followers_count}";
   let pages: FacebookPage[] = [];
 
   try {
@@ -536,7 +540,7 @@ export async function fetchInstagramAccountsForToken(
   if (accounts.length === 0) {
     try {
       const fields =
-        "id,name,instagram_business_account{id,username,name,profile_picture_url,followers_count}";
+        "id,name,is_verified,instagram_business_account{id,username,name,profile_picture_url,followers_count}";
       const url = `${META_BASE_URL}/me/assigned_pages?fields=${encodeURIComponent(
         fields
       )}&access_token=${encodeURIComponent(accessToken)}`;
@@ -568,7 +572,7 @@ export async function fetchInstagramAccountsForToken(
       try {
         const pageToken = page.access_token || accessToken;
         const url = `${META_BASE_URL}/${page.id}?fields=${encodeURIComponent(
-          "instagram_business_account{id,username,name,profile_picture_url,followers_count}"
+          "id,name,is_verified,instagram_business_account{id,username,name,profile_picture_url,followers_count}"
         )}&access_token=${encodeURIComponent(pageToken)}`;
         const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
         const json = (await res.json()) as {
