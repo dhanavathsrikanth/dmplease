@@ -13,6 +13,9 @@ import {
   Users,
   BarChart3,
   RefreshCw,
+  Trophy,
+  TrendingDown,
+  Sparkles,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -97,26 +100,42 @@ async function OverviewContent({ searchParams }: PageProps) {
     ? await getWorkspaceAnalytics(workspaceIds[0], analyticsDays)
     : null;
 
+  interface OverviewLog {
+    id: string;
+    trigger_keyword: string | null;
+    keyword: string | null;
+    status: string | null;
+    sent_at: string | null;
+    automation_id: string | null;
+    post_id: string | null;
+    sequence_step: number | null;
+  }
+  let logs: OverviewLog[] = [];
   let totalDms = 0;
   let deliveredDms = 0;
   const keywordCounts: Record<string, number> = {};
+  let periodCutoff: string | null = null;
 
   if (workspaceIds.length > 0) {
     let query = supabase
       .from("dm_logs")
-      .select("trigger_keyword, status, sent_at", { count: "exact" })
+      .select(
+        "id, trigger_keyword, keyword, status, sent_at, automation_id, post_id, sequence_step",
+        { count: "exact" }
+      )
       .in("workspace_id", workspaceIds);
 
     const now = Date.now();
     if (range === "7d") {
-      const cutoff = new Date(now - 7 * 86400000).toISOString();
-      query = query.gte("sent_at", cutoff);
+      periodCutoff = new Date(now - 7 * 86400000).toISOString();
+      query = query.gte("sent_at", periodCutoff);
     } else if (range === "30d") {
-      const cutoff = new Date(now - 30 * 86400000).toISOString();
-      query = query.gte("sent_at", cutoff);
+      periodCutoff = new Date(now - 30 * 86400000).toISOString();
+      query = query.gte("sent_at", periodCutoff);
     }
 
-    const { data: logs, count } = await query;
+    const { data: logRows, count } = await query;
+    logs = (logRows as OverviewLog[] | null) ?? [];
 
     totalDms = count || 0;
 
@@ -135,6 +154,143 @@ async function OverviewContent({ searchParams }: PageProps) {
 
   const deliveryRate =
     totalDms > 0 ? Math.round((deliveredDms / totalDms) * 100) : null;
+
+  // ── Phase A funnel signals ──────────────────────────────────────────────
+  const scopedInPeriod = <T,>(q: T) =>
+    periodCutoff ? (q as { gte: (c: string, v: string) => T }).gte("created_at", periodCutoff) : q;
+
+  let triggerComments = 0;
+  let openingMessages = 0;
+  let linkClicks = 0;
+  let leadsCaptured = 0;
+
+  if (workspaceIds.length > 0) {
+    const [commentsRes, pendingRes, clicksRes, contactsRes] = await Promise.all([
+      scopedInPeriod(
+        supabase
+          .from("comment_events")
+          .select("id", { count: "exact", head: true })
+          .in("workspace_id", workspaceIds)
+      ),
+      scopedInPeriod(
+        supabase
+          .from("pending_dms")
+          .select("id", { count: "exact", head: true })
+          .in("workspace_id", workspaceIds)
+          .eq("kind", "optin")
+      ),
+      periodCutoff
+        ? supabase
+            .from("link_clicks")
+            .select("id", { count: "exact", head: true })
+            .in("workspace_id", workspaceIds)
+            .eq("is_bot", false)
+            .gte("clicked_at", periodCutoff)
+        : supabase
+            .from("link_clicks")
+            .select("id", { count: "exact", head: true })
+            .in("workspace_id", workspaceIds)
+            .eq("is_bot", false),
+      scopedInPeriod(
+        supabase
+          .from("contacts")
+          .select("id", { count: "exact", head: true })
+          .in("workspace_id", workspaceIds)
+      ),
+    ]);
+    triggerComments = commentsRes.count ?? 0;
+    openingMessages = pendingRes.count ?? 0;
+    linkClicks = clicksRes.count ?? 0;
+    leadsCaptured = contactsRes.count ?? 0;
+  }
+
+  const sentLogs = (logs ?? []).filter(
+    (log) => log.status === "SENT" || log.status === "Delivered" || !log.status
+  );
+  const confirmedOptins = sentLogs.filter(
+    (log) => Number(log.sequence_step ?? 1) > 1
+  ).length;
+  const deliveredInPeriod = sentLogs.length;
+
+  const automationNames = new Map(
+    allAutomationsNow().map((auto) => [auto.id, auto.name])
+  );
+  function allAutomationsNow() {
+    return (profile?.ownedWorkspaces || []).flatMap((w) => w.automations || []);
+  }
+
+  const byAutomation = new Map<string, number>();
+  for (const log of sentLogs) {
+    if (!log.automation_id) continue;
+    byAutomation.set(
+      log.automation_id,
+      (byAutomation.get(log.automation_id) ?? 0) + 1
+    );
+  }
+  const topAutomationEntry = Array.from(byAutomation.entries()).sort(
+    (a, b) => b[1] - a[1]
+  )[0];
+  const topAutomation = topAutomationEntry
+    ? {
+        id: topAutomationEntry[0],
+        name: automationNames.get(topAutomationEntry[0]) ?? "Campaign",
+        count: topAutomationEntry[1],
+      }
+    : null;
+
+  const funnelSteps = [
+    { label: "Comments matched", value: triggerComments, href: "/dashboard/campaigns" },
+    { label: "DMs delivered", value: deliveredInPeriod, href: "/dashboard/diagnostics" },
+    { label: "Opening messages sent", value: openingMessages, href: "/dashboard/campaigns" },
+    { label: "Opt-ins confirmed", value: confirmedOptins, href: "/dashboard/campaigns" },
+    { label: "Links clicked", value: linkClicks, href: "/dashboard/overview" },
+    { label: "Leads captured", value: leadsCaptured, href: "/dashboard/contacts" },
+  ];
+
+  const leakMessages: Record<number, { label: string; detail: string; href: string }> = {
+    0: {
+      label: "Comments aren't becoming DMs",
+      detail: "Check delivery failures, rate limits and keyword scopes.",
+      href: "/dashboard/diagnostics",
+    },
+    1: {
+      label: "Follow-gate is skipping people",
+      detail: "Try a campaign without the gate for seven days.",
+      href: "/dashboard/campaigns",
+    },
+    2: {
+      label: "Followers aren't tapping the button",
+      detail: "Shorten the opening message and make the CTA clearer.",
+      href: "/dashboard/campaigns",
+    },
+    3: {
+      label: "Clicks aren't tracked on real links",
+      detail: "Add conversion tracking to attribute clicks and purchases.",
+      href: "/dashboard/overview",
+    },
+    4: {
+      label: "Clicks aren't becoming leads",
+      detail: "Improve the destination page or lead-capture step.",
+      href: "/dashboard/campaigns",
+    },
+  };
+  let biggestLeak = leakMessages[4];
+  let worstDrop = -1;
+  for (let i = 0; i < funnelSteps.length - 1; i++) {
+    const from = funnelSteps[i].value;
+    const to = funnelSteps[i + 1].value;
+    if (from <= 0) continue;
+    const drop = 1 - to / from;
+    if (drop > worstDrop && drop > 0.2) {
+      worstDrop = drop;
+      biggestLeak = leakMessages[i] ?? biggestLeak;
+    }
+  }
+
+  const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+  const weeklySent = (logs ?? []).filter(
+    (log) => log.sent_at && log.sent_at >= sevenDaysAgo
+  ).length;
 
   const sortedKeywords = Object.entries(keywordCounts)
     .sort(([, a], [, b]) => b - a)
@@ -238,6 +394,105 @@ async function OverviewContent({ searchParams }: PageProps) {
           </Link>
         </div>
       </div>
+
+      {/* ── Wins & Fixes: the three things a busy creator needs today ── */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Card className="rounded-2xl border border-[#ffd02f]/40 bg-[#fff8e0]/40 dark:bg-[#746019]/10 shadow-subtle p-5 space-y-3">
+          <div className="flex items-center gap-2 text-xs font-semibold text-[#746019] dark:text-[#ffd02f]">
+            <Trophy className="size-4" /> Top performer
+          </div>
+          <p className="text-lg font-semibold tracking-tight text-foreground">
+            {topAutomation ? topAutomation.name : "No campaign data yet"}
+          </p>
+          <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground">
+            {topAutomation
+              ? `${topAutomation.count} DMs delivered in this period · Edit the winner`
+              : "Publish a campaign and comment your keyword to see results here."}
+          </p>
+          {topAutomation && (
+            <Button asChild variant="outline" size="sm" className="rounded-full text-[11px] h-8">
+              <Link href={`/dashboard/campaigns/${topAutomation.id}/edit`}>Duplicate flow</Link>
+            </Button>
+          )}
+        </Card>
+
+        <Card className="rounded-2xl border border-[#ff9999]/40 bg-[#ffe6cd]/40 dark:bg-[#804000]/10 shadow-subtle p-5 space-y-3">
+          <div className="flex items-center gap-2 text-xs font-semibold text-[#8a3b18] dark:text-[#ff9999]">
+            <TrendingDown className="size-4" /> Biggest leak
+          </div>
+          <p className="text-lg font-semibold tracking-tight text-foreground">
+            {biggestLeak.label}
+          </p>
+          <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground">
+            {worstDrop > 0
+              ? `${Math.round(worstDrop * 100)}% drop at this step. ${biggestLeak.detail}`
+              : biggestLeak.detail}
+          </p>
+          <Button asChild variant="outline" size="sm" className="rounded-full text-[11px] h-8">
+            <Link href={biggestLeak.href}>Fix it</Link>
+          </Button>
+        </Card>
+
+        <Card className="rounded-2xl border border-[#0fbcb0]/30 bg-[#c3faf5]/40 dark:bg-[#187574]/10 shadow-subtle p-5 space-y-3">
+          <div className="flex items-center gap-2 text-xs font-semibold text-[#187574] dark:text-[#c3faf5]">
+            <Sparkles className="size-4" /> This week
+          </div>
+          <p className="text-lg font-semibold tracking-tight text-foreground">
+            {weeklySent} DMs · {leadsCaptured} leads
+          </p>
+          <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground">
+            {confirmedOptins} opt-ins · {linkClicks} tracked clicks
+            {linkClicks === 0 ? " (real links need conversion tracking)" : ""}
+          </p>
+          <Button asChild variant="outline" size="sm" className="rounded-full text-[11px] h-8">
+            <Link href="/dashboard/campaigns">View campaigns</Link>
+          </Button>
+        </Card>
+      </div>
+
+      {/* ── Conversion funnel v1 ── */}
+      <Card className="rounded-2xl glass-card border border-[#e0e2e8] dark:border-border shadow-subtle">
+        <CardHeader className="pb-4 border-b border-[#e0e2e8] dark:border-border/60">
+          <CardTitle className="text-base font-semibold tracking-tight">
+            Conversion funnel
+          </CardTitle>
+          <CardDescription className="text-xs text-[#555a6a] dark:text-muted-foreground">
+            Every step uses real stored events. Instagram does not expose DM opens, so delivery and clicks are the measurable steps.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="pt-5">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+            {funnelSteps.map((step, index) => {
+              const previous = index > 0 ? funnelSteps[index - 1].value : null;
+              const rate =
+                previous && previous > 0
+                  ? Math.round((step.value / previous) * 100)
+                  : null;
+              return (
+                <Link
+                  key={step.label}
+                  href={step.href}
+                  className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 bg-[#f7f8fa] dark:bg-muted/30 p-3.5 hover:border-[#4262ff]/50 transition-colors"
+                >
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-[#6b6f7e]">
+                    {step.label}
+                  </p>
+                  <p className="mt-1.5 text-2xl font-bold tracking-tight text-foreground">
+                    {step.value}
+                  </p>
+                  <p className="mt-1 text-[10px] text-[#555a6a] dark:text-muted-foreground">
+                    {rate === null
+                      ? index === 0
+                        ? "Entry step"
+                        : "No prior data"
+                      : `${rate}% of previous step`}
+                  </p>
+                </Link>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
 
       {/* ── Key Conversion Stats in Miro Pastel Tints + Liquid Glass ── */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

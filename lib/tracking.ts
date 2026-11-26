@@ -6,6 +6,9 @@ export interface TrackedLinkPayload {
   automationId?: string;
   contactId?: string;
   url: string;
+  postId?: string;
+  keyword?: string;
+  sequenceStep?: number;
 }
 
 /** Creates a signed, tamper-proof short-link token for a campaign button URL. */

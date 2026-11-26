@@ -23,12 +23,26 @@ export async function GET(
 
   if (hasAdminDb()) {
     try {
+      let destinationHost: string | null = null;
+      try {
+        destinationHost = new URL(payload.url).hostname;
+      } catch {
+        destinationHost = null;
+      }
       await getAdminDb().from("link_clicks").insert({
         workspace_id: payload.workspaceId,
         automation_id: payload.automationId ?? null,
         contact_id: payload.contactId ?? null,
         token: slug,
         referrer: request.headers.get("referer") ?? null,
+        post_id: payload.postId ?? null,
+        keyword: payload.keyword ?? null,
+        sequence_step: payload.sequenceStep ?? null,
+        destination_host: destinationHost,
+        clicked_at: new Date().toISOString(),
+        is_bot: /bot|crawler|spider|facebookexternalhit|preview/i.test(
+          request.headers.get("user-agent") ?? ""
+        ),
       });
     } catch (error) {
       // Click tracking must never block a follower from reaching the link.

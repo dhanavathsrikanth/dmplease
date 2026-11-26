@@ -754,6 +754,10 @@ async function sendCommentDm(input: {
     trigger_keyword: input.keyword,
     dm_message: text,
     status: succeeded ? "SENT" : "FAILED",
+    post_id: input.event?.mediaId ?? null,
+    keyword: input.keyword,
+    sequence_step: 1,
+    variant: variant?.text ? "variant" : "default",
   });
 
   if (input.contactId) {
@@ -994,6 +998,22 @@ async function processDirectRule(input: {
     });
   }
 
+  if (hasAdminDb()) {
+    await getAdminDb().from("dm_logs").insert({
+      workspace_id: input.workspaceId,
+      instagram_account_id: input.accountDbId,
+      automation_id: null,
+      recipient_id: input.recipientId,
+      recipient_username: input.username || "instagram_user",
+      trigger_keyword: input.matchedText || rule.keywords?.[0] || "DM_RULE",
+      dm_message: text,
+      status: succeeded ? "SENT" : "FAILED",
+      keyword: (input.matchedText || rule.keywords?.[0] || "DM_RULE").toUpperCase(),
+      sequence_step: 1,
+      variant: variant.text ? "variant" : "default",
+    });
+  }
+
   if (succeeded && rule.collect_field && contactId) {
     await createPending({
       workspaceId: input.workspaceId,
@@ -1022,6 +1042,8 @@ export async function sendOptinDm(input: {
   recipientId: string;
   auto: AutomationLike;
   contactId: string | null;
+  postId?: string | null;
+  keyword?: string;
 }): Promise<{ sent: boolean; error?: MetaApiError }> {
   const variants = input.auto.dmVariants ?? [];
   const variant = pickVariant(variants);
@@ -1087,6 +1109,10 @@ export async function sendOptinDm(input: {
       trigger_keyword: "OPTIN",
       dm_message: text,
       status: sent ? "SENT" : "FAILED",
+      post_id: input.postId ?? null,
+      keyword: input.keyword ?? "OPTIN",
+      sequence_step: 2,
+      variant: variant.text ? "variant" : "default",
     });
   }
 
@@ -1340,6 +1366,16 @@ export async function processWebhookPayload(
               undefined,
               "optin"
             );
+            let postId: string | null = null;
+            if (hasAdminDb() && pending.comment_id) {
+              const { data: sourceComment } = await getAdminDb()
+                .from("comment_events")
+                .select("media_id")
+                .eq("workspace_id", auto.workspaceId)
+                .eq("external_id", pending.comment_id)
+                .maybeSingle();
+              postId = (sourceComment?.media_id as string | null) ?? null;
+            }
             const outcome = await sendOptinDm({
               token,
               accountId: event.instagramAccountId,
@@ -1348,6 +1384,8 @@ export async function processWebhookPayload(
               recipientId: event.userId,
               auto,
               contactId,
+              postId,
+              keyword: auto.triggerKeywords?.[0] ?? "OPTIN",
             });
             if (outcome.sent) {
               await deletePending(value);
