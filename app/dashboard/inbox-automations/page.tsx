@@ -42,6 +42,7 @@ const KNOWN_TRIGGERS: DmRuleTrigger[] = [
   "STORY_REPLY",
   "STORY_MENTION",
   "SHARE_TO_DM",
+  "MESSAGE_REACTION",
 ];
 
 function InboxAutomationsSkeleton() {

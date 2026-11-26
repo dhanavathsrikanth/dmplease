@@ -33,9 +33,11 @@ import {
   parseCommentEvents,
   parseMessageEvents,
   parsePostbackEvents,
+  parseReactionEvents,
   parseReadEvents,
   parseShareEvents,
   parseStoryEvents,
+  parseStoryInsightEvents,
   type WebhookCommentEvent,
   type WebhookPayload,
 } from "@/lib/meta/webhook";
@@ -43,7 +45,7 @@ import {
 export type EventOutcome = "sent" | "skipped" | "failed" | "ignored";
 
 export interface ProcessedEvent {
-  kind: "comment" | "message" | "postback" | "story" | "share" | "read";
+  kind: "comment" | "message" | "postback" | "story" | "share" | "read" | "reaction";
   accountId: string;
   outcome: EventOutcome;
   detail?: string;
@@ -2498,6 +2500,98 @@ export async function processWebhookPayload(
       else result.skipped++;
     } catch (error) {
       result.errors.push(`Story event failed: ${error instanceof Error ? error.message : "unknown"}`);
+    }
+  }
+
+  // ── Reactions to our DMs (closest supported signal to "story reactions") ───
+  for (const event of parseReactionEvents(payload)) {
+    try {
+      const account = await getAccount(event.instagramAccountId);
+      if (!account) continue;
+      const rules = (
+        await getRules(account.workspace_id, ["MESSAGE_REACTION"])
+      ).filter((rule) => {
+        if (rule.keywords.length === 0) return true;
+        const value = event.reaction.toLowerCase();
+        const emoji = (event.emoji ?? "").toLowerCase();
+        return rule.keywords.some((keyword) => {
+          const needle = keyword.toLowerCase().trim();
+          return Boolean(
+            needle &&
+              (value === needle || emoji === needle || value.includes(needle) || emoji.includes(needle))
+          );
+        });
+      });
+      const token = await getToken(event.instagramAccountId, account);
+      if (!token) continue;
+      if (rules.length === 0) {
+        result.events.push({
+          kind: "reaction",
+          accountId: event.instagramAccountId,
+          outcome: "ignored",
+          detail: "No matching reaction rule",
+        });
+        continue;
+      }
+      const succeeded = await processDirectRule({
+        workspaceId: account.workspace_id,
+        accountId: event.instagramAccountId,
+        accountDbId: account.id,
+        token,
+        recipientId: event.senderId,
+        username: event.senderName,
+        rule: rules[0],
+        externalId: `reaction:${event.externalId}`,
+        matchedText: event.emoji ?? event.reaction,
+      });
+      result.events.push({
+        kind: "reaction",
+        accountId: event.instagramAccountId,
+        outcome: succeeded ? "sent" : "skipped",
+        detail: rules[0].name,
+      });
+      if (succeeded) result.sent++;
+      else result.skipped++;
+    } catch (error) {
+      result.errors.push(
+        `Reaction event failed: ${error instanceof Error ? error.message : "unknown"}`
+      );
+    }
+  }
+
+  // ── Aggregate story insights (replies, taps) for analytics ─────────────────
+  for (const insight of parseStoryInsightEvents(payload)) {
+    try {
+      const account = await getAccount(insight.instagramAccountId);
+      if (!account || !hasAdminDb()) continue;
+      const day = new Date().toISOString().slice(0, 10);
+      const metrics = [
+        { metric: "story_replies", value: insight.replies },
+        { metric: "story_taps_forward", value: insight.tapsForward },
+        { metric: "story_taps_back", value: insight.tapsBack },
+        { metric: "story_impressions", value: insight.impressions },
+        { metric: "story_reach", value: insight.reach },
+        { metric: "story_exits", value: insight.exits },
+      ];
+      const { error } = await getAdminDb()
+        .from("insight_snapshots")
+        .upsert(
+          metrics.map((item) => ({
+            workspace_id: account.workspace_id,
+            instagram_account_id: account.id,
+            day,
+            metric: item.metric,
+            value: item.value,
+          })),
+          { onConflict: "instagram_account_id,day,metric" }
+        );
+      if (error) {
+        result.errors.push(`Story insights could not be stored: ${error.message}`);
+      }
+    } catch (error) {
+      result.errors.push(
+        `Story insights failed: ${error instanceof Error ? error.message : "unknown"}`
+      );
     }
   }
 

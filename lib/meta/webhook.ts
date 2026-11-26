@@ -78,6 +78,19 @@ export interface WebhookEntry {
       };
       media_id?: string;
       story_id?: string;
+      mid?: string;
+      reaction?: {
+        mid?: string;
+        action?: string;
+        reaction?: string;
+        emoji?: string;
+      };
+      replies?: number;
+      taps_forward?: number;
+      taps_back?: number;
+      impressions?: number;
+      reach?: number;
+      exits?: number;
     };
   }>;
   messaging?: Array<{
@@ -86,18 +99,31 @@ export interface WebhookEntry {
     recipient?: { id?: string };
     postback?: { mid?: string; title?: string; payload?: string };
     read?: { watermark?: number; seq?: number };
+    message_reactions?: {
+      mid?: string;
+      action?: string;
+      reaction?: string;
+      emoji?: string;
+    };
     message?: {
       mid?: string;
       text?: string;
       is_echo?: boolean;
       is_deleted?: boolean;
       is_unsupported?: boolean;
+      /** Legacy shape used by some Facebook Login apps. */
       reply_to_story?: { media_id?: string; user_id?: string };
+      /** Current Meta shape: message.reply_to.story. */
+      reply_to?: {
+        mid?: string;
+        story?: { id?: string; url?: string };
+      };
       attachments?: Array<{
         type?: string;
         title?: string;
         url?: string;
         media_id?: string;
+        payload?: { url?: string; id?: string };
       }>;
     };
   }>;
@@ -133,6 +159,34 @@ export interface WebhookStoryEvent {
   kind: "MENTION" | "REPLY";
 }
 
+/**
+ * Meta has no per-user "story reaction" webhook. The closest supported signal
+ * is a reaction to one of our DMs (`message_reactions`), which carries the
+ * sender IGSID and the emoji/reaction name.
+ */
+export interface WebhookReactionEvent {
+  instagramAccountId: string;
+  externalId: string;
+  senderId: string;
+  senderName?: string;
+  reaction: string;
+  emoji?: string;
+  action: "react" | "unreact";
+  mid?: string;
+}
+
+/** Aggregate story metrics sent when a story expires (no individual identity). */
+export interface WebhookStoryInsightEvent {
+  instagramAccountId: string;
+  mediaId: string;
+  impressions: number;
+  reach: number;
+  replies: number;
+  tapsForward: number;
+  tapsBack: number;
+  exits: number;
+}
+
 export interface WebhookShareEvent {
   instagramAccountId: string;
   messageId: string;
@@ -165,7 +219,8 @@ export function parseMessagingInteractions(payload: WebhookPayload) {
         message &&
         !message.is_echo &&
         !message.is_deleted &&
-        !message.is_unsupported;
+        !message.is_unsupported &&
+        !isStoryInteraction(message);
       if (
         !accountId ||
         !userId ||
@@ -253,6 +308,21 @@ export function parsePostbackEvents(
   return events;
 }
 
+/**
+ * Story replies and story mentions also arrive as messaging entries. They are
+ * handled by parseStoryEvents(), so they must be excluded here or a single
+ * story reply would fire both a story rule and a DM keyword rule.
+ */
+function isStoryInteraction(
+  message: NonNullable<WebhookEntry["messaging"]>[number]["message"]
+): boolean {
+  if (!message) return false;
+  if (message.reply_to_story || message.reply_to?.story) return true;
+  return (message.attachments ?? []).some((attachment) =>
+    ["story_mention", "story", "ig_story"].includes(String(attachment.type))
+  );
+}
+
 export function parseMessageEvents(
   payload: WebhookPayload
 ): WebhookMessageEvent[] {
@@ -264,7 +334,12 @@ export function parseMessageEvents(
     for (const messaging of entry.messaging ?? []) {
       const message = messaging.message;
       if (!message) continue;
-      if (message.is_echo || message.is_deleted || message.is_unsupported) {
+      if (
+        message.is_echo ||
+        message.is_deleted ||
+        message.is_unsupported ||
+        isStoryInteraction(message)
+      ) {
         continue;
       }
 
@@ -345,20 +420,58 @@ export function parseStoryEvents(payload: WebhookPayload): WebhookStoryEvent[] {
 
     for (const messaging of entry.messaging ?? []) {
       const message = messaging.message;
-      const story = message?.reply_to_story;
-      if (!story || message?.is_echo || message?.is_deleted || message?.is_unsupported) continue;
+      if (
+        !message ||
+        message.is_echo ||
+        message.is_deleted ||
+        message.is_unsupported
+      ) {
+        continue;
+      }
       const senderId = messaging.sender?.id;
       if (!senderId || senderId === accountId) continue;
 
-      events.push({
-        instagramAccountId: accountId,
-        externalId: message.mid ?? `story-reply:${senderId}:${story.media_id ?? ""}`,
-        senderId,
-        senderName: messaging.sender?.username,
-        mediaId: story.media_id,
-        text: message.text,
-        kind: "REPLY",
-      });
+      // Meta uses reply_to.story on current versions and reply_to_story on
+      // some Facebook Login payloads. Support both.
+      const story = message.reply_to_story ?? message.reply_to?.story;
+      if (story) {
+        const mediaId =
+          (story as { media_id?: string }).media_id ??
+          (story as { id?: string }).id;
+        events.push({
+          instagramAccountId: accountId,
+          externalId:
+            message.mid ?? `story-reply:${senderId}:${mediaId ?? ""}`,
+          senderId,
+          senderName: messaging.sender?.username,
+          mediaId,
+          text: message.text,
+          kind: "REPLY",
+        });
+        continue;
+      }
+
+      // Story mentions can also arrive as a messaging attachment.
+      for (const attachment of message.attachments ?? []) {
+        if (
+          attachment.type !== "story_mention" &&
+          attachment.type !== "story" &&
+          attachment.type !== "ig_story"
+        ) {
+          continue;
+        }
+        const mediaId = attachment.media_id ?? attachment.payload?.id;
+        events.push({
+          instagramAccountId: accountId,
+          externalId:
+            message.mid ?? `story-mention:${senderId}:${mediaId ?? ""}`,
+          senderId,
+          senderName: messaging.sender?.username,
+          mediaId,
+          text: message.text ?? attachment.title,
+          kind: "MENTION",
+        });
+      }
     }
   }
 
@@ -392,6 +505,103 @@ export function parseShareEvents(payload: WebhookPayload): WebhookShareEvent[] {
           url: attachment.url,
         });
       }
+    }
+  }
+
+  return events;
+}
+
+/**
+ * Reactions to our DMs (`message_reactions`), not taps on a story — Meta does
+ * not expose individual story-tap identities. Handles both the `changes` and
+ * `messaging` payload shapes. Unreacts are ignored.
+ */
+export function parseReactionEvents(payload: WebhookPayload): WebhookReactionEvent[] {
+  const events: WebhookReactionEvent[] = [];
+  if (payload.object !== "instagram") return events;
+
+  for (const entry of payload.entry ?? []) {
+    const accountId = entry.id;
+    if (!accountId) continue;
+
+    for (const change of entry.changes ?? []) {
+      if (change.field !== "message_reactions") continue;
+      const value = change.value;
+      const senderId = value?.from?.id;
+      const reaction = value?.reaction;
+      if (!senderId || senderId === accountId || !reaction) continue;
+      const action = reaction.action === "unreact" ? "unreact" : "react";
+      if (action === "unreact") continue;
+
+      events.push({
+        instagramAccountId: accountId,
+        externalId: `${reaction.mid ?? ""}:${senderId}:${action}`,
+        senderId,
+        senderName: value?.from?.username,
+        reaction: reaction.reaction ?? reaction.emoji ?? "reaction",
+        emoji: reaction.emoji,
+        action,
+        mid: reaction.mid,
+      });
+    }
+
+    for (const messaging of entry.messaging ?? []) {
+      const reaction = messaging.message_reactions;
+      const senderId = messaging.sender?.id;
+      if (!reaction || !senderId || senderId === accountId) continue;
+      if (reaction.action === "unreact") continue;
+
+      events.push({
+        instagramAccountId: accountId,
+        externalId: `${reaction.mid ?? ""}:${senderId}:react`,
+        senderId,
+        senderName: messaging.sender?.username,
+        reaction: reaction.reaction ?? reaction.emoji ?? "reaction",
+        emoji: reaction.emoji,
+        action: "react",
+        mid: reaction.mid,
+      });
+    }
+  }
+
+  return events;
+}
+
+/** Aggregate story metrics (replies/taps) delivered when a story expires. */
+export function parseStoryInsightEvents(
+  payload: WebhookPayload
+): WebhookStoryInsightEvent[] {
+  const events: WebhookStoryInsightEvent[] = [];
+  if (payload.object !== "instagram") return events;
+
+  const nonNegative = (value: number | undefined) =>
+    typeof value === "number" && value > 0 ? value : 0;
+
+  for (const entry of payload.entry ?? []) {
+    const accountId = entry.id;
+    if (!accountId) continue;
+    for (const change of entry.changes ?? []) {
+      if (change.field !== "story_insights") continue;
+      const value = change.value as unknown as {
+        media_id?: string;
+        impressions?: number;
+        reach?: number;
+        replies?: number;
+        taps_forward?: number;
+        taps_back?: number;
+        exits?: number;
+      };
+      if (!value?.media_id) continue;
+      events.push({
+        instagramAccountId: accountId,
+        mediaId: value.media_id,
+        impressions: nonNegative(value.impressions),
+        reach: nonNegative(value.reach),
+        replies: nonNegative(value.replies),
+        tapsForward: nonNegative(value.taps_forward),
+        tapsBack: nonNegative(value.taps_back),
+        exits: nonNegative(value.exits),
+      });
     }
   }
 

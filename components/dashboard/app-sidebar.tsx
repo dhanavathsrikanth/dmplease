@@ -16,6 +16,7 @@ import {
   IconCheck,
   IconAddressBook,
   IconGauge,
+  IconSparkles,
 } from "@tabler/icons-react";
 import { cn } from "@/lib/utils";
 import { useWorkspace } from "@/lib/workspace-context";
@@ -53,6 +54,7 @@ function getNavSections(isAdmin: boolean) {
     items: [
       { label: "Campaigns", href: "/dashboard/campaigns", icon: IconSpeakerphone },
       { label: "Auto-replies", href: "/dashboard/inbox-automations", icon: IconRobot },
+      { label: "Story to DM", href: "/dashboard/story-automations", icon: IconSparkles },
       { label: "Activity Log", href: "/dashboard/logs", icon: IconTimeline },
     ],
   },

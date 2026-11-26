@@ -42,7 +42,8 @@ export type DmRuleTrigger =
   | "DM_KEYWORD"
   | "STORY_REPLY"
   | "STORY_MENTION"
-  | "SHARE_TO_DM";
+  | "SHARE_TO_DM"
+  | "MESSAGE_REACTION";
 
 export type DmRuleCollectField = "none" | "email" | "phone" | "name" | "custom";
 
@@ -94,6 +95,7 @@ const TRIGGER_LABELS: Record<DmRuleTrigger, string> = {
   STORY_REPLY: "Story reply",
   STORY_MENTION: "Story mention",
   SHARE_TO_DM: "Share to DM",
+  MESSAGE_REACTION: "Reaction to your DM",
 };
 
 const TRIGGER_HINTS: Record<DmRuleTrigger, string> = {
@@ -101,6 +103,8 @@ const TRIGGER_HINTS: Record<DmRuleTrigger, string> = {
   STORY_REPLY: "When a follower replies to one of your stories",
   STORY_MENTION: "When a follower mentions you in their story",
   SHARE_TO_DM: "When a follower shares your post to your DMs",
+  MESSAGE_REACTION:
+    "When a follower reacts to one of your DMs (Meta does not expose individual story-tap reactions)",
 };
 
 const selectClass =

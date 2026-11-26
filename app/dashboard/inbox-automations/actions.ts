@@ -10,6 +10,7 @@ const TRIGGER_TYPES = [
   "STORY_REPLY",
   "STORY_MENTION",
   "SHARE_TO_DM",
+  "MESSAGE_REACTION",
 ] as const;
 
 const COLLECT_FIELDS = ["none", "email", "phone", "name", "custom"] as const;
