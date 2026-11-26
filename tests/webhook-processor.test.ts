@@ -17,6 +17,7 @@ import {
   matchesPostScope,
   personalizeMessage,
   toAutomationLike,
+  linkForMessage,
   withRetry,
 } from "@/lib/meta/webhook-processor";
 
@@ -43,6 +44,25 @@ describe("DM personalization", () => {
   it("never crashes on an undefined template", () => {
     expect(personalizeMessage(undefined, { username: "alice" })).toBe("");
     expect(personalizeMessage(null, { username: "alice" })).toBe("");
+  });
+});
+
+describe("DM link formatting", () => {
+  it("keeps the real destination URL instead of a long /go/ token", () => {
+    const link = linkForMessage(
+      "https://trydmplease.com/guide",
+      "92817661-c0ee-41a7-9160-43375862559c"
+    );
+    expect(link).toContain("https://trydmplease.com/guide");
+    expect(link).not.toContain("/go/");
+    expect(link.length).toBeLessThan(100);
+    expect(link).toContain("utm_source=dmplease");
+  });
+
+  it("preserves an existing query string", () => {
+    expect(linkForMessage("https://example.com/guide?x=1", "abc")).toContain(
+      "x=1&utm_source=dmplease"
+    );
   });
 });
 

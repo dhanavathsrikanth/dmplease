@@ -1,5 +1,4 @@
 import { getAdminDb, hasAdminDb } from "@/lib/db-admin";
-import { cleanEnv } from "@/lib/config";
 import { decryptToken } from "@/lib/meta/vault";
 import { captureServerEvent } from "@/lib/posthog-server";
 import {
@@ -21,7 +20,6 @@ import {
 } from "@/lib/meta/safety";
 import { getQstash, getQstashWorkerUrl, hasQstash } from "@/lib/upstash";
 import { recordMetricEvent } from "@/lib/metrics";
-import { createTrackedLink } from "@/lib/tracking";
 import {
   parseCommentEvents,
   parseMessageEvents,
@@ -169,6 +167,24 @@ export function personalizeMessage(
     .replace(/\{username\}/gi, vars.username || "there")
     .replace(/\{link\}/gi, vars.link || "")
     .replace(/\{keyword\}/gi, vars.keyword || "");
+}
+
+/**
+ * Adds short attribution params to the real destination URL. We deliberately
+ * do not replace it with a signed /go/ token: Instagram does not linkify those
+ * long URLs in DM text, and the creator asked for the actual link to be sent.
+ */
+export function linkForMessage(url: string, campaignId: string): string {
+  if (!url) return "";
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set("utm_source", "dmplease");
+    parsed.searchParams.set("utm_medium", "instagram_dm");
+    parsed.searchParams.set("utm_campaign", campaignId.slice(0, 8));
+    return parsed.toString();
+  } catch {
+    return url;
+  }
 }
 
 /** Returns true when the automation should run for this media item. */
@@ -656,26 +672,17 @@ async function sendCommentDm(input: {
     keyword: input.keyword,
   };
   const text = personalizeMessage(template, vars);
-  const trackedUrl = auto.buttonUrl
-    ? createTrackedLink({
-        workspaceId: input.workspaceId,
-        automationId: auto.id,
-        contactId: input.contactId ?? undefined,
-        url: personalizeMessage(auto.buttonUrl, vars),
-      })
-    : null;
-
   await jitter(50, 350);
 
   const dispatch = () =>
-    auto.buttonText && trackedUrl
+    auto.buttonText && auto.buttonUrl
       ? sendPrivateReplyWithButton(
           input.token,
           input.accountId,
           input.commentId,
           text,
           personalizeMessage(auto.buttonText, vars),
-          `${new URL(cleanEnv("NEXT_PUBLIC_SITE_URL") || "http://localhost:3000").origin}/go/${trackedUrl}`
+          linkForMessage(personalizeMessage(auto.buttonUrl, vars), auto.id)
         )
       : sendPrivateReply(input.token, input.accountId, input.commentId, text);
 
@@ -927,21 +934,15 @@ async function processDirectRule(input: {
   });
 
   await jitter(50, 350);
-  const trackedUrl = rule.button_url
-    ? createTrackedLink({
-        workspaceId: input.workspaceId,
-        contactId: contactId ?? undefined,
-        url: personalizeMessage(rule.button_url, { username: input.username }),
-      })
-    : null;
-
+  // Always send the real destination URL in DM text. Long signed /go/ links
+  // are not rendered as clickable links by Instagram.
   const result = await withRetry(() =>
-    rule.button_text && trackedUrl
+    rule.button_text && rule.button_url
       ? sendDirectMessage(
           input.token,
           input.accountId,
           input.recipientId,
-          `${text}\n\n${rule.button_text}: ${`${new URL(cleanEnv("NEXT_PUBLIC_SITE_URL") || "http://localhost:3000").origin}/go/${trackedUrl}`}`
+          `${text}\n\n${rule.button_text}: ${personalizeMessage(rule.button_url, { username: input.username })}`
         )
       : sendDirectMessage(input.token, input.accountId, input.recipientId, text)
   );
@@ -1006,24 +1007,27 @@ export async function sendOptinDm(input: {
   const variant = pickVariant(variants);
   const template = variant.text ?? input.auto.dmMessage ?? "";
 
-  let link = input.auto.buttonUrl || "";
-  if (input.auto.buttonUrl) {
-    const token = createTrackedLink({
-      workspaceId: input.workspaceId,
-      automationId: input.auto.id,
-      contactId: input.contactId ?? undefined,
-      url: personalizeMessage(input.auto.buttonUrl, { keyword: "OPTIN" }),
-    });
-    if (token) {
-      const origin = new URL(
-        cleanEnv("NEXT_PUBLIC_SITE_URL") || "http://localhost:3000"
-      ).origin;
-      link = `${origin}/go/${token}`;
-    }
+  // Send the real destination URL. A signed /go/ token is ~290 characters and
+  // Instagram does not render it as a clickable link in DM text. Short UTM
+  // parameters keep attribution without breaking the link.
+  const link = linkForMessage(
+    personalizeMessage(input.auto.buttonUrl || "", { keyword: "OPTIN" }),
+    input.auto.id
+  );
+
+  let username = "there";
+  if (hasAdminDb()) {
+    const { data: contact } = await getAdminDb()
+      .from("contacts")
+      .select("username")
+      .eq("workspace_id", input.workspaceId)
+      .eq("instagram_id", input.recipientId)
+      .maybeSingle();
+    if (contact?.username) username = String(contact.username);
   }
 
   const text = personalizeMessage(template, {
-    username: "there",
+    username,
     link,
     keyword: "OPTIN",
   });
