@@ -26,6 +26,11 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { PhonePreview } from "@/components/campaigns/phone-preview";
+import { FollowGateSettings } from "@/components/campaigns/follow-gate-settings";
+import {
+  FOLLOW_GATE_DEFAULTS,
+  type FollowGateUnavailablePolicy,
+} from "@/lib/follow-gate-constants";
 import {
   createCampaign,
   updateCampaign,
@@ -83,6 +88,9 @@ interface CampaignInitialData {
   publicReplyEnabled?: boolean | null;
   publicReplyMessages?: string[] | null;
   followGateEnabled?: boolean | null;
+  openingMessage?: string | null;
+  followGateButtonLabel?: string | null;
+  followGateOnUnavailable?: string | null;
 }
 
 interface CampaignBuilderProps {
@@ -154,10 +162,20 @@ export function CampaignBuilder({
     initialCampaign?.publicReplyMessages?.[0] ?? "Sent you a DM! 📩"
   );
 
-  // Follow-gate
+  // Ask for Follow
   const [followGateEnabled, setFollowGateEnabled] = useState(
     initialCampaign?.followGateEnabled ?? false
   );
+  const [openingMessage, setOpeningMessage] = useState(
+    initialCampaign?.openingMessage ?? FOLLOW_GATE_DEFAULTS.openingMessage
+  );
+  const [followGateButtonLabel, setFollowGateButtonLabel] = useState(
+    initialCampaign?.followGateButtonLabel ?? FOLLOW_GATE_DEFAULTS.buttonLabel
+  );
+  const [followGateOnUnavailable, setFollowGateOnUnavailable] =
+    useState<FollowGateUnavailablePolicy>(
+      initialCampaign?.followGateOnUnavailable === "deliver" ? "deliver" : "hold"
+    );
 
   // Submitting state
   const [publishStatus, setPublishStatus] = useState<"idle" | "publishing" | "success">("idle");
@@ -269,6 +287,9 @@ export function CampaignBuilder({
       publicReplyEnabled,
       publicReplyMessages: publicReplyEnabled ? [publicReplyMessage] : [],
       followGateEnabled,
+      openingMessage: followGateEnabled ? openingMessage : null,
+      followGateButtonLabel: followGateEnabled ? followGateButtonLabel : null,
+      followGateOnUnavailable,
     };
 
     try {
@@ -283,6 +304,7 @@ export function CampaignBuilder({
           keyword_count: keywords.length,
           public_reply_enabled: publicReplyEnabled,
           follow_gate_enabled: followGateEnabled,
+          follow_gate_on_unavailable: followGateOnUnavailable,
           has_action_button: Boolean(buttonText.trim() && buttonUrl.trim()),
         });
         setPublishStatus("success");
@@ -730,24 +752,20 @@ export function CampaignBuilder({
             )}
           </Card>
 
-          {/* STEP 5: Optional Follow Gate */}
-          <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 p-5 shadow-subtle space-y-2">
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <h4 className="font-semibold text-xs sm:text-sm text-foreground">
-                  Ask followers to follow first
-                </h4>
-                <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground mt-0.5">
-                  Only people who follow your account receive the DM. Others are skipped.
-                </p>
-              </div>
-              <Switch
-                checked={followGateEnabled}
-                onCheckedChange={setFollowGateEnabled}
-                aria-label="Require followers before sending the DM"
-              />
-            </div>
-          </Card>
+          {/* STEP 5: Ask for Follow */}
+          <FollowGateSettings
+            mode="comment"
+            enabled={followGateEnabled}
+            onEnabledChange={setFollowGateEnabled}
+            openingMessage={openingMessage}
+            onOpeningMessageChange={setOpeningMessage}
+            buttonLabel={followGateButtonLabel}
+            onButtonLabelChange={setFollowGateButtonLabel}
+            onUnavailable={followGateOnUnavailable}
+            onUnavailableChange={setFollowGateOnUnavailable}
+            fieldErrors={fieldErrors}
+            disabled={publishStatus === "publishing"}
+          />
         </div>
 
         {/* Right Column: Phone Simulator */}
@@ -762,6 +780,9 @@ export function CampaignBuilder({
             buttonUrl={buttonUrl}
             publicReplyEnabled={publicReplyEnabled}
             publicReplyMessage={publicReplyMessage}
+            followGateEnabled={followGateEnabled}
+            followGateOpeningMessage={openingMessage}
+            followGateButtonLabel={followGateButtonLabel}
             instagramHandle={instagramHandle}
             profilePictureUrl={profilePictureUrl}
             isVerified={isVerified}

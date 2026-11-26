@@ -49,6 +49,7 @@ model Workspace {
   pendingDms        PendingDm[]
   linkClicks        LinkClick[]
   safetyEvents      SafetyEvent[]
+  followChecks      FollowCheck[]
   insightSnapshots  InsightSnapshot[]
 
   @@map("workspaces")
@@ -83,7 +84,9 @@ model Automation {
   buttonUrl           String?  @map("button_url")
   publicReplyEnabled  Boolean  @default(false) @map("public_reply_enabled")
   publicReplyMessages String[] @default([]) @map("public_reply_messages")
-  followGateEnabled   Boolean  @default(false) @map("follow_gate_enabled")
+  followGateEnabled       Boolean @default(false) @map("follow_gate_enabled")
+  followGateButtonLabel   String? @map("follow_gate_button_label")
+  followGateOnUnavailable String  @default("hold") @map("follow_gate_on_unavailable")
   dmVariants          String[] @default([]) @map("dm_variants")
   collectField        String?  @map("collect_field")
   openingMessage      String?  @map("opening_message")
@@ -207,6 +210,10 @@ model DmRule {
   buttonText    String?  @map("button_text")
   buttonUrl     String?  @map("button_url")
   collectField  String?  @map("collect_field")
+  followGateEnabled       Boolean @default(false) @map("follow_gate_enabled")
+  openingMessage          String? @map("opening_message")
+  followGateButtonLabel   String? @map("follow_gate_button_label")
+  followGateOnUnavailable String  @default("hold") @map("follow_gate_on_unavailable")
   oncePerDays   Int      @default(45) @map("once_per_days")
   priority      Int      @default(0)
   active        Boolean  @default(true)
@@ -281,6 +288,28 @@ model SafetyEvent {
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@map("safety_events")
+}
+
+/// Durable record of every Ask-for-Follow verification attempt.
+model FollowCheck {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId        String    @map("workspace_id") @db.Uuid
+  instagramAccountId String?   @map("instagram_account_id") @db.Uuid
+  automationId       String?   @map("automation_id") @db.Uuid
+  ruleId             String?   @map("rule_id") @db.Uuid
+  pendingId          String?   @map("pending_id") @db.Uuid
+  recipientId        String    @map("recipient_id")
+  status             String
+  method             String    @default("none")
+  reason             String?
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@index([workspaceId, recipientId, createdAt(sort: Desc)])
+  @@index([pendingId])
+  @@map("follow_checks")
 }
 
 model InsightSnapshot {

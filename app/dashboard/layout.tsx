@@ -61,38 +61,31 @@ async function AuthenticatedDashboardShell({
     workspaces.find((w) => w.id === activeCookieId) || workspaces[0];
 
   const supabase = await createClient();
-  let connectedUsername: string | null = null;
+  const allWorkspaceIds = workspaces.map((w) => w.id);
 
-  // First check Instagram account specifically for the active workspace
-  if (activeWorkspace) {
-    const { data: activeAccounts } = await supabase
-      .from("instagram_accounts")
-      .select("username")
-      .eq("workspace_id", activeWorkspace.id)
-      .limit(1);
+  // Check the active workspace and the fallback across all workspaces in one
+  // batch — a serial second query added latency to every full page load.
+  const [activeAccountsRes, allAccountsRes] = await Promise.all([
+    activeWorkspace
+      ? supabase
+          .from("instagram_accounts")
+          .select("username")
+          .eq("workspace_id", activeWorkspace.id)
+          .limit(1)
+      : null,
+    allWorkspaceIds.length > 0
+      ? supabase
+          .from("instagram_accounts")
+          .select("username")
+          .in("workspace_id", allWorkspaceIds)
+          .limit(1)
+      : null,
+  ]);
 
-    if (activeAccounts && activeAccounts.length > 0) {
-      connectedUsername = activeAccounts[0].username;
-    }
-  }
-
-  // Fallback across any user workspace if not found
-  if (!connectedUsername) {
-    const allIds = workspaces.map((w) => w.id);
-    if (allIds.length > 0) {
-      const { data: accounts } = await supabase
-        .from("instagram_accounts")
-        .select("username")
-        .in("workspace_id", allIds)
-        .limit(1);
-
-      if (accounts && accounts.length > 0) {
-        connectedUsername = accounts[0].username;
-      }
-    }
-  }
-
-  const instagramUsername = connectedUsername;
+  const instagramUsername =
+    activeAccountsRes?.data?.[0]?.username ??
+    allAccountsRes?.data?.[0]?.username ??
+    null;
   const instagramAccountCount = instagramUsername ? 1 : 0;
 
   return (

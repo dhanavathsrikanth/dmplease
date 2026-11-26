@@ -10,6 +10,7 @@ import {
   Pencil,
   Plus,
   Trash2,
+  UserCheck,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -31,6 +32,11 @@ import {
   toggleRule,
   updateRule,
 } from "@/app/dashboard/inbox-automations/actions";
+import { FollowGateSettings } from "@/components/campaigns/follow-gate-settings";
+import {
+  FOLLOW_GATE_DEFAULTS,
+  type FollowGateUnavailablePolicy,
+} from "@/lib/follow-gate-constants";
 
 export type DmRuleTrigger =
   | "DM_KEYWORD"
@@ -50,6 +56,10 @@ export interface DmRuleItem {
   buttonText: string | null;
   buttonUrl: string | null;
   collectField: string | null;
+  followGateEnabled: boolean;
+  openingMessage: string | null;
+  followGateButtonLabel: string | null;
+  followGateOnUnavailable: FollowGateUnavailablePolicy;
   oncePerDays: number;
   priority: number;
   active: boolean;
@@ -71,6 +81,10 @@ interface RuleFormState {
   buttonText: string;
   buttonUrl: string;
   collectField: DmRuleCollectField;
+  followGateEnabled: boolean;
+  openingMessage: string;
+  followGateButtonLabel: string;
+  followGateOnUnavailable: FollowGateUnavailablePolicy;
   oncePerDays: number;
   active: boolean;
 }
@@ -103,6 +117,10 @@ function emptyForm(workspaceId: string): RuleFormState {
     buttonText: "",
     buttonUrl: "",
     collectField: "none",
+    followGateEnabled: false,
+    openingMessage: FOLLOW_GATE_DEFAULTS.openingMessage,
+    followGateButtonLabel: FOLLOW_GATE_DEFAULTS.buttonLabel,
+    followGateOnUnavailable: "hold",
     oncePerDays: 45,
     active: true,
   };
@@ -165,6 +183,11 @@ export function RuleManager({
         rule.collectField === "custom"
           ? rule.collectField
           : "none",
+      followGateEnabled: rule.followGateEnabled,
+      openingMessage: rule.openingMessage || FOLLOW_GATE_DEFAULTS.openingMessage,
+      followGateButtonLabel:
+        rule.followGateButtonLabel || FOLLOW_GATE_DEFAULTS.buttonLabel,
+      followGateOnUnavailable: rule.followGateOnUnavailable,
       oncePerDays: rule.oncePerDays,
       active: rule.active,
     });
@@ -191,6 +214,10 @@ export function RuleManager({
       buttonText: form.buttonText,
       buttonUrl: form.buttonUrl,
       collectField: form.collectField,
+      followGateEnabled: form.followGateEnabled,
+      openingMessage: form.followGateEnabled ? form.openingMessage : "",
+      followGateButtonLabel: form.followGateEnabled ? form.followGateButtonLabel : "",
+      followGateOnUnavailable: form.followGateOnUnavailable,
       oncePerDays: form.oncePerDays,
       active: form.active,
     };
@@ -213,6 +240,10 @@ export function RuleManager({
         buttonText: form.buttonText.trim() || null,
         buttonUrl: form.buttonUrl.trim() || null,
         collectField: form.collectField === "none" ? null : form.collectField,
+        followGateEnabled: form.followGateEnabled,
+        openingMessage: form.followGateEnabled ? form.openingMessage : null,
+        followGateButtonLabel: form.followGateEnabled ? form.followGateButtonLabel : null,
+        followGateOnUnavailable: form.followGateOnUnavailable,
         oncePerDays: form.oncePerDays,
         priority: 0,
         active: form.active,
@@ -232,6 +263,7 @@ export function RuleManager({
         active: form.active,
         has_action_button: Boolean(form.buttonText.trim() && form.buttonUrl.trim()),
         collects_contact_field: form.collectField !== "none",
+        follow_gate_enabled: form.followGateEnabled,
       });
       setIsFormOpen(false);
       flash(form.id ? "Rule updated" : "Rule created");
@@ -373,6 +405,15 @@ export function RuleManager({
                     >
                       {TRIGGER_LABELS[rule.triggerType] || rule.triggerType}
                     </Badge>
+                    {rule.followGateEnabled && (
+                      <Badge
+                        variant="tag-teal"
+                        className="text-[10px] font-semibold py-0.5 px-2.5 rounded-full gap-1"
+                      >
+                        <UserCheck className="size-3" aria-hidden="true" />
+                        Follow gate
+                      </Badge>
+                    )}
                   </div>
                   <p className="text-xs text-[#555a6a] dark:text-muted-foreground">
                     {TRIGGER_HINTS[rule.triggerType] || "Triggered by a follower interaction."}
@@ -397,6 +438,7 @@ export function RuleManager({
                     Runs at most once every {rule.oncePerDays} day
                     {rule.oncePerDays === 1 ? "" : "s"}
                     {rule.collectField ? ` · Collects ${rule.collectField}` : ""}
+                    {rule.followGateEnabled ? " · Follow gate on" : ""}
                   </p>
                 </div>
 
@@ -640,6 +682,28 @@ export function RuleManager({
                 <FieldError message={fieldErrors.oncePerDays} />
               </div>
             </div>
+
+            <FollowGateSettings
+              mode="direct"
+              enabled={form.followGateEnabled}
+              onEnabledChange={(value) =>
+                setForm((prev) => ({ ...prev, followGateEnabled: value }))
+              }
+              openingMessage={form.openingMessage}
+              onOpeningMessageChange={(value) =>
+                setForm((prev) => ({ ...prev, openingMessage: value }))
+              }
+              buttonLabel={form.followGateButtonLabel}
+              onButtonLabelChange={(value) =>
+                setForm((prev) => ({ ...prev, followGateButtonLabel: value }))
+              }
+              onUnavailable={form.followGateOnUnavailable}
+              onUnavailableChange={(value) =>
+                setForm((prev) => ({ ...prev, followGateOnUnavailable: value }))
+              }
+              fieldErrors={fieldErrors}
+              disabled={busy}
+            />
 
             <div className="flex items-center justify-between rounded-2xl border border-[#e0e2e8] dark:border-border/60 bg-[#f7f8fa] dark:bg-muted/40 px-4 py-3">
               <div>

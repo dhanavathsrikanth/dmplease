@@ -53,12 +53,20 @@ export async function markWebhookFinished(
 ): Promise<void> {
   if (!jobId || !hasAdminDb()) return;
   const failed = result.failed > 0 || result.errors.length > 0;
+  // Failures can be counted without an explicit error string (e.g. a Meta
+  // rejection). Fall back to the event details so the ledger is never a
+  // FAILED row with an empty reason.
+  const reasons = result.errors.length
+    ? result.errors
+    : result.events
+        .filter((event) => event.outcome === "failed" && event.detail)
+        .map((event) => `${event.kind} ${event.detail}`);
   try {
     await getAdminDb()
       .from("webhook_events")
       .update({
         status: failed ? "FAILED" : "DONE",
-        error: result.errors.length ? result.errors.join(" | ").slice(0, 2000) : null,
+        error: reasons.length ? reasons.join(" | ").slice(0, 2000) : null,
         duration_ms: Date.now() - startedAt,
         completed_at: new Date().toISOString(),
       })
@@ -68,6 +76,12 @@ export async function markWebhookFinished(
   }
 }
 
+export interface WebhookFailure {
+  id: string;
+  error: string | null;
+  receivedAt: string;
+}
+
 export interface WebhookHealth {
   total: number;
   done: number;
@@ -75,6 +89,7 @@ export interface WebhookHealth {
   pending: number;
   successRate: number | null;
   avgDurationMs: number | null;
+  recentFailures: WebhookFailure[];
   available: boolean;
 }
 
@@ -85,6 +100,7 @@ const EMPTY_HEALTH: WebhookHealth = {
   pending: 0,
   successRate: null,
   avgDurationMs: null,
+  recentFailures: [],
   available: false,
 };
 
@@ -96,11 +112,17 @@ export async function getWebhookHealth(hours = 24): Promise<WebhookHealth> {
     const since = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
     const { data, error } = await getAdminDb()
       .from("webhook_events")
-      .select("status, duration_ms")
+      .select("id, status, duration_ms, error, received_at")
       .gte("received_at", since);
     if (error) throw error;
 
-    const rows = (data ?? []) as Array<{ status: string; duration_ms: number | null }>;
+    const rows = (data ?? []) as Array<{
+      id: string;
+      status: string;
+      duration_ms: number | null;
+      error: string | null;
+      received_at: string;
+    }>;
     const total = rows.length;
     const done = rows.filter((row) => row.status === "DONE").length;
     const failed = rows.filter((row) => row.status === "FAILED").length;
@@ -111,6 +133,15 @@ export async function getWebhookHealth(hours = 24): Promise<WebhookHealth> {
       .map((row) => row.duration_ms)
       .filter((value): value is number => typeof value === "number");
     const settled = done + failed;
+    const recentFailures = rows
+      .filter((row) => row.status === "FAILED")
+      .sort((a, b) => String(b.received_at).localeCompare(String(a.received_at)))
+      .slice(0, 3)
+      .map((row) => ({
+        id: row.id,
+        error: row.error,
+        receivedAt: row.received_at,
+      }));
 
     return {
       total,
@@ -121,6 +152,7 @@ export async function getWebhookHealth(hours = 24): Promise<WebhookHealth> {
       avgDurationMs: durations.length
         ? Math.round(durations.reduce((sum, value) => sum + value, 0) / durations.length)
         : null,
+      recentFailures,
       available: true,
     };
   } catch (error) {

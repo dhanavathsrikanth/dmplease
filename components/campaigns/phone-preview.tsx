@@ -13,6 +13,7 @@ import {
   Plus,
   Smile,
   Globe2,
+  Check,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -26,6 +27,9 @@ interface PhonePreviewProps {
   buttonUrl?: string | null;
   publicReplyEnabled?: boolean;
   publicReplyMessage?: string | null;
+  followGateEnabled?: boolean;
+  followGateOpeningMessage?: string | null;
+  followGateButtonLabel?: string | null;
   instagramHandle?: string;
   profilePictureUrl?: string | null;
   isVerified?: boolean;
@@ -33,9 +37,10 @@ interface PhonePreviewProps {
 }
 
 /** Mirrors the production formatter so the preview shows the exact DM text. */
-function previewText(message: string, link: string) {
+function previewText(message: string, link: string, keyword?: string) {
   const text = (message || "Hey! Thanks for your comment. Here is your link: {link}")
     .replace(/{username}/gi, "there")
+    .replace(/{keyword}/gi, keyword || "GUIDE")
     .replace(/{link}/gi, link || "https://dmplease.vercel.app/guide");
   return text
     .replace(/https?:\/\/[^\s<]+/g, (url) => `\n\n${url.replace(/[.,;:!?)\]}]+$/g, "")}\n`)
@@ -103,13 +108,21 @@ export function PhonePreview({
   buttonUrl,
   publicReplyEnabled,
   publicReplyMessage,
+  followGateEnabled = false,
+  followGateOpeningMessage,
+  followGateButtonLabel,
   instagramHandle = "yourbrand",
   profilePictureUrl = null,
   isVerified = false,
   followersCount = null,
 }: PhonePreviewProps) {
   const [activeTab, setActiveTab] = useState<"dm" | "post">("dm");
-  const formattedDm = previewText(dmMessage, buttonUrl || "");
+  const formattedDm = previewText(dmMessage, buttonUrl || "", triggerKeyword);
+  const formattedOpening = previewText(
+    followGateOpeningMessage || "Follow the account, then tap below to get your {keyword}. 👇",
+    "",
+    triggerKeyword
+  );
   const linkMatch = formattedDm.match(/https?:\/\/[^\s]+/);
   const linkUrl = linkMatch?.[0] || buttonUrl || "";
   let linkHost = "";
@@ -203,7 +216,35 @@ export function PhonePreview({
                   </div>
                 </div>
 
+                {followGateEnabled && (
+                  <div className="space-y-2">
+                    <p className="text-center text-[9px] font-semibold uppercase tracking-wide text-[#8e8e8e]">
+                      Follow gate · step 1 of 2
+                    </p>
+                    <div className="flex flex-col items-end gap-1">
+                      <div className="max-w-[248px] rounded-[20px] rounded-br-sm px-3 py-2.5 text-[12px] leading-[1.45] text-white bg-gradient-to-br from-[#515bd4] via-[#d62976] to-[#f58529] break-words whitespace-pre-wrap shadow-sm">
+                        <p>{formattedOpening}</p>
+                        <div className="mt-2 flex items-center justify-center gap-1.5 rounded-full bg-white/95 px-3 py-1.5 text-[11px] font-semibold text-[#262626]">
+                          <span>{followGateButtonLabel || "I'm following ✅"}</span>
+                          <Check className="size-3" aria-hidden="true" />
+                        </div>
+                      </div>
+                      <span className="text-[9px] text-[#8e8e8e] pr-1">Tap to verify</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="h-px flex-1 bg-[#dbdbdb] dark:bg-[#262626]" />
+                      <span className="text-[9px] text-[#8e8e8e]">after follow is confirmed</span>
+                      <div className="h-px flex-1 bg-[#dbdbdb] dark:bg-[#262626]" />
+                    </div>
+                  </div>
+                )}
+
                 {/* Brand reply — Instagram gradient bubble */}
+                {followGateEnabled && (
+                  <p className="text-center text-[9px] font-semibold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
+                    Step 2 of 2 · verified DM
+                  </p>
+                )}
                 <div className="flex flex-col items-end gap-1">
                   <div className="max-w-[248px] rounded-[20px] rounded-br-sm px-3 py-2.5 text-[12px] leading-[1.45] text-white bg-gradient-to-br from-[#515bd4] via-[#d62976] to-[#f58529] break-words whitespace-pre-wrap shadow-sm">
                     <p>{formattedDm}</p>

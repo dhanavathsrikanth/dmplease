@@ -2,10 +2,10 @@ import { getAdminDb, hasAdminDb } from "@/lib/db-admin";
 import { decryptToken } from "@/lib/meta/vault";
 import { captureServerEvent } from "@/lib/posthog-server";
 import {
-  checkIsFollower,
   getUserMedia,
   postPublicCommentReply,
   sendDirectMessage,
+  sendDirectMessageWithButton,
   sendPrivateReply,
   sendPrivateReplyWithButton,
   isTransientMetaError,
@@ -19,6 +19,15 @@ import {
   randomizedDelay,
 } from "@/lib/meta/safety";
 import { getQstash, getQstashWorkerUrl, hasQstash } from "@/lib/upstash";
+import {
+  buildOpeningText,
+  decideFollowGateAction,
+  normalizeFollowGateConfig,
+  verifyFollowership,
+  type FollowGateConfig,
+  type FollowVerification,
+} from "@/lib/meta/follow-gate";
+import { FOLLOW_GATE_LIMITS } from "@/lib/follow-gate-constants";
 import { recordMetricEvent } from "@/lib/metrics";
 import {
   parseCommentEvents,
@@ -65,6 +74,8 @@ export interface AutomationLike {
   publicReplyEnabled?: boolean;
   publicReplyMessages?: string[];
   followGateEnabled?: boolean;
+  followGateButtonLabel?: string | null;
+  followGateOnUnavailable?: string | null;
   dmVariants?: string[];
   collectField?: string | null;
   openingMessage?: string | null;
@@ -85,6 +96,8 @@ type AutomationRow = {
   public_reply_enabled?: boolean | null;
   public_reply_messages?: string[] | null;
   follow_gate_enabled?: boolean | null;
+  follow_gate_button_label?: string | null;
+  follow_gate_on_unavailable?: string | null;
   dm_variants?: string[] | null;
   collect_field?: string | null;
   opening_message?: string | null;
@@ -111,6 +124,8 @@ export function toAutomationLike(row: AutomationRow): AutomationLike {
     publicReplyEnabled: row.public_reply_enabled ?? false,
     publicReplyMessages: row.public_reply_messages ?? [],
     followGateEnabled: row.follow_gate_enabled ?? false,
+    followGateButtonLabel: row.follow_gate_button_label ?? null,
+    followGateOnUnavailable: row.follow_gate_on_unavailable ?? "hold",
     dmVariants: row.dm_variants ?? [],
     collectField: row.collect_field,
     openingMessage: row.opening_message,
@@ -129,6 +144,10 @@ interface DmRule {
   button_text: string | null;
   button_url: string | null;
   collect_field: string | null;
+  follow_gate_enabled: boolean | null;
+  opening_message: string | null;
+  follow_gate_button_label: string | null;
+  follow_gate_on_unavailable: string | null;
   once_per_days: number;
   priority: number;
 }
@@ -261,6 +280,14 @@ function nowIso() {
 function metaErrorCode(error: MetaApiError | undefined): number | null {
   const code = error?.error?.code ?? error?.code;
   return typeof code === "number" ? code : null;
+}
+
+/** Human-readable reason stored in the job ledger and shown in diagnostics. */
+function describeMetaError(error: MetaApiError | undefined): string {
+  if (!error) return "Unknown Meta error";
+  const code = metaErrorCode(error);
+  const message = error.error?.message ?? error.message ?? "request rejected";
+  return code === null ? message : `Meta error ${code}: ${message}`;
 }
 
 /**
@@ -455,16 +482,26 @@ async function getRules(
 ): Promise<DmRule[]> {
   if (!hasAdminDb()) return [];
   try {
+    // Select * and normalise: gate columns are additive, so installations
+    // that have not applied the latest migration must keep working.
     const { data, error } = await getAdminDb()
       .from("dm_rules")
-      .select("id, workspace_id, name, trigger_type, keywords, message, variants, button_text, button_url, collect_field, once_per_days, priority")
+      .select("*")
       .eq("workspace_id", workspaceId)
       .eq("active", true)
       .in("trigger_type", triggerTypes)
       .order("priority", { ascending: false })
       .order("created_at", { ascending: true });
     if (error) throw error;
-    return (data ?? []) as DmRule[];
+    return ((data ?? []) as DmRule[]).map((rule) => ({
+      ...rule,
+      keywords: rule.keywords ?? [],
+      variants: rule.variants ?? [],
+      follow_gate_enabled: Boolean(rule.follow_gate_enabled),
+      opening_message: rule.opening_message ?? null,
+      follow_gate_button_label: rule.follow_gate_button_label ?? null,
+      follow_gate_on_unavailable: rule.follow_gate_on_unavailable ?? "hold",
+    }));
   } catch {
     return [];
   }
@@ -625,6 +662,619 @@ async function markContactLedger(
   } catch (error) {
     console.warn("[webhook] Could not update contact:", error);
   }
+}
+
+// ── Ask for Follow ───────────────────────────────────────────────────────────
+
+/** Fills additive DM-rule columns for databases that predate the gate migration. */
+function toDmRule(row: Partial<DmRule> & Record<string, unknown>): DmRule {
+  return {
+    id: String(row.id),
+    workspace_id: String(row.workspace_id),
+    name: String(row.name ?? "Rule"),
+    trigger_type: String(row.trigger_type ?? "DM_KEYWORD"),
+    keywords: (row.keywords as string[] | null) ?? [],
+    message: String(row.message ?? ""),
+    variants: (row.variants as string[] | null) ?? [],
+    button_text: (row.button_text as string | null) ?? null,
+    button_url: (row.button_url as string | null) ?? null,
+    collect_field: (row.collect_field as string | null) ?? null,
+    follow_gate_enabled: Boolean(row.follow_gate_enabled),
+    opening_message: (row.opening_message as string | null) ?? null,
+    follow_gate_button_label: (row.follow_gate_button_label as string | null) ?? null,
+    follow_gate_on_unavailable: (row.follow_gate_on_unavailable as string | null) ?? "hold",
+    once_per_days: Number(row.once_per_days ?? 45),
+    priority: Number(row.priority ?? 0),
+  };
+}
+
+async function contactUsername(
+  workspaceId: string,
+  recipientId: string
+): Promise<string | null> {
+  if (!hasAdminDb()) return null;
+  try {
+    const { data } = await getAdminDb()
+      .from("contacts")
+      .select("username")
+      .eq("workspace_id", workspaceId)
+      .eq("instagram_id", recipientId)
+      .maybeSingle();
+    return data?.username ? String(data.username) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A short-lived verification is enough to avoid a Meta call on every comment
+ * in an active conversation. Both timestamps are required so an opt-in that
+ * was never confirmed can never count as verified.
+ */
+async function isRecentlyVerified(
+  workspaceId: string,
+  recipientId: string
+): Promise<boolean> {
+  if (!hasAdminDb()) return false;
+  try {
+    const { data } = await getAdminDb()
+      .from("contacts")
+      .select("opted_in_at, follow_verified_at")
+      .eq("workspace_id", workspaceId)
+      .eq("instagram_id", recipientId)
+      .maybeSingle();
+    if (!data?.opted_in_at || !data.follow_verified_at) return false;
+    const verifiedAt = new Date(String(data.follow_verified_at)).getTime();
+    if (Number.isNaN(verifiedAt)) return false;
+    return Date.now() - verifiedAt < FOLLOW_GATE_LIMITS.verificationCacheMinutes * 60 * 1000;
+  } catch {
+    return false;
+  }
+}
+
+async function setFollowVerification(
+  workspaceId: string,
+  recipientId: string,
+  verified: boolean
+): Promise<void> {
+  if (!hasAdminDb()) return;
+  try {
+    const patch: Record<string, unknown> = {
+      follow_verified_at: verified ? nowIso() : null,
+      updated_at: nowIso(),
+    };
+    if (verified) {
+      const { data } = await getAdminDb()
+        .from("contacts")
+        .select("opted_in_at")
+        .eq("workspace_id", workspaceId)
+        .eq("instagram_id", recipientId)
+        .maybeSingle();
+      if (!data?.opted_in_at) patch.opted_in_at = nowIso();
+    }
+    await getAdminDb()
+      .from("contacts")
+      .update(patch)
+      .eq("workspace_id", workspaceId)
+      .eq("instagram_id", recipientId);
+  } catch (error) {
+    console.warn("[follow-gate] Could not update verification ledger:", error);
+  }
+}
+
+async function recordFollowCheck(input: {
+  workspaceId: string;
+  accountDbId?: string | null;
+  automationId?: string | null;
+  ruleId?: string | null;
+  pendingId?: string | null;
+  recipientId: string;
+  verification: Pick<FollowVerification, "status" | "method" | "reason">;
+}): Promise<void> {
+  if (!hasAdminDb()) return;
+  try {
+    await getAdminDb().from("follow_checks").insert({
+      workspace_id: input.workspaceId,
+      instagram_account_id: input.accountDbId ?? null,
+      automation_id: input.automationId ?? null,
+      rule_id: input.ruleId ?? null,
+      pending_id: input.pendingId ?? null,
+      recipient_id: input.recipientId,
+      status: input.verification.status,
+      method: input.verification.method,
+      reason: input.verification.reason ?? null,
+      created_at: nowIso(),
+    });
+  } catch {
+    // Ledger is best-effort; never block a DM on analytics.
+  }
+}
+
+async function countFollowChecksForPending(pendingId: string): Promise<number> {
+  if (!hasAdminDb()) return 0;
+  try {
+    const { count, error } = await getAdminDb()
+      .from("follow_checks")
+      .select("id", { count: "exact", head: true })
+      .eq("pending_id", pendingId);
+    if (error) throw error;
+    return count ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+async function findPendingOptin(
+  workspaceId: string,
+  recipientId: string,
+  automationId: string | null,
+  ruleId: string | null
+) {
+  if (!hasAdminDb()) return null;
+  try {
+    let query = getAdminDb()
+      .from("pending_dms")
+      .select("id")
+      .eq("workspace_id", workspaceId)
+      .eq("recipient_id", recipientId)
+      .eq("kind", "optin")
+      .gt("expires_at", nowIso())
+      .order("created_at", { ascending: false })
+      .limit(1);
+    if (automationId) query = query.eq("automation_id", automationId);
+    else if (ruleId) query = query.eq("rule_id", ruleId);
+    const { data, error } = await query;
+    if (error) throw error;
+    return data?.[0]?.id ? String(data[0].id) : null;
+  } catch {
+    return null;
+  }
+}
+
+export interface FollowGateOutcome {
+  proceed: boolean;
+  skipped?: string;
+  verification?: FollowVerification;
+}
+
+/**
+ * Shared gate used by comment automations and every rule trigger.
+ *
+ * Confirmed followers proceed immediately, confirmed non-followers receive an
+ * opening DM with an opt-in button, and verification outages follow the
+ * creator's explicit hold/deliver policy (never a silent fail-open).
+ */
+async function applyFollowGate(input: {
+  workspaceId: string;
+  accountDbId: string | null;
+  accountId: string;
+  token: string;
+  recipientId: string;
+  username?: string | null;
+  config: FollowGateConfig;
+  automationId?: string | null;
+  ruleId?: string | null;
+  commentId?: string | null;
+  keyword?: string | null;
+  deliverMessage: string;
+  buttonUrl?: string | null;
+}): Promise<FollowGateOutcome> {
+  if (!input.config.enabled) return { proceed: true };
+
+  if (await isRecentlyVerified(input.workspaceId, input.recipientId)) {
+    const cached: FollowVerification = {
+      status: "follower",
+      method: "none",
+      reason: "recent_verification",
+      checkedAt: nowIso(),
+      fromCache: true,
+    };
+    await recordFollowCheck({
+      workspaceId: input.workspaceId,
+      accountDbId: input.accountDbId,
+      automationId: input.automationId,
+      ruleId: input.ruleId,
+      recipientId: input.recipientId,
+      verification: cached,
+    });
+    return { proceed: true, verification: cached };
+  }
+
+  const verification = await verifyFollowership(
+    input.token,
+    input.accountId,
+    input.recipientId
+  );
+  await recordFollowCheck({
+    workspaceId: input.workspaceId,
+    accountDbId: input.accountDbId,
+    automationId: input.automationId,
+    ruleId: input.ruleId,
+    recipientId: input.recipientId,
+    verification,
+  });
+  captureServerEvent({
+    event: "follow_gate_checked",
+    properties: {
+      status: verification.status,
+      method: verification.method,
+      reason: verification.reason ?? null,
+      automation_id: input.automationId ?? null,
+      rule_id: input.ruleId ?? null,
+    },
+    anonymous: true,
+  });
+
+  if (verification.status === "follower") {
+    await setFollowVerification(input.workspaceId, input.recipientId, true);
+    return { proceed: true, verification };
+  }
+
+  if (decideFollowGateAction(input.config, verification) === "deliver") {
+    await recordSafety({
+      workspaceId: input.workspaceId,
+      instagramAccountId: input.accountDbId,
+      recipientId: input.recipientId,
+      kind: "follow_gate_exception",
+    });
+    return { proceed: true, verification };
+  }
+
+  // Ask the person to follow, then verify again on the postback (consent).
+  const existing = await findPendingOptin(
+    input.workspaceId,
+    input.recipientId,
+    input.automationId ?? null,
+    input.ruleId ?? null
+  );
+  if (existing) {
+    return {
+      proceed: false,
+      skipped: "Opening DM already sent; waiting for follow confirmation",
+      verification,
+    };
+  }
+
+  const pendingId = await createPending({
+    workspaceId: input.workspaceId,
+    kind: "optin",
+    automationId: input.automationId ?? null,
+    ruleId: input.ruleId ?? null,
+    instagramAccountId: input.accountDbId,
+    recipientId: input.recipientId,
+    commentId: input.commentId ?? null,
+    message: input.deliverMessage,
+    buttonText: input.config.buttonLabel,
+    buttonUrl: input.buttonUrl ?? null,
+  });
+  if (!pendingId) {
+    return { proceed: false, skipped: "Could not create opt-in record", verification };
+  }
+
+  const openingText = buildOpeningText(input.config, {
+    username: input.username,
+    keyword: input.keyword,
+    link: input.buttonUrl,
+  });
+  const dispatch = () =>
+    input.commentId
+      ? sendPrivateReplyWithButton(
+          input.token,
+          input.accountId,
+          input.commentId!,
+          openingText,
+          input.config.buttonLabel,
+          `OPTIN:${pendingId}`
+        )
+      : sendDirectMessageWithButton(
+          input.token,
+          input.accountId,
+          input.recipientId,
+          openingText,
+          input.config.buttonLabel,
+          `OPTIN:${pendingId}`
+        );
+
+  const outcome = await withRetry(dispatch, 2);
+  const code = metaErrorCode(outcome?.error);
+  if (code === 190) {
+    await markTokenInvalid(
+      input.accountDbId,
+      input.workspaceId,
+      "Meta error 190: invalid OAuth access token"
+    );
+    return { proceed: false, skipped: "Token invalid — reconnect required", verification };
+  }
+  if (outcome?.error) {
+    await deletePending(pendingId);
+    return { proceed: false, skipped: "Could not send the opening DM", verification };
+  }
+
+  await recordSafety({
+    workspaceId: input.workspaceId,
+    instagramAccountId: input.accountDbId,
+    recipientId: input.recipientId,
+    kind: "follow_gate_opening",
+  });
+  captureServerEvent({
+    event: "follow_gate_opening_sent",
+    properties: {
+      automation_id: input.automationId ?? null,
+      rule_id: input.ruleId ?? null,
+      reason: verification.reason ?? verification.status,
+    },
+    anonymous: true,
+  });
+  return {
+    proceed: false,
+    skipped: "Opening DM sent; waiting for follow confirmation",
+    verification,
+  };
+}
+
+/** Delivers content released by an opt-in postback for a DM/story/share rule. */
+async function sendRuleOptinDm(input: {
+  token: string;
+  accountId: string;
+  accountDbId: string | null;
+  workspaceId: string;
+  recipientId: string;
+  rule: DmRule;
+  message: string;
+}): Promise<{ sent: boolean; error?: MetaApiError }> {
+  const variant = pickVariant(input.rule.variants ?? []);
+  const vars = {
+    username: (await contactUsername(input.workspaceId, input.recipientId)) ?? "there",
+    link: input.rule.button_url ?? "",
+    keyword: input.rule.keywords?.[0] ?? "",
+  };
+  const text = formatDmText(variant.text ?? input.message, vars);
+  const result = await withRetry(
+    () =>
+      input.rule.button_text && input.rule.button_url
+        ? sendDirectMessage(
+            input.token,
+            input.accountId,
+            input.recipientId,
+            `${text}\n\n${input.rule.button_text}: ${personalizeMessage(input.rule.button_url, vars)}`
+          )
+        : sendDirectMessage(input.token, input.accountId, input.recipientId, text),
+    3
+  );
+  const sent = !result?.error;
+
+  if (sent) {
+    await recordMetricEvent({
+      kind: "dm_sent",
+      creatorId: input.workspaceId,
+      targetId: input.rule.id,
+    });
+    await recordSafety({
+      workspaceId: input.workspaceId,
+      instagramAccountId: input.accountDbId,
+      recipientId: input.recipientId,
+      kind: `rule:${input.rule.id}`,
+    });
+  }
+
+  if (hasAdminDb()) {
+    const contactId = await ensureContact(
+      input.workspaceId,
+      input.recipientId,
+      undefined,
+      "optin"
+    );
+    const conversationId = contactId
+      ? await ensureConversation(input.workspaceId, input.accountDbId, contactId)
+      : null;
+    if (conversationId) {
+      await recordMessage({
+        workspaceId: input.workspaceId,
+        conversationId,
+        externalId: result?.message_id ?? null,
+        direction: "outbound",
+        senderType: "bot",
+        text,
+        status: sent ? "sent" : "failed",
+      });
+    }
+    await getAdminDb().from("dm_logs").insert({
+      workspace_id: input.workspaceId,
+      instagram_account_id: input.accountDbId,
+      recipient_id: input.recipientId,
+      trigger_keyword: "OPTIN",
+      dm_message: text,
+      status: sent ? "SENT" : "FAILED",
+      keyword: "OPTIN",
+      sequence_step: 2,
+      variant: variant.text ? "variant" : "default",
+    });
+  }
+
+  return { sent, error: result?.error };
+}
+
+/** Loads the live gate policy for an outstanding opt-in (creator may have edited it). */
+async function loadPendingGateConfig(pending: {
+  workspace_id: string;
+  automation_id: string | null;
+  rule_id: string | null;
+  message: string | null;
+  button_text: string | null;
+}): Promise<{ config: FollowGateConfig; rule: DmRule | null }> {
+  let config = normalizeFollowGateConfig({
+    enabled: true,
+    openingMessage: pending.message,
+    buttonLabel: pending.button_text,
+    onUnavailable: "hold",
+  });
+  let rule: DmRule | null = null;
+
+  if (pending.rule_id && hasAdminDb()) {
+    const { data } = await getAdminDb()
+      .from("dm_rules")
+      .select("*")
+      .eq("id", pending.rule_id)
+      .maybeSingle();
+    if (data) {
+      rule = toDmRule(data as Partial<DmRule> & Record<string, unknown>);
+      config = normalizeFollowGateConfig({
+        enabled: true,
+        openingMessage: rule.opening_message ?? pending.message,
+        buttonLabel: rule.follow_gate_button_label ?? pending.button_text,
+        onUnavailable: rule.follow_gate_on_unavailable ?? "hold",
+      });
+    }
+  } else if (pending.automation_id && hasAdminDb()) {
+    const { data } = await getAdminDb()
+      .from("automations")
+      .select("opening_message, follow_gate_button_label, follow_gate_on_unavailable")
+      .eq("id", pending.automation_id)
+      .maybeSingle();
+    if (data) {
+      config = normalizeFollowGateConfig({
+        enabled: true,
+        openingMessage: (data.opening_message as string | null) ?? pending.message,
+        buttonLabel: (data.follow_gate_button_label as string | null) ?? pending.button_text,
+        onUnavailable: (data.follow_gate_on_unavailable as string | null) ?? "hold",
+      });
+    }
+  }
+
+  return { config, rule };
+}
+
+interface PendingOptinDelivery {
+  id: string;
+  workspace_id: string;
+  automation_id: string | null;
+  rule_id: string | null;
+  comment_id: string | null;
+  message: string | null;
+  button_url: string | null;
+  button_text: string | null;
+}
+
+/**
+ * Single release path for a verified opt-in, used by both the button postback
+ * and an inbound DM reply (either action gives Meta the required consent).
+ */
+async function releasePendingOptin(input: {
+  pending: PendingOptinDelivery;
+  rule: DmRule | null;
+  token: string;
+  accountId: string;
+  accountDbId: string;
+  userId: string;
+}): Promise<{ sent: boolean; error?: MetaApiError }> {
+  const { pending, rule } = input;
+
+  if (rule) {
+    return sendRuleOptinDm({
+      token: input.token,
+      accountId: input.accountId,
+      accountDbId: input.accountDbId,
+      workspaceId: pending.workspace_id,
+      recipientId: input.userId,
+      rule,
+      message: pending.message ?? rule.message,
+    });
+  }
+
+  if (pending.comment_id && pending.automation_id && hasAdminDb()) {
+    const { data: autoRow } = await getAdminDb()
+      .from("automations")
+      .select("id, workspace_id, dm_message, button_text, button_url, public_reply_enabled, public_reply_messages, hourly_cap, dm_variants, trigger_keywords")
+      .eq("id", pending.automation_id)
+      .maybeSingle();
+    if (autoRow) {
+      const auto = toAutomationLike(autoRow as AutomationRow);
+      const contactId = await ensureContact(
+        auto.workspaceId,
+        input.userId,
+        undefined,
+        "optin"
+      );
+      let postId: string | null = null;
+      const { data: sourceComment } = await getAdminDb()
+        .from("comment_events")
+        .select("media_id")
+        .eq("workspace_id", auto.workspaceId)
+        .eq("external_id", pending.comment_id!)
+        .maybeSingle();
+      postId = (sourceComment?.media_id as string | null) ?? null;
+
+      return sendOptinDm({
+        token: input.token,
+        accountId: input.accountId,
+        accountDbId: input.accountDbId,
+        workspaceId: auto.workspaceId,
+        recipientId: input.userId,
+        auto,
+        contactId,
+        postId,
+        keyword: auto.triggerKeywords?.[0] ?? "OPTIN",
+      });
+    }
+  }
+
+  // Generic pending message (legacy opt-ins or rule rows that disappeared).
+  const username = await contactUsername(pending.workspace_id, input.userId);
+  const text = formatDmText(pending.message ?? "", {
+    username: username ?? undefined,
+    link: pending.button_url ?? "",
+    keyword: "OPTIN",
+  });
+  const result = await withRetry(
+    () => sendDirectMessage(input.token, input.accountId, input.userId, text),
+    3
+  );
+  const sent = !result?.error;
+  if (sent) {
+    await recordMetricEvent({
+      kind: "dm_sent",
+      creatorId: pending.workspace_id,
+      targetId: pending.id,
+    });
+    await recordSafety({
+      workspaceId: pending.workspace_id,
+      instagramAccountId: input.accountDbId,
+      recipientId: input.userId,
+    });
+  }
+  if (hasAdminDb()) {
+    const contactId = await ensureContact(
+      pending.workspace_id,
+      input.userId,
+      undefined,
+      "optin"
+    );
+    const conversationId = contactId
+      ? await ensureConversation(pending.workspace_id, input.accountDbId, contactId)
+      : null;
+    if (conversationId) {
+      await recordMessage({
+        workspaceId: pending.workspace_id,
+        conversationId,
+        externalId: result?.message_id ?? null,
+        direction: "outbound",
+        senderType: "bot",
+        text,
+        status: sent ? "sent" : "failed",
+      });
+    }
+    await getAdminDb().from("dm_logs").insert({
+      workspace_id: pending.workspace_id,
+      instagram_account_id: input.accountDbId,
+      recipient_id: input.userId,
+      trigger_keyword: "OPTIN",
+      dm_message: text,
+      status: sent ? "SENT" : "FAILED",
+      keyword: "OPTIN",
+      sequence_step: 2,
+    });
+  }
+  return { sent, error: result?.error };
 }
 
 // ── Dispatch helpers ─────────────────────────────────────────────────────────
@@ -833,57 +1483,32 @@ export async function processCommentEventForAutomation(
     "comment"
   );
 
-  if (auto.followGateEnabled && contactId) {
-    const { data: contactRow } = await getAdminDb()
-      .from("contacts")
-      .select("opted_in_at")
-      .eq("id", contactId)
-      .maybeSingle();
-    const optedIn = Boolean(contactRow?.opted_in_at);
-    if (!optedIn) {
-      const opening = auto.openingMessage || "Tap below to get your {keyword}. 👇";
-      const pendingId = await createPending({
-        workspaceId: auto.workspaceId,
-        kind: "optin",
-        automationId: auto.id,
-        instagramAccountId: account.id,
-        recipientId: event.commenterId,
-        commentId: event.commentId,
-        message: auto.dmMessage,
-        buttonText: auto.buttonText || "Get it",
-        buttonUrl: auto.buttonUrl,
-      });
-      if (pendingId) {
-        const openingResult = await withRetry(() =>
-          sendPrivateReplyWithButton(
-            token,
-            event.instagramAccountId,
-            event.commentId,
-            formatDmText(opening, { username: event.commenterName, keyword: matchedKeyword }),
-            "Get it",
-            `OPTIN:${pendingId}`
-          )
-        );
-        const code = metaErrorCode(openingResult?.error);
-        if (code === 190) {
-          await markTokenInvalid(
-            account.id,
-            auto.workspaceId,
-            "Meta error 190: invalid OAuth access token"
-          );
-          return {
-            sent: false,
-            skipped: "Token invalid — reconnect required",
-            error: openingResult.error,
-          };
-        }
-      }
-      return { sent: false, skipped: "Opening message sent; waiting for opt-in" };
+  if (auto.followGateEnabled) {
+    const gate = await applyFollowGate({
+      workspaceId: auto.workspaceId,
+      accountDbId: account.id,
+      accountId: event.instagramAccountId,
+      token,
+      recipientId: event.commenterId,
+      username: event.commenterName,
+      config: normalizeFollowGateConfig({
+        enabled: true,
+        openingMessage: auto.openingMessage,
+        buttonLabel: auto.followGateButtonLabel,
+        onUnavailable: auto.followGateOnUnavailable,
+      }),
+      automationId: auto.id,
+      commentId: event.commentId,
+      keyword: matchedKeyword,
+      deliverMessage: auto.dmMessage,
+      buttonUrl: auto.buttonUrl,
+    });
+    if (!gate.proceed) {
+      return {
+        sent: false,
+        skipped: gate.skipped ?? "Follow gate: not confirmed",
+      };
     }
-
-    const isFollower = await checkIsFollower(token, event.instagramAccountId, event.commenterId);
-    if (!isFollower) return { sent: false, skipped: "Follow gate: not a follower" };
-    await markContactLedger(auto.workspaceId, event.commenterId, "follow_verified_at", new Date().toISOString());
   }
 
   const dispatch = await sendCommentDm({
@@ -946,6 +1571,32 @@ async function processDirectRule(input: {
     input.username,
     `rule:${rule.trigger_type}`
   );
+
+  // Ask for Follow now works on inbox, story and share rules too. The opening
+  // DM is a direct message (there is no comment to reply to) and verification
+  // happens on the postback, once Meta has user consent.
+  if (rule.follow_gate_enabled) {
+    const gate = await applyFollowGate({
+      workspaceId: input.workspaceId,
+      accountDbId: input.accountDbId,
+      accountId: input.accountId,
+      token: input.token,
+      recipientId: input.recipientId,
+      username: input.username,
+      config: normalizeFollowGateConfig({
+        enabled: true,
+        openingMessage: rule.opening_message,
+        buttonLabel: rule.follow_gate_button_label,
+        onUnavailable: rule.follow_gate_on_unavailable,
+      }),
+      ruleId: rule.id,
+      keyword: input.matchedText ?? rule.keywords?.[0] ?? "",
+      deliverMessage: rule.message,
+      buttonUrl: rule.button_url,
+    });
+    if (!gate.proceed) return false;
+  }
+
   const conversationId = contactId
     ? await ensureConversation(input.workspaceId, input.accountDbId, contactId)
     : null;
@@ -1202,6 +1853,11 @@ export async function processWebhookPayload(
             if (isTransientMetaError(outcome.error)) result.transientFailures++;
             else result.permanentFailures++;
             result.failed++;
+            // The ledger needs a reason: without this the job is marked FAILED
+            // with a null error and diagnostics cannot explain the failure.
+            result.errors.push(
+              `Comment ${event.commentId} on automation ${auto.name ?? auto.id}: ${describeMetaError(outcome.error)}`
+            );
           } else {
             result.skipped++;
           }
@@ -1225,6 +1881,7 @@ export async function processWebhookPayload(
     try {
       const account = await getAccount(event.instagramAccountId);
       if (!account) continue;
+      const token = await getToken(event.instagramAccountId, account);
       const contactId = await ensureContact(account.workspace_id, event.senderId, undefined, "dm");
       const conversationId = contactId
         ? await ensureConversation(account.workspace_id, account.id, contactId)
@@ -1279,8 +1936,99 @@ export async function processWebhookPayload(
         await deletePending(pending.id);
       }
 
+      // Ask for Follow: replying to the opening DM also grants Meta consent,
+      // so a plain reply can satisfy an outstanding opt-in just like a tap.
+      if (token) {
+        const { data: optinRows } = await getAdminDb()
+          .from("pending_dms")
+          .select("id, workspace_id, automation_id, rule_id, comment_id, message, button_url, button_text")
+          .eq("workspace_id", account.workspace_id)
+          .eq("recipient_id", event.senderId)
+          .eq("kind", "optin")
+          .gt("expires_at", nowIso())
+          .order("created_at", { ascending: false })
+          .limit(1);
+        const optin = optinRows?.[0] as PendingOptinDelivery | undefined;
+        if (optin) {
+          const { config, rule } = await loadPendingGateConfig({
+            workspace_id: optin.workspace_id,
+            automation_id: optin.automation_id,
+            rule_id: optin.rule_id,
+            message: optin.message,
+            button_text: optin.button_text ?? null,
+          });
+          const verification = await verifyFollowership(
+            token,
+            event.instagramAccountId,
+            event.senderId
+          );
+          await recordFollowCheck({
+            workspaceId: optin.workspace_id,
+            accountDbId: account.id,
+            automationId: optin.automation_id,
+            ruleId: optin.rule_id,
+            pendingId: optin.id,
+            recipientId: event.senderId,
+            verification,
+          });
+
+          if (decideFollowGateAction(config, verification) === "ask") {
+            const checks = await countFollowChecksForPending(optin.id);
+            if (checks >= FOLLOW_GATE_LIMITS.maxChecksPerPending) {
+              await deletePending(optin.id);
+            }
+            await withRetry(
+              () =>
+                sendDirectMessage(
+                  token,
+                  event.instagramAccountId,
+                  event.senderId,
+                  "Almost there — follow the account, then tap the button again so I can confirm."
+                ),
+              2
+            );
+            result.events.push({
+              kind: "message",
+              accountId: event.instagramAccountId,
+              outcome: "skipped",
+              detail: "Follow gate: not confirmed",
+            });
+            result.skipped++;
+            continue;
+          }
+
+          if (verification.status === "unavailable") {
+            await recordSafety({
+              workspaceId: optin.workspace_id,
+              instagramAccountId: account.id,
+              recipientId: event.senderId,
+              kind: "follow_gate_exception",
+            });
+          }
+          await setFollowVerification(optin.workspace_id, event.senderId, true);
+          await markContactLedger(optin.workspace_id, event.senderId, "opted_in_at", nowIso());
+          const released = await releasePendingOptin({
+            pending: optin,
+            rule,
+            token,
+            accountId: event.instagramAccountId,
+            accountDbId: account.id,
+            userId: event.senderId,
+          });
+          if (released.sent) {
+            await deletePending(optin.id);
+            result.events.push({ kind: "message", accountId: event.instagramAccountId, outcome: "sent", detail: "Follow confirmed — DM delivered" });
+            result.sent++;
+          } else {
+            result.errors.push(`Opt-in reply delivery failed: ${describeMetaError(released.error)}`);
+            result.events.push({ kind: "message", accountId: event.instagramAccountId, outcome: "failed", detail: "Follow confirmed, delivery failed" });
+            result.failed++;
+          }
+          continue;
+        }
+      }
+
       const rules = await getRules(account.workspace_id, ["DM_KEYWORD"]);
-      const token = await getToken(event.instagramAccountId, account);
       if (!token) continue;
 
       let handled = false;
@@ -1331,98 +2079,97 @@ export async function processWebhookPayload(
           result.skipped++;
           continue;
         }
-        const isFollower = await checkIsFollower(token, event.instagramAccountId, event.userId);
-        if (!isFollower) {
-          result.events.push({ kind: "postback", accountId: event.instagramAccountId, outcome: "skipped", detail: "Follow required before delivery" });
+
+        // Re-load the gate policy: the creator may have edited it while the
+        // opening DM was outstanding.
+        const { config, rule: pendingRule } = await loadPendingGateConfig(pending);
+
+        // Consent now exists (the person tapped our button), so Meta can
+        // answer is_user_follow_business reliably.
+        const verification = await verifyFollowership(
+          token,
+          event.instagramAccountId,
+          event.userId
+        );
+        await recordFollowCheck({
+          workspaceId: pending.workspace_id,
+          accountDbId: account.id,
+          automationId: pending.automation_id,
+          ruleId: pending.rule_id,
+          pendingId: value,
+          recipientId: event.userId,
+          verification,
+        });
+
+        if (decideFollowGateAction(config, verification) === "ask") {
+          const checks = await countFollowChecksForPending(value);
+          const expired = checks >= FOLLOW_GATE_LIMITS.maxChecksPerPending;
+          if (expired) await deletePending(value);
+          await withRetry(
+            () =>
+              sendDirectMessage(
+                token,
+                event.instagramAccountId,
+                event.userId,
+                expired
+                  ? "This link has expired. Comment or message again and I'll send it straight away."
+                  : "Almost there — follow the account, then tap the button again so I can confirm."
+              ),
+            2
+          );
+          result.events.push({
+            kind: "postback",
+            accountId: event.instagramAccountId,
+            outcome: "skipped",
+            detail: expired ? "Follow gate: attempts exhausted" : "Follow gate: not confirmed",
+          });
           result.skipped++;
           continue;
         }
-        await markContactLedger(pending.workspace_id, event.userId, "opted_in_at", new Date().toISOString());
-        await markContactLedger(pending.workspace_id, event.userId, "follow_verified_at", new Date().toISOString());
 
-        if (pending.comment_id && pending.automation_id) {
-          const { data: autoRow } = await getAdminDb()
-            .from("automations")
-            .select("id, workspace_id, dm_message, button_text, button_url, public_reply_enabled, public_reply_messages, hourly_cap, dm_variants")
-            .eq("id", pending.automation_id)
-            .maybeSingle();
-          const auto: AutomationLike | null = autoRow
-            ? {
-                id: autoRow.id,
-                workspaceId: autoRow.workspace_id,
-                dmMessage: autoRow.dm_message,
-                buttonText: autoRow.button_text,
-                buttonUrl: autoRow.button_url,
-                publicReplyEnabled: autoRow.public_reply_enabled,
-                publicReplyMessages: autoRow.public_reply_messages,
-                hourlyCap: autoRow.hourly_cap,
-                dmVariants: autoRow.dm_variants,
-              }
-            : null;
-          if (auto) {
-            const contactId = await ensureContact(
-              auto.workspaceId,
-              event.userId,
-              undefined,
-              "optin"
+        if (verification.status === "unavailable") {
+          await recordSafety({
+            workspaceId: pending.workspace_id,
+            instagramAccountId: account.id,
+            recipientId: event.userId,
+            kind: "follow_gate_exception",
+          });
+        }
+        await setFollowVerification(pending.workspace_id, event.userId, true);
+        await markContactLedger(pending.workspace_id, event.userId, "opted_in_at", nowIso());
+
+        const released = await releasePendingOptin({
+          pending,
+          rule: pendingRule,
+          token,
+          accountId: event.instagramAccountId,
+          accountDbId: account.id,
+          userId: event.userId,
+        });
+        if (released.sent) {
+          await deletePending(value);
+          result.events.push({ kind: "postback", accountId: event.instagramAccountId, outcome: "sent", detail: "Follow confirmed — DM delivered" });
+          result.sent++;
+        } else {
+          // Keep the pending row so the follower can try again after a
+          // transient failure instead of losing the lead permanently.
+          const code = metaErrorCode(released.error);
+          if (code === 190) {
+            await markTokenInvalid(
+              account.id,
+              pending.workspace_id,
+              "Meta error 190: invalid OAuth access token"
             );
-            let postId: string | null = null;
-            if (hasAdminDb() && pending.comment_id) {
-              const { data: sourceComment } = await getAdminDb()
-                .from("comment_events")
-                .select("media_id")
-                .eq("workspace_id", auto.workspaceId)
-                .eq("external_id", pending.comment_id)
-                .maybeSingle();
-              postId = (sourceComment?.media_id as string | null) ?? null;
-            }
-            const outcome = await sendOptinDm({
-              token,
-              accountId: event.instagramAccountId,
-              accountDbId: account.id,
-              workspaceId: auto.workspaceId,
-              recipientId: event.userId,
-              auto,
-              contactId,
-              postId,
-              keyword: auto.triggerKeywords?.[0] ?? "OPTIN",
-            });
-            if (outcome.sent) {
-              await deletePending(value);
-              result.events.push({ kind: "postback", accountId: event.instagramAccountId, outcome: "sent", detail: "Opt-in confirmed" });
-              result.sent++;
-            } else {
-              // Keep the pending row so the follower can tap again after a
-              // transient failure instead of losing the lead permanently.
-              const code = metaErrorCode(outcome.error);
-              if (code === 190) {
-                await markTokenInvalid(account.id, auto.workspaceId, "Meta error 190: invalid OAuth access token");
-              }
-              result.errors.push(`Postback ${value} failed: ${code ?? "unknown Meta error"}`);
-              result.events.push({ kind: "postback", accountId: event.instagramAccountId, outcome: "failed", detail: `Meta error ${code ?? "unknown"}` });
-              result.failed++;
-              if (code !== null && !isTransientMetaError({ error: { code } } as MetaApiError)) {
-                result.permanentFailures++;
-              } else {
-                result.transientFailures++;
-              }
-            }
-            continue;
+          }
+          result.errors.push(`Postback ${value} failed: ${describeMetaError(released.error)}`);
+          result.events.push({ kind: "postback", accountId: event.instagramAccountId, outcome: "failed", detail: `Meta error ${code ?? "unknown"}` });
+          result.failed++;
+          if (code !== null && !isTransientMetaError({ error: { code } } as MetaApiError)) {
+            result.permanentFailures++;
+          } else {
+            result.transientFailures++;
           }
         }
-        if (pending.message) {
-          const outcome = await withRetry(() =>
-            sendDirectMessage(token, event.instagramAccountId, event.userId, pending.message!)
-          );
-          if (outcome?.error) {
-            result.errors.push(`Postback message failed: ${metaErrorCode(outcome.error) ?? "unknown"}`);
-            result.failed++;
-            continue;
-          }
-        }
-        await deletePending(value);
-        result.events.push({ kind: "postback", accountId: event.instagramAccountId, outcome: "sent", detail: "Opt-in confirmed" });
-        result.sent++;
         continue;
       }
 

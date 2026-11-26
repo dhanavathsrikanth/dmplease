@@ -35,7 +35,20 @@ interface HealthCheck {
   status: HealthStatus;
   value: string;
   hint?: string;
+  link?: { href: string; label: string };
   icon: typeof Activity;
+}
+
+function formatFailureTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "recent";
+  const day = date.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+  const time = date.toLocaleTimeString("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "UTC",
+  });
+  return `${day} ${time} UTC`;
 }
 
 const STATUS_LABEL: Record<HealthStatus, string> = {
@@ -70,58 +83,63 @@ export default function DiagnosticsPage() {
 async function DiagnosticsContent() {
   await connection();
 
-  const profile = await getCurrentProfile();
+  // The Meta latency probe can take seconds on its own — start it alongside
+  // the profile and ledger reads instead of after them.
+  const [profile, metaHealth, webhookHealth] = await Promise.all([
+    getCurrentProfile(),
+    checkMetaApiLatency(),
+    getWebhookHealth(24 * 7),
+  ]);
   const supabase = await createClient();
   const workspaceIds = (profile?.ownedWorkspaces || []).map((workspace) => workspace.id);
-
-  let connectedHandle: string | null = null;
-  if (workspaceIds.length > 0) {
-    const { data } = await supabase
-      .from("instagram_accounts")
-      .select("username")
-      .in("workspace_id", workspaceIds)
-      .limit(1);
-    if (data?.[0]?.username) connectedHandle = data[0].username;
-  }
-
-  // Real database check.
-  const dbStart = performance.now();
-  const { error: dbError } = await supabase.from("profiles").select("id").limit(1);
-  const dbLatencyMs = Math.max(1, Math.round(performance.now() - dbStart));
-
-  const metaHealth = await checkMetaApiLatency();
-  const webhookHealth = await getWebhookHealth(24 * 7);
 
   // Real 24h safety / tracking counts for this user's workspaces.
   const last24Hours = new Date(Date.now() - 24 * 3600000).toISOString();
   let safetySends = 0;
   let trackedClicks = 0;
   let activityError = false;
+  let connectedHandle: string | null = null;
 
-  if (workspaceIds.length > 0) {
-    const [safetyResult, clicksResult] = await Promise.all([
-      supabase
-        .from("safety_events")
-        .select("id", { count: "exact", head: true })
-        .in("workspace_id", workspaceIds)
-        .gte("created_at", last24Hours),
-      supabase
-        .from("link_clicks")
-        .select("id", { count: "exact", head: true })
-        .in("workspace_id", workspaceIds)
-        .gte("created_at", last24Hours),
-    ]);
+  // Real database check + workspace-scoped reads, all in one round-trip batch.
+  const dbStart = performance.now();
+  const [accountRes, dbRes, safetyResult, clicksResult] = await Promise.all([
+    workspaceIds.length > 0
+      ? supabase
+          .from("instagram_accounts")
+          .select("username")
+          .in("workspace_id", workspaceIds)
+          .limit(1)
+      : null,
+    supabase.from("profiles").select("id").limit(1),
+    workspaceIds.length > 0
+      ? supabase
+          .from("safety_events")
+          .select("id", { count: "exact", head: true })
+          .in("workspace_id", workspaceIds)
+          .gte("created_at", last24Hours)
+      : null,
+    workspaceIds.length > 0
+      ? supabase
+          .from("link_clicks")
+          .select("id", { count: "exact", head: true })
+          .in("workspace_id", workspaceIds)
+          .gte("created_at", last24Hours)
+      : null,
+  ]);
+  const dbError = dbRes.error;
+  const dbLatencyMs = Math.max(1, Math.round(performance.now() - dbStart));
 
-    if (safetyResult.error || clicksResult.error) {
-      console.warn(
-        "[diagnostics] Could not load activity counts:",
-        safetyResult.error?.message || clicksResult.error?.message
-      );
-      activityError = true;
-    } else {
-      safetySends = safetyResult.count ?? 0;
-      trackedClicks = clicksResult.count ?? 0;
-    }
+  if (accountRes?.data?.[0]?.username) connectedHandle = accountRes.data[0].username;
+
+  if (safetyResult?.error || clicksResult?.error) {
+    console.warn(
+      "[diagnostics] Could not load activity counts:",
+      safetyResult?.error?.message || clicksResult?.error?.message
+    );
+    activityError = true;
+  } else {
+    safetySends = safetyResult?.count ?? 0;
+    trackedClicks = clicksResult?.count ?? 0;
   }
 
   const signingConfigured = hasWebhookSigningSecret();
@@ -208,7 +226,19 @@ async function DiagnosticsContent() {
         : "Awaiting first delivery",
       hint:
         webhookHealth.failed > 0
-          ? `${webhookHealth.failed} job(s) need review. Check the delivery logs for details.`
+          ? `${webhookHealth.failed} job(s) need review. ${webhookHealth.recentFailures.length
+              ? webhookHealth.recentFailures
+                  .slice(0, 2)
+                  .map(
+                    (failure) =>
+                      `${formatFailureTime(failure.receivedAt)}: ${failure.error ?? "no error was recorded for this job"}`
+                  )
+                  .join(" · ")
+              : "Check the delivery logs for details."}`
+          : undefined,
+      link:
+        webhookHealth.failed > 0
+          ? { href: "/dashboard/logs", label: "View delivery logs" }
           : undefined,
       icon: Activity,
     },
@@ -325,9 +355,19 @@ async function DiagnosticsContent() {
                         {check.description}
                       </p>
                       {check.hint && (
-                        <p className="text-[11px] text-amber-700 dark:text-amber-300 font-medium">
-                          Fix: {check.hint}
-                        </p>
+                        <div className="space-y-1">
+                          <p className="text-[11px] text-amber-700 dark:text-amber-300 font-medium">
+                            Fix: {check.hint}
+                          </p>
+                          {check.link && (
+                            <Link
+                              href={check.link.href}
+                              className="text-[11px] font-semibold text-[#4262ff] hover:underline dark:text-[#ffd02f]"
+                            >
+                              {check.link.label}
+                            </Link>
+                          )}
+                        </div>
                       )}
                     </div>
                   </div>

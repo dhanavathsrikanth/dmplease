@@ -49,10 +49,18 @@ export async function updateSession(request: NextRequest) {
     },
   );
 
-  // Authenticate user and refresh session tokens if needed
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // Verify the session JWT locally when possible. getUser() makes a network
+  // call to Supabase Auth on every request — including every sidebar RSC
+  // navigation — which is the largest fixed cost on route changes. Projects
+  // using symmetric JWT signing fall back to getUser().
+  const { data: claimsData, error: claimsError } = await supabase.auth.getClaims();
+  let isAuthenticated = Boolean(claimsData?.claims?.sub && !claimsError);
+  if (!isAuthenticated) {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    isAuthenticated = Boolean(user);
+  }
 
   const pathname = request.nextUrl.pathname;
 
@@ -75,7 +83,7 @@ export async function updateSession(request: NextRequest) {
   // If user is not authenticated and trying to access protected paths
   if (
     !isPublicPath &&
-    !user &&
+    !isAuthenticated &&
     !pathname.startsWith("/login") &&
     !pathname.startsWith("/auth") &&
     !pathname.startsWith("/api")
@@ -88,7 +96,7 @@ export async function updateSession(request: NextRequest) {
 
   // If user is already authenticated and visits login/signup
   if (
-    user &&
+    isAuthenticated &&
     (pathname === "/auth/login" || pathname === "/auth/sign-up" || pathname === "/login")
   ) {
     const nextParam = request.nextUrl.searchParams.get("next") || "/dashboard";

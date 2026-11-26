@@ -34,6 +34,11 @@ const ruleSchema = z.object({
     .union([z.literal(""), z.url("Enter a valid URL or leave this blank.")])
     .default(""),
   collectField: z.enum(COLLECT_FIELDS).default("none"),
+  /** Ask for Follow — applies to DM, story and share rules. */
+  followGateEnabled: z.boolean().default(false),
+  openingMessage: z.string().trim().max(500).default(""),
+  followGateButtonLabel: z.string().trim().max(20).default(""),
+  followGateOnUnavailable: z.enum(["hold", "deliver"]).default("hold"),
   oncePerDays: z.coerce.number().int().min(0).max(365).default(45),
   active: z.boolean().default(true),
 });
@@ -125,6 +130,10 @@ export async function createRule(payload: RuleInput): Promise<RuleActionResult> 
       button_text: values.buttonText || null,
       button_url: values.buttonUrl || null,
       collect_field: values.collectField === "none" ? null : values.collectField,
+      follow_gate_enabled: values.followGateEnabled,
+      opening_message: values.openingMessage || null,
+      follow_gate_button_label: values.followGateButtonLabel || null,
+      follow_gate_on_unavailable: values.followGateOnUnavailable,
       once_per_days: values.oncePerDays,
       priority: 0,
       active: values.active,
@@ -162,6 +171,10 @@ export async function updateRule(payload: RuleInput): Promise<RuleActionResult> 
       button_text: values.buttonText || null,
       button_url: values.buttonUrl || null,
       collect_field: values.collectField === "none" ? null : values.collectField,
+      follow_gate_enabled: values.followGateEnabled,
+      opening_message: values.openingMessage || null,
+      follow_gate_button_label: values.followGateButtonLabel || null,
+      follow_gate_on_unavailable: values.followGateOnUnavailable,
       once_per_days: values.oncePerDays,
       active: values.active,
       updated_at: new Date().toISOString(),

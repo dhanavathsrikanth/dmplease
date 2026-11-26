@@ -38,6 +38,10 @@ export const campaignSchema = z.object({
   publicReplyEnabled: z.boolean().default(false),
   publicReplyMessages: z.array(z.string().trim().max(500)).max(10).default([]),
   followGateEnabled: z.boolean().default(false),
+  /** Ask-for-Follow: copy shown before Meta can confirm the relationship. */
+  openingMessage: z.string().trim().max(500).nullable().optional(),
+  followGateButtonLabel: z.string().trim().max(20).nullable().optional(),
+  followGateOnUnavailable: z.enum(["hold", "deliver"]).default("hold"),
 });
 
 export type ValidCampaign = z.infer<typeof campaignSchema>;

@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { createClient } from "@/lib/supabase/server";
 import { prisma } from "@/lib/prisma";
 import { hasDatabaseUrl } from "@/lib/config";
@@ -48,7 +49,7 @@ export interface UserProfileData {
 /**
  * Retrieves the currently authenticated Supabase user from session cookies.
  */
-export async function getCurrentUser() {
+async function loadCurrentUser() {
   const supabase = await createClient();
   const {
     data: { user },
@@ -62,10 +63,13 @@ export async function getCurrentUser() {
   return user;
 }
 
+/** Deduped per request: layout and page both need the authenticated user. */
+export const getCurrentUser = cache(loadCurrentUser);
+
 /**
  * Retrieves the user profile along with their workspaces and automations.
  */
-export async function getCurrentProfile(): Promise<UserProfileData | null> {
+async function loadCurrentProfile(): Promise<UserProfileData | null> {
   const user = await getCurrentUser();
   if (!user) {
     return null;
@@ -83,11 +87,6 @@ export async function getCurrentProfile(): Promise<UserProfileData | null> {
             orderBy: { createdAt: "asc" },
             include: {
               automations: true,
-            },
-          },
-          workspaceMembers: {
-            include: {
-              workspace: true,
             },
           },
         },
@@ -199,3 +198,6 @@ export async function getCurrentProfile(): Promise<UserProfileData | null> {
     ownedWorkspaces,
   };
 }
+
+/** Deduped per request so navigation doesn't re-run this heavy query. */
+export const getCurrentProfile = cache(loadCurrentProfile);

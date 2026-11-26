@@ -62,8 +62,13 @@ export default function DashboardPage() {
 
 async function DashboardContent() {
   await connection();
-  const user = await getCurrentUser();
-  const profile = await getCurrentProfile();
+  // These reads are independent — run them together instead of stacking their
+  // network round trips on every sidebar navigation.
+  const [user, profile, health] = await Promise.all([
+    getCurrentUser(),
+    getCurrentProfile(),
+    getWebhookHealth(24 * 7),
+  ]);
   const supabase = await createClient();
 
   const allAutomations = (profile?.ownedWorkspaces || []).flatMap(
@@ -71,8 +76,6 @@ async function DashboardContent() {
   );
 
   const workspaceIds = (profile?.ownedWorkspaces || []).map((w) => w.id);
-
-  const health = await getWebhookHealth(24 * 7);
 
   let connectedUsername: string | null = null;
   let ruleCount = 0;
@@ -89,36 +92,40 @@ async function DashboardContent() {
   }> = [];
 
   if (workspaceIds.length > 0) {
-    const { data: accounts } = await supabase
-      .from("instagram_accounts")
-      .select("username")
-      .in("workspace_id", workspaceIds)
-      .limit(1);
+    const [accountsRes, rulesRes, totalRes, sampleRes, logsRes] = await Promise.all([
+      supabase
+        .from("instagram_accounts")
+        .select("username")
+        .in("workspace_id", workspaceIds)
+        .limit(1),
+      supabase
+        .from("dm_rules")
+        .select("*", { count: "exact", head: true })
+        .in("workspace_id", workspaceIds),
+      supabase
+        .from("dm_logs")
+        .select("*", { count: "exact", head: true })
+        .in("workspace_id", workspaceIds),
+      // Sample the most recent deliveries for honest delivery-rate and lead counts.
+      supabase
+        .from("dm_logs")
+        .select("status, recipient_id")
+        .in("workspace_id", workspaceIds)
+        .order("sent_at", { ascending: false })
+        .limit(1000),
+      supabase
+        .from("dm_logs")
+        .select("id, recipient_username, trigger_keyword, status, sent_at")
+        .in("workspace_id", workspaceIds)
+        .order("sent_at", { ascending: false })
+        .limit(6),
+    ]);
 
-    if (accounts && accounts.length > 0) {
-      connectedUsername = accounts[0].username;
-    }
+    connectedUsername = accountsRes.data?.[0]?.username ?? null;
+    ruleCount = rulesRes.count ?? 0;
+    totalDmsSent = totalRes.count ?? 0;
 
-    const { count: rulesCount } = await supabase
-      .from("dm_rules")
-      .select("*", { count: "exact", head: true })
-      .in("workspace_id", workspaceIds);
-    ruleCount = rulesCount || 0;
-
-    const { count } = await supabase
-      .from("dm_logs")
-      .select("*", { count: "exact", head: true })
-      .in("workspace_id", workspaceIds);
-    totalDmsSent = count || 0;
-
-    // Sample the most recent deliveries for honest delivery-rate and lead counts.
-    const { data: sampleLogs } = await supabase
-      .from("dm_logs")
-      .select("status, recipient_id")
-      .in("workspace_id", workspaceIds)
-      .order("sent_at", { ascending: false })
-      .limit(1000);
-
+    const sampleLogs = sampleRes.data;
     if (sampleLogs) {
       deliverySampleCount = sampleLogs.length;
       deliveredCount = sampleLogs.filter(
@@ -127,13 +134,7 @@ async function DashboardContent() {
       uniqueLeads = new Set(sampleLogs.map((log) => log.recipient_id)).size;
     }
 
-    const { data: logsData } = await supabase
-      .from("dm_logs")
-      .select("id, recipient_username, trigger_keyword, status, sent_at")
-      .in("workspace_id", workspaceIds)
-      .order("sent_at", { ascending: false })
-      .limit(6);
-
+    const logsData = logsRes.data;
     if (logsData && logsData.length > 0) {
       recentLogs = logsData.map((l) => ({
         id: l.id,

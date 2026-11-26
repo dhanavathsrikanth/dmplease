@@ -863,19 +863,88 @@ export async function sendDirectMessage(
   text: string
 ): Promise<{ recipient_id?: string; message_id?: string; error?: MetaApiError }> {
   const url = `${instagramApiBase(accessToken)}/${instagramAccountId}/messages`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify({
-      recipient: { id: recipientUserId },
-      message: { text },
-    }),
-  });
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        recipient: { id: recipientUserId },
+        message: { text },
+      }),
+    });
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) return { error: toMetaApiError(data) };
+    return data as { recipient_id?: string; message_id?: string };
+  } catch (err) {
+    return { error: toMetaApiError(err) };
+  }
+}
 
-  return await res.json();
+/**
+ * Sends a button-template DM to an Instagram user ID (IGSID).
+ *
+ * Used by the Ask-for-Follow gate when there is no comment to reply to (DM,
+ * story and share rules). The postback payload makes the follow check
+ * possible: Meta only exposes `is_user_follow_business` after user consent.
+ */
+export async function sendDirectMessageWithButton(
+  accessToken: string,
+  instagramAccountId: string,
+  recipientUserId: string,
+  text: string,
+  buttonTitle: string,
+  buttonUrlOrPayload: string
+): Promise<{ recipient_id?: string; message_id?: string; error?: MetaApiError }> {
+  const isUrl =
+    buttonUrlOrPayload.startsWith("http://") ||
+    buttonUrlOrPayload.startsWith("https://");
+  const buttonObj = isUrl
+    ? { type: "web_url", url: buttonUrlOrPayload, title: buttonTitle.slice(0, 20) }
+    : {
+        type: "postback",
+        title: buttonTitle.slice(0, 20),
+        payload: buttonUrlOrPayload,
+      };
+
+  const url = `${instagramApiBase(accessToken)}/${instagramAccountId}/messages`;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        recipient: { id: recipientUserId },
+        message: {
+          attachment: {
+            type: "template",
+            payload: {
+              template_type: "button",
+              text: text.slice(0, 640),
+              buttons: [buttonObj],
+            },
+          },
+        },
+      }),
+    });
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) {
+      // Graceful degradation: still deliver the opening copy as plain text.
+      return await sendDirectMessage(
+        accessToken,
+        instagramAccountId,
+        recipientUserId,
+        `${text}\n\n${buttonTitle}: ${buttonUrlOrPayload}`
+      );
+    }
+    return data as { recipient_id?: string; message_id?: string };
+  } catch (err) {
+    return { error: toMetaApiError(err) };
+  }
 }
 
 /**
@@ -912,51 +981,25 @@ export async function postPublicCommentReply(
 }
 
 /**
- * Checks whether a given Instagram user (commenterIgsid) follows the
- * connected business account (instagramAccountId).
+ * Backwards-compatible boolean wrapper around the follow gate verifier.
  *
- * Uses GET /{ig-account-id}/followers?user_id={commenterIgsid}
- * Returns true  → confirmed follower (or API unavailable → fail-open to avoid blocking real followers)
- * Returns false → definitely not a follower
+ * Deprecated for gate decisions: use `verifyFollowership()` from
+ * `@/lib/meta/follow-gate` so callers can distinguish "not a follower" from
+ * "Meta could not tell us" and apply the configured failure policy.
  *
- * NOTE: Meta's followers edge does not guarantee a user_id filter on all
- * API versions. If the endpoint returns an error we fail-open (allow DM)
- * and log a warning, so large-account creators are never silently blocked.
+ * Unlike the old `/followers` edge implementation this never fails open:
+ * an outage returns `false` instead of silently letting a non-follower through.
  */
 export async function checkIsFollower(
   accessToken: string,
   instagramAccountId: string,
   commenterIgsid: string
 ): Promise<boolean> {
-  try {
-    const url = new URL(`${INSTAGRAM_GRAPH_URL}/${instagramAccountId}/followers`);
-    url.searchParams.set("user_id", commenterIgsid);
-    url.searchParams.set("fields", "id,username");
-    url.searchParams.set("access_token", accessToken);
-
-    const res = await fetch(url.toString(), {
-      signal: AbortSignal.timeout(4000),
-    });
-
-    if (!res.ok) {
-      // API rejected the request — fail-open so real followers aren't blocked
-      console.warn(
-        `[Meta Client] checkIsFollower: followers endpoint returned ${res.status} — failing open`
-      );
-      return true;
-    }
-
-    const data = await res.json();
-    // If data.data array contains the user, they follow
-    if (Array.isArray(data?.data) && data.data.length > 0) {
-      return true;
-    }
-
-    // data.data is empty → not a follower (confirmed)
-    return false;
-  } catch (err) {
-    // Network/timeout — fail-open
-    console.warn(`[Meta Client] checkIsFollower exception — failing open:`, err);
-    return true;
-  }
+  const { verifyFollowership } = await import("@/lib/meta/follow-gate");
+  const verification = await verifyFollowership(
+    accessToken,
+    instagramAccountId,
+    commenterIgsid
+  );
+  return verification.status === "follower";
 }

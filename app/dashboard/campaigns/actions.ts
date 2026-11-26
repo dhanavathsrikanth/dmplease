@@ -18,6 +18,9 @@ export interface CreateCampaignPayload {
   publicReplyEnabled?: boolean;
   publicReplyMessages?: string[];
   followGateEnabled?: boolean;
+  openingMessage?: string | null;
+  followGateButtonLabel?: string | null;
+  followGateOnUnavailable?: "hold" | "deliver";
 }
 
 export async function createCampaign(payload: CreateCampaignPayload) {
@@ -89,6 +92,9 @@ export async function createCampaign(payload: CreateCampaignPayload) {
         public_reply_enabled: values.publicReplyEnabled,
         public_reply_messages: values.publicReplyMessages,
         follow_gate_enabled: values.followGateEnabled,
+        opening_message: values.openingMessage || null,
+        follow_gate_button_label: values.followGateButtonLabel || null,
+        follow_gate_on_unavailable: values.followGateOnUnavailable,
         active: true,
       })
       .select("id")
@@ -180,6 +186,9 @@ export async function updateCampaign(
         public_reply_enabled: values.publicReplyEnabled,
         public_reply_messages: values.publicReplyMessages,
         follow_gate_enabled: values.followGateEnabled,
+        opening_message: values.openingMessage || null,
+        follow_gate_button_label: values.followGateButtonLabel || null,
+        follow_gate_on_unavailable: values.followGateOnUnavailable,
         updated_at: new Date().toISOString(),
       })
       .eq("id", id);

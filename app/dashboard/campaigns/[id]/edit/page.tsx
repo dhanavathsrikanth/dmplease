@@ -3,6 +3,7 @@ import { connection } from "next/server";
 import { notFound } from "next/navigation";
 import { CampaignBuilder } from "@/components/campaigns/campaign-builder";
 import { FollowupReport } from "@/components/campaigns/followup-report";
+import { FollowGateReport } from "@/components/campaigns/follow-gate-report";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getCurrentProfile } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
@@ -76,7 +77,7 @@ async function EditCampaignContent({
     .limit(1);
   if (accounts?.[0]?.username) connectedHandle = accounts[0].username;
 
-  const [stepsRes, eventsRes, conversionsRes] = await Promise.all([
+  const [stepsRes, eventsRes, conversionsRes, gateChecksRes] = await Promise.all([
     supabase
       .from("followup_steps")
       .select("step, delay_minutes, enabled, holdout_percent")
@@ -90,7 +91,30 @@ async function EditCampaignContent({
       .from("conversions")
       .select("contact_id, revenue_minor")
       .eq("workspace_id", campaign.workspace_id),
+    supabase
+      .from("follow_checks")
+      .select("status, reason")
+      .eq("automation_id", id)
+      .order("created_at", { ascending: false })
+      .limit(500),
   ]);
+
+  const gateRows = gateChecksRes.data ?? [];
+  const reasonCounts = new Map<string, number>();
+  for (const row of gateRows) {
+    if (row.status === "unavailable" && row.reason) {
+      reasonCounts.set(row.reason, (reasonCounts.get(row.reason) ?? 0) + 1);
+    }
+  }
+  const followGateReport = {
+    total: gateRows.length,
+    follower: gateRows.filter((row) => row.status === "follower").length,
+    notFollower: gateRows.filter((row) => row.status === "not_follower").length,
+    unavailable: gateRows.filter((row) => row.status === "unavailable").length,
+    topReasons: [...reasonCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([reason, count]) => ({ reason, count })),
+  };
 
   const conversionsByContact = new Map<string, number>();
   for (const row of conversionsRes.data ?? []) {
@@ -146,9 +170,16 @@ async function EditCampaignContent({
         publicReplyEnabled: campaign.public_reply_enabled as boolean | null,
         publicReplyMessages: campaign.public_reply_messages as string[] | null,
         followGateEnabled: campaign.follow_gate_enabled as boolean | null,
+        openingMessage: campaign.opening_message as string | null,
+        followGateButtonLabel: campaign.follow_gate_button_label as string | null,
+        followGateOnUnavailable: campaign.follow_gate_on_unavailable as string | null,
       }}
     />
     <FollowupReport data={followupReport} />
+      <FollowGateReport
+        data={followGateReport}
+        enabled={Boolean(campaign.follow_gate_enabled)}
+      />
     </div>
   );
 }

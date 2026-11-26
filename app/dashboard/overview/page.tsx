@@ -90,11 +90,13 @@ async function OverviewContent({ searchParams }: PageProps) {
   const range = resolvedParams?.range || "all";
 
   await connection();
-  const profile = await getCurrentProfile();
+  const [profile, health] = await Promise.all([
+    getCurrentProfile(),
+    getWebhookHealth(24 * 7),
+  ]);
   const supabase = await createClient();
 
   const workspaceIds = (profile?.ownedWorkspaces || []).map((w) => w.id);
-  const health = await getWebhookHealth(24 * 7);
   const analyticsDays = range === "7d" ? 7 : range === "30d" ? 30 : 90;
   const analytics = workspaceIds[0]
     ? await getWorkspaceAnalytics(workspaceIds[0], analyticsDays)

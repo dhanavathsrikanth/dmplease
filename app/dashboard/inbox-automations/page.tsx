@@ -27,6 +27,10 @@ interface DmRuleRow {
   button_text: string | null;
   button_url: string | null;
   collect_field: string | null;
+  follow_gate_enabled: boolean | null;
+  opening_message: string | null;
+  follow_gate_button_label: string | null;
+  follow_gate_on_unavailable: string | null;
   once_per_days: number | null;
   priority: number | null;
   active: boolean | null;
@@ -85,7 +89,7 @@ async function InboxAutomationsContent() {
     const { data: ruleRows, error } = await supabase
       .from("dm_rules")
       .select(
-        "id, workspace_id, name, trigger_type, keywords, message, button_text, button_url, collect_field, once_per_days, priority, active, created_at"
+        "id, workspace_id, name, trigger_type, keywords, message, button_text, button_url, collect_field, follow_gate_enabled, opening_message, follow_gate_button_label, follow_gate_on_unavailable, once_per_days, priority, active, created_at"
       )
       .in("workspace_id", workspaceIds)
       .order("priority", { ascending: false })
@@ -106,6 +110,11 @@ async function InboxAutomationsContent() {
         buttonText: row.button_text,
         buttonUrl: row.button_url,
         collectField: row.collect_field,
+        followGateEnabled: Boolean(row.follow_gate_enabled),
+        openingMessage: row.opening_message,
+        followGateButtonLabel: row.follow_gate_button_label,
+        followGateOnUnavailable:
+          row.follow_gate_on_unavailable === "deliver" ? "deliver" : "hold",
         oncePerDays: row.once_per_days ?? 45,
         priority: row.priority ?? 0,
         active: Boolean(row.active),
