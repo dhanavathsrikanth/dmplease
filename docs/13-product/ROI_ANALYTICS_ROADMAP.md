@@ -2,7 +2,7 @@
 
 > **Purpose:** Define the product moat that beats Zorcha and LinkPlease: provable ROI per post, keyword and follow-up — not vanity counters.
 > **Audience:** Creators, D2C brands, agencies.
-> **Status:** Phase A is implemented (commit `ce09d88`). Phases B–D are planned, ordered by leverage and risk.
+> **Status:** Phases A and B.1/B.3 are implemented (commits `ce09d88`, `58a8613`). Follow-up lift, intent clusters and Phase C/D remain planned.
 > **Last updated:** 2026-11-26
 
 ---
@@ -192,12 +192,12 @@ Do **not** gate the basic funnel — it is the proof that the product works. Gat
 3. ⬜ Queue/DLQ health and window-expired opportunities in admin diagnostics — already partly available in `/dashboard/admin/alerts` and the DLQ panel; a unified view remains for Phase A.3.
 4. ✅ Verified: new DM logs carry `keyword`, `post_id`, `sequence_step`; existing logs backfilled; overview renders with no console errors.
 
-### Phase B — Close the loop to revenue (3–5 weeks) 🟠
-1. `conversions` table + signed ingest endpoint + UTM identity propagation.
-2. Stripe/Shopify/Razorpay webhook adapters (start with one; generic webhook covers the rest).
-3. Revenue by post/keyword, AOV, new vs returning.
-4. Follow-up step attribution with an optional holdout.
-5. **AC:** a test purchase on an external site appears against the correct Reel/keyword within 60 seconds.
+### Phase B — Close the loop to revenue 🟠
+1. ✅ `conversions` table + signed workspace token + public CORS-enabled ingest endpoint with UTM and last-click attribution.
+2. ⬜ Stripe/Shopify/Razorpay webhook adapters — the generic endpoint already accepts their payloads if mapped; native adapters remain.
+3. ✅ Revenue by post/keyword, tracked revenue and repeat-buyer count on Overview; AOV is derivable from the same rows.
+4. ⬜ Follow-up step attribution with an optional holdout (`sequence_step` is already stored on conversions).
+5. ✅ Verified: a test purchase was attributed to keyword `GUIDE`, post `17941881339122339` and the correct automation; duplicate replay returned `duplicate: true`; invalid token returned 401. Test row removed after verification.
 
 ### Phase C — Intelligence & action (6–8 weeks) 🟡
 1. Intent clustering on inbound replies (LLM + human correction).
@@ -235,4 +235,4 @@ Native payment integrations, Meta CAPI conversion upload, flow builder, link-in-
 
 ## 10. Next step
 
-Phase A is shipped. The next highest-leverage step is **Phase B.1** — the `conversions` table plus the signed ingest endpoint. Without it, revenue and follow-up lift remain unmeasurable; with it, "GUIDE on Reel #14 made ₹18,400" becomes a real, queryable number.
+Revenue attribution is shipped. The next highest-leverage step is **Phase C** — intent clusters on inbound replies plus a "clicked but didn't buy" recovery action. That turns analytics into a revenue action rather than a report.
