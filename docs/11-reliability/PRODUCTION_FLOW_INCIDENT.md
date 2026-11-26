@@ -11,8 +11,9 @@
 The system is **receiving comments correctly**. It failed in two separate places:
 
 1. **Automation field mapping bug** — the live webhook path cast snake_case database rows to a camelCase TypeScript interface, so every automation field was `undefined` at runtime. Fixed in `f6ff86d`.
-2. **Invalid Meta access token** — the stored token is a user/system-user token, not a Facebook **Page** token. Meta rejects DM sends with `OAuthException 190: Invalid OAuth access token - Cannot parse access token`. No code can make that token valid; the Instagram account must be reconnected with an account that manages the Facebook Page.
-3. **PostHog server events were sometimes lost** at invocation shutdown (`still queued when shutdown ended`). Fixed by direct awaited `capture/` POSTs.
+2. **Wrong Graph API host (the real DM blocker)** — DMs, public replies and webhook subscriptions used `graph.instagram.com`, which only accepts Instagram Basic Display (`IG...`) tokens. This account uses a Facebook-linked **system-user** token (`EAA...`), which is valid and has `instagram_manage_messages`, but `graph.instagram.com` rejects it with `OAuthException 190: Invalid OAuth access token - Cannot parse access token`. Sending the same token to `graph.facebook.com` works. Fixed by selecting the host from the token prefix.
+3. **Corrupt `META_APP_ID` in Vercel Production** — the stored value had a leading `U+FFFD`, so `debug_token` failed with "Invalid application ID". Rewritten from the clean local value; app token now validates.
+4. **PostHog server events were sometimes lost** at invocation shutdown (`still queued when shutdown ended`). Fixed by direct awaited `capture/` POSTs.
 
 Analytics stayed empty correctly: `dm_sent` is only counted after a successful DM, and none succeeded.
 
@@ -103,21 +104,35 @@ const automations = (automationRows ?? []) as AutomationLike[];
 
 **Fix:** `toAutomationLike()` explicitly maps every field; `personalizeMessage()` is null-safe; 3 regression tests added.
 
-### 3.2 Token type (creator action required)
+### 3.2 Wrong Graph host + corrupt app ID (fixed)
 
-Connection logs showed:
+A sanitized production probe (`GET /api/diagnostics/meta-token`, cron-secret protected) showed:
 
+```json
+{
+  "app_credentials": { "configured_app_id": "\ufffd1122753620356066", "app_token_valid": false },
+  "accounts": [{
+    "token_status": "invalid",
+    "debug_token": { "ok": false, "error": { "code": 190, "message": "Error validating application. Invalid application ID." } },
+    "me": { "ok": true },
+    "pages": { "count": 0 },
+    "assigned_pages": { "count": 0 },
+    "messaging_probe_graph_instagram": { "error": { "code": 190, "message": "Invalid OAuth access token - Cannot parse access token" } },
+    "messaging_probe_graph_facebook": { "ok": true }
+  }]
+}
 ```
-[Meta] /me/accounts returned 0 page(s)
-[Meta] /me/assigned_instagram_accounts returned 1 account(s)
+
+After rewriting `META_APP_ID` and `META_APP_SECRET` in Vercel:
+
+```json
+"debug_token": { "ok": true, "is_valid": true, "type": "SYSTEM_USER",
+  "scopes": ["instagram_basic","instagram_manage_comments","instagram_content_publish","instagram_manage_messages","public_profile"] }
 ```
 
-That path stores the **long-lived user/system-user token** (`account.pageToken` is undefined). Such a token can read comments and subscribe to webhooks, but Meta's Instagram Messaging endpoint requires a **Page access token**. Result: error 190 on every DM.
+So the token was **always valid** — the code was calling the wrong host. `graph.instagram.com` is for Basic Display only; a Facebook-linked Business/Creator account (or system user) must use `graph.facebook.com`.
 
-This also explains why `campaign_published` worked and the webhook worked, but DM delivery never did.
-
-**Fix (code):** resolve Page tokens from `/me/accounts` and `/me/assigned_pages`, store `token_status`, and raise an admin alert + PostHog event on error 190.
-**Fix (creator):** reconnect the Instagram account using the Facebook login that manages the Page, so a Page token is stored.
+**Fix:** `instagramApiBase(token)` selects `graph.facebook.com` unless the token starts with `IG`. Applied to private replies, button templates, direct messages, public comment replies and webhook subscription. Two regression tests added. The account's `token_status` was reset to `active`.
 
 ### 3.3 PostHog delivery (fixed)
 

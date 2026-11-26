@@ -5,6 +5,16 @@ const META_API_VERSION = process.env.META_API_VERSION || "v21.0";
 const META_BASE_URL = `https://graph.facebook.com/${META_API_VERSION}`;
 const INSTAGRAM_GRAPH_URL = `https://graph.instagram.com/${META_API_VERSION}`;
 
+/**
+ * graph.instagram.com only accepts Instagram Basic Display tokens (prefix `IG`).
+ * Facebook-linked Business/Creator accounts — including system-user tokens —
+ * must use graph.facebook.com. Using the wrong host returns OAuthException 190
+ * "Invalid OAuth access token - Cannot parse access token" even for a valid token.
+ */
+export function instagramApiBase(accessToken: string): string {
+  return accessToken.trim().startsWith("IG") ? INSTAGRAM_GRAPH_URL : META_BASE_URL;
+}
+
 export type MetaAuthProvider = "facebook" | "instagram";
 
 /** Normalised shape of a Meta Graph API error payload. */
@@ -668,43 +678,33 @@ export async function subscribeInstagramAccountToWebhooks(
   additionalFields: string[] = []
 ): Promise<{ success: boolean }> {
   try {
-    const url = `${INSTAGRAM_GRAPH_URL}/${instagramAccountId}/subscribed_apps`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${accessToken}`,
-      },
-      body: JSON.stringify({
-        subscribed_fields: [
-          ...new Set([
-            "comments",
-            "messages",
-            "messaging_postbacks",
-            ...additionalFields,
-          ]),
-        ],
-      }),
-    });
+    const primaryBase = instagramApiBase(accessToken);
+    const fallbackBase =
+      primaryBase === META_BASE_URL ? INSTAGRAM_GRAPH_URL : META_BASE_URL;
+    const fields = [
+      ...new Set([
+        "comments",
+        "messages",
+        "messaging_postbacks",
+        ...additionalFields,
+      ]),
+    ];
 
-    if (res.ok) {
-      const data = await res.json();
-      return { success: Boolean(data.success) };
+    for (const base of [primaryBase, fallbackBase]) {
+      const res = await fetch(`${base}/${instagramAccountId}/subscribed_apps`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ subscribed_fields: fields }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) return { success: true };
+      }
     }
-
-    // Fallback: Facebook Page subscribed_apps
-    const fbUrl = `${META_BASE_URL}/${instagramAccountId}/subscribed_apps`;
-    const fbRes = await fetch(fbUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        subscribed_fields:
-          "feed,mention,messages,messaging_postbacks,message_reads",
-        access_token: accessToken,
-      }).toString(),
-    });
-    const fbData = await fbRes.json();
-    return { success: Boolean(fbData.success) };
+    return { success: false };
   } catch (err) {
     console.warn(`[Meta Client] Failed to subscribe account ${instagramAccountId} to webhooks:`, err);
     return { success: false };
@@ -766,7 +766,7 @@ export async function sendPrivateReply(
   message: string
 ): Promise<{ recipient_id?: string; message_id?: string; error?: MetaApiError }> {
   try {
-    const url = `${INSTAGRAM_GRAPH_URL}/${instagramAccountId}/messages`;
+    const url = `${instagramApiBase(accessToken)}/${instagramAccountId}/messages`;
     const res = await fetch(url, {
       method: "POST",
       headers: {
@@ -802,7 +802,7 @@ export async function sendPrivateReplyWithButton(
   buttonUrlOrPayload: string
 ): Promise<{ recipient_id?: string; message_id?: string; error?: MetaApiError }> {
   try {
-    const url = `${INSTAGRAM_GRAPH_URL}/${instagramAccountId}/messages`;
+    const url = `${instagramApiBase(accessToken)}/${instagramAccountId}/messages`;
     const isUrl = buttonUrlOrPayload.startsWith("http://") || buttonUrlOrPayload.startsWith("https://");
 
     const buttonObj = isUrl
@@ -858,7 +858,7 @@ export async function sendDirectMessage(
   recipientUserId: string,
   text: string
 ): Promise<{ recipient_id?: string; message_id?: string; error?: MetaApiError }> {
-  const url = `${INSTAGRAM_GRAPH_URL}/${instagramAccountId}/messages`;
+  const url = `${instagramApiBase(accessToken)}/${instagramAccountId}/messages`;
   const res = await fetch(url, {
     method: "POST",
     headers: {
@@ -885,7 +885,7 @@ export async function postPublicCommentReply(
   message: string
 ): Promise<{ id?: string; error?: MetaApiError }> {
   try {
-    const url = `${INSTAGRAM_GRAPH_URL}/${commentId}/replies`;
+    const url = `${instagramApiBase(accessToken)}/${commentId}/replies`;
     const res = await fetch(url, {
       method: "POST",
       headers: {
