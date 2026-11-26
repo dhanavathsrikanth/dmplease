@@ -187,6 +187,24 @@ export function linkForMessage(url: string, campaignId: string): string {
   }
 }
 
+/**
+ * Instagram only linkifies a URL when it is a clean, whitespace-delimited
+ * token. Bare URLs embedded mid-sentence often arrive as plain text, so pull
+ * every URL onto its own line and strip attached punctuation.
+ */
+export function formatDmText(
+  template: string,
+  vars: { username?: string; link?: string; keyword?: string }
+): string {
+  return personalizeMessage(template, vars)
+    .replace(/https?:\/\/[^\s<]+/g, (url) => {
+      const clean = url.replace(/[.,;:!?)\]}]+$/g, "");
+      return `\n\n${clean}\n`;
+    })
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 /** Returns true when the automation should run for this media item. */
 export async function matchesPostScope(
   auto: { postScope?: string | null; postId?: string | null },
@@ -671,7 +689,7 @@ async function sendCommentDm(input: {
     link: auto.buttonUrl || "",
     keyword: input.keyword,
   };
-  const text = personalizeMessage(template, vars);
+  const text = formatDmText(template, vars);
   await jitter(50, 350);
 
   const dispatch = () =>
@@ -835,7 +853,7 @@ export async function processCommentEventForAutomation(
             token,
             event.instagramAccountId,
             event.commentId,
-            personalizeMessage(opening, { username: event.commenterName, keyword: matchedKeyword }),
+            formatDmText(opening, { username: event.commenterName, keyword: matchedKeyword }),
             "Get it",
             `OPTIN:${pendingId}`
           )
@@ -927,7 +945,7 @@ async function processDirectRule(input: {
     : null;
 
   const variant = pickVariant(rule.variants);
-  const text = personalizeMessage(variant.text ?? rule.message, {
+  const text = formatDmText(variant.text ?? rule.message, {
     username: input.username,
     link: rule.button_url ?? "",
     keyword: input.matchedText ?? "",
@@ -1026,7 +1044,7 @@ export async function sendOptinDm(input: {
     if (contact?.username) username = String(contact.username);
   }
 
-  const text = personalizeMessage(template, {
+  const text = formatDmText(template, {
     username,
     link,
     keyword: "OPTIN",

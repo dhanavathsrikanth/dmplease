@@ -109,6 +109,95 @@ export async function createCampaign(payload: CreateCampaignPayload) {
   }
 }
 
+/**
+ * Updates an existing campaign. Ownership is checked explicitly (RLS is a
+ * second line of defence) before any field is written.
+ */
+export async function updateCampaign(
+  id: string,
+  payload: CreateCampaignPayload
+) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return { success: false, error: "Not authenticated" };
+  }
+
+  const validation = validateCampaign(payload);
+  if (!validation.success || !validation.data) {
+    return {
+      success: false,
+      error: validation.error,
+      fieldErrors: validation.fieldErrors,
+    };
+  }
+  const values = validation.data;
+
+  try {
+    const { data: campaign } = await supabase
+      .from("automations")
+      .select("id, workspace_id")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (!campaign) {
+      return { success: false, error: "Campaign not found" };
+    }
+
+    const { data: ownedWorkspace } = await supabase
+      .from("workspaces")
+      .select("id")
+      .eq("id", campaign.workspace_id)
+      .eq("owner_id", user.id)
+      .maybeSingle();
+
+    if (!ownedWorkspace) {
+      return { success: false, error: "Not authorized to edit this campaign" };
+    }
+
+    const cleanKeywords = values.triggerKeywords
+      .map((keyword) => keyword.trim().toUpperCase())
+      .filter(Boolean);
+
+    const { error } = await supabase
+      .from("automations")
+      .update({
+        name: values.name,
+        goal: values.goal || "custom",
+        post_scope: values.postScope,
+        post_id: values.postId || null,
+        post_thumbnail_url: values.postThumbnailUrl || null,
+        post_caption: values.postCaption || null,
+        trigger_keywords:
+          cleanKeywords.length > 0 ? cleanKeywords : ["START"],
+        dm_message: values.dmMessage,
+        button_text: values.buttonText || null,
+        button_url: values.buttonUrl || null,
+        public_reply_enabled: values.publicReplyEnabled,
+        public_reply_messages: values.publicReplyMessages,
+        follow_gate_enabled: values.followGateEnabled,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", id);
+
+    if (error) throw error;
+
+    revalidatePath("/dashboard");
+    revalidatePath("/dashboard/campaigns");
+    return { success: true, campaignId: id };
+  } catch (err: unknown) {
+    console.error("Update campaign error:", err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to save campaign",
+    };
+  }
+}
+
 export async function toggleCampaignActive(id: string, active: boolean) {
   const supabase = await createClient();
   const { error } = await supabase

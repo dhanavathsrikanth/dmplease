@@ -37,7 +37,7 @@ function CampaignsSkeleton() {
 export default function CampaignsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ created?: string }>;
+  searchParams: Promise<{ created?: string; saved?: string }>;
 }) {
   return (
     <Suspense fallback={<CampaignsSkeleton />}>
@@ -49,9 +49,9 @@ export default function CampaignsPage({
 async function CampaignsContent({
   searchParams,
 }: {
-  searchParams: Promise<{ created?: string }>;
+  searchParams: Promise<{ created?: string; saved?: string }>;
 }) {
-  const { created } = await searchParams;
+  const { created, saved } = await searchParams;
   await connection();
   const profile = await getCurrentProfile();
   const supabase = await createClient();
@@ -106,6 +106,16 @@ async function CampaignsContent({
         >
           <CheckCircle2 className="size-4 shrink-0" aria-hidden="true" />
           Campaign published. Comment your keyword from another account to test it.
+        </div>
+      )}
+
+      {saved === "1" && (
+        <div
+          role="status"
+          className="flex items-center gap-2.5 rounded-2xl border border-emerald-300/50 bg-emerald-50/60 dark:bg-emerald-950/20 px-4 py-3 text-xs font-semibold text-emerald-800 dark:text-emerald-300"
+        >
+          <CheckCircle2 className="size-4 shrink-0" aria-hidden="true" />
+          Campaign changes saved.
         </div>
       )}
 

@@ -18,6 +18,7 @@ import {
   personalizeMessage,
   toAutomationLike,
   linkForMessage,
+  formatDmText,
   withRetry,
 } from "@/lib/meta/webhook-processor";
 
@@ -62,6 +63,26 @@ describe("DM link formatting", () => {
   it("preserves an existing query string", () => {
     expect(linkForMessage("https://example.com/guide?x=1", "abc")).toContain(
       "x=1&utm_source=dmplease"
+    );
+  });
+});
+
+describe("clickable DM links", () => {
+  it("puts a bare URL on its own line and strips attached punctuation", () => {
+    const text = formatDmText(
+      "Here is your guide: https://dmplease.vercel.app/guide. Enjoy!",
+      {}
+    );
+    expect(text).toContain("\n\nhttps://dmplease.vercel.app/guide\n");
+    expect(text).not.toContain("guide. Enjoy");
+  });
+
+  it("keeps the {link} placeholder URL clickable", () => {
+    const text = formatDmText("Guide: {link} Enjoy!", {
+      link: "https://dmplease.vercel.app/guide?utm_source=dmplease",
+    });
+    expect(text).toContain(
+      "\n\nhttps://dmplease.vercel.app/guide?utm_source=dmplease\n"
     );
   });
 });

@@ -14,6 +14,7 @@ import {
   Check,
   RotateCcw,
   History,
+  Pencil,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -387,6 +388,20 @@ export function CampaignsList({
                         aria-label={`Toggle ${auto.name}`}
                       />
                     </div>
+
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      asChild
+                      aria-label={`Edit ${auto.name}`}
+                      title="Edit Campaign"
+                      className="rounded-full h-8 px-3 text-[11px] font-semibold gap-1.5"
+                    >
+                      <Link href={`/dashboard/campaigns/${auto.id}/edit`}>
+                        <Pencil className="size-3.5" />
+                        <span className="hidden lg:inline">Edit</span>
+                      </Link>
+                    </Button>
 
                     <Button
                       variant="outline"

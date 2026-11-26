@@ -26,7 +26,10 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { PhonePreview } from "@/components/campaigns/phone-preview";
-import { createCampaign } from "@/app/dashboard/campaigns/actions";
+import {
+  createCampaign,
+  updateCampaign,
+} from "@/app/dashboard/campaigns/actions";
 
 interface InstagramMediaItem {
   id: string;
@@ -44,63 +47,114 @@ const RECIPES = [
     id: "freebie",
     title: "Freebie / Lead Magnet",
     keyword: "GUIDE",
-    dm: "Hey {username}! Here is your free training guide: https://trydmplease.com/guide. Enjoy! 🙌",
+    dm: "Hey {username}! Here is your free training guide: {link}. Enjoy! 🙌",
     buttonText: "Download Guide 📖",
-    buttonUrl: "https://trydmplease.com/guide",
+    buttonUrl: "https://dmplease.vercel.app/guide",
   },
   {
     id: "discount",
     title: "VIP Promo / Discount",
     keyword: "VIP",
-    dm: "Here's your 20% off VIP code: VIP20. Shop our store here: https://trydmplease.com/shop 🛍️",
+    dm: "Here's your 20% off VIP code: VIP20. Shop our store here: {link} 🛍️",
     buttonText: "Shop With 20% Off 🛍️",
-    buttonUrl: "https://trydmplease.com/shop",
+    buttonUrl: "https://dmplease.vercel.app/guide",
   },
   {
     id: "booking",
     title: "Discovery Call Booking",
     keyword: "CALL",
-    dm: "Would love to chat with you {username}! Pick a time on my calendar here: https://calendly.com/your-call 📅",
+    dm: "Would love to chat with you {username}! Pick a time on my calendar here: {link} 📅",
     buttonText: "Book Discovery Call 📅",
-    buttonUrl: "https://calendly.com/your-call",
+    buttonUrl: "https://dmplease.vercel.app/guide",
   },
 ];
 
-interface CampaignBuilderProps {
-  initialHandle?: string;
+interface CampaignInitialData {
+  id: string;
+  name: string;
+  postScope?: string | null;
+  postId?: string | null;
+  postThumbnailUrl?: string | null;
+  postCaption?: string | null;
+  triggerKeywords: string[];
+  dmMessage: string;
+  buttonText?: string | null;
+  buttonUrl?: string | null;
+  publicReplyEnabled?: boolean | null;
+  publicReplyMessages?: string[] | null;
+  followGateEnabled?: boolean | null;
 }
 
-export function CampaignBuilder({ initialHandle }: CampaignBuilderProps = {}) {
+interface CampaignBuilderProps {
+  initialHandle?: string;
+  initialCampaign?: CampaignInitialData;
+  mode?: "create" | "edit";
+}
+
+export function CampaignBuilder({
+  initialHandle,
+  initialCampaign,
+  mode = "create",
+}: CampaignBuilderProps = {}) {
+  const isEdit = mode === "edit";
   const router = useRouter();
 
   const [instagramHandle, setInstagramHandle] = useState(initialHandle || "yourbrand");
 
   // Campaign State
-  const [name, setName] = useState("Instagram Auto-DM Campaign");
-  const [postScope, setPostScope] = useState<"ANY_POST" | "SPECIFIC_POST" | "NEXT_POST">("ANY_POST");
-  const [selectedPost, setSelectedPost] = useState<InstagramMediaItem | null>(null);
+  const [name, setName] = useState(
+    initialCampaign?.name ?? "Instagram Auto-DM Campaign"
+  );
+  const [postScope, setPostScope] = useState<"ANY_POST" | "SPECIFIC_POST" | "NEXT_POST">(
+    (initialCampaign?.postScope as "ANY_POST" | "SPECIFIC_POST" | "NEXT_POST") ?? "ANY_POST"
+  );
+  const [selectedPost, setSelectedPost] = useState<InstagramMediaItem | null>(
+    initialCampaign?.postId
+      ? {
+          id: initialCampaign.postId,
+          caption: initialCampaign.postCaption ?? "",
+          thumbnailUrl: initialCampaign.postThumbnailUrl ?? "",
+          mediaType: "",
+          permalink: "",
+          timestamp: "",
+        }
+      : null
+  );
 
   // Live media from Instagram
   const [mediaList, setMediaList] = useState<InstagramMediaItem[]>([]);
   const [loadingMedia, setLoadingMedia] = useState(false);
 
   // Triggers
-  const [keywords, setKeywords] = useState<string[]>(["GUIDE"]);
+  const [keywords, setKeywords] = useState<string[]>(
+    initialCampaign?.triggerKeywords ?? ["GUIDE"]
+  );
   const [keywordInput, setKeywordInput] = useState("");
 
   // DM Message & Action Button
   const [dmMessage, setDmMessage] = useState(
-    "Hey {username}! Thanks for your comment. Here is your free guide: {link}. Enjoy! 🙌"
+    initialCampaign?.dmMessage ??
+      "Hey {username}! Thanks for your comment. Here is your free guide: {link}. Enjoy! 🙌"
   );
-  const [buttonText, setButtonText] = useState("Download Guide 📖");
-  const [buttonUrl, setButtonUrl] = useState("https://trydmplease.com/guide");
+  const [buttonText, setButtonText] = useState(
+    initialCampaign?.buttonText ?? "Download Guide 📖"
+  );
+  const [buttonUrl, setButtonUrl] = useState(
+    initialCampaign?.buttonUrl ?? "https://dmplease.vercel.app/guide"
+  );
 
   // Public Reply
-  const [publicReplyEnabled, setPublicReplyEnabled] = useState(true);
-  const [publicReplyMessage, setPublicReplyMessage] = useState("Sent you a DM! 📩");
+  const [publicReplyEnabled, setPublicReplyEnabled] = useState(
+    initialCampaign?.publicReplyEnabled ?? true
+  );
+  const [publicReplyMessage, setPublicReplyMessage] = useState(
+    initialCampaign?.publicReplyMessages?.[0] ?? "Sent you a DM! 📩"
+  );
 
   // Follow-gate
-  const [followGateEnabled, setFollowGateEnabled] = useState(false);
+  const [followGateEnabled, setFollowGateEnabled] = useState(
+    initialCampaign?.followGateEnabled ?? false
+  );
 
   // Submitting state
   const [publishStatus, setPublishStatus] = useState<"idle" | "publishing" | "success">("idle");
@@ -127,7 +181,14 @@ export function CampaignBuilder({ initialHandle }: CampaignBuilderProps = {}) {
         }
         if (json.success && json.media?.length > 0) {
           setMediaList(json.media);
-          if (!selectedPost && json.media[0]) {
+          // When editing, keep the post this campaign is already attached to
+          // and only enrich it with live media details.
+          const existingMatch = (json.media as InstagramMediaItem[]).find(
+            (item: InstagramMediaItem) => item.id === selectedPost?.id
+          );
+          if (existingMatch) {
+            setSelectedPost(existingMatch);
+          } else if (!selectedPost && json.media[0]) {
             setSelectedPost(json.media[0]);
           }
         }
@@ -190,10 +251,13 @@ export function CampaignBuilder({ initialHandle }: CampaignBuilderProps = {}) {
     };
 
     try {
-      const res = await createCampaign(payload);
+      const res =
+        isEdit && initialCampaign
+          ? await updateCampaign(initialCampaign.id, payload)
+          : await createCampaign(payload);
 
       if (res.success) {
-        posthog.capture("campaign_published", {
+        posthog.capture(isEdit ? "campaign_updated" : "campaign_published", {
           post_scope: postScope,
           keyword_count: keywords.length,
           public_reply_enabled: publicReplyEnabled,
@@ -202,7 +266,11 @@ export function CampaignBuilder({ initialHandle }: CampaignBuilderProps = {}) {
         });
         setPublishStatus("success");
         setTimeout(() => {
-          router.push("/dashboard/campaigns?created=1");
+          router.push(
+            isEdit
+              ? "/dashboard/campaigns?saved=1"
+              : "/dashboard/campaigns?created=1"
+          );
           router.refresh();
         }, 500);
       } else {
@@ -249,7 +317,9 @@ export function CampaignBuilder({ initialHandle }: CampaignBuilderProps = {}) {
             asChild
             className="rounded-full text-xs font-medium h-9 px-4 border-[#c7cad5]"
           >
-            <Link href="/dashboard/campaigns">Discard</Link>
+            <Link href="/dashboard/campaigns">
+              {isEdit ? "Cancel" : "Discard"}
+            </Link>
           </Button>
           
           <Button
@@ -265,18 +335,22 @@ export function CampaignBuilder({ initialHandle }: CampaignBuilderProps = {}) {
             {publishStatus === "publishing" && (
               <>
                 <Loader2 className="size-3.5 animate-spin" />
-                <span>Launching...</span>
+                <span>{isEdit ? "Saving..." : "Launching..."}</span>
               </>
             )}
             {publishStatus === "success" && (
               <>
                 <Check className="size-4 stroke-[3]" />
-                <span>Published! Redirecting...</span>
+                <span>{isEdit ? "Saved! Redirecting..." : "Published! Redirecting..."}</span>
               </>
             )}
             {publishStatus === "idle" && (
               <span>
-                {isMissingPost ? "Pick a Reel to Launch" : "Launch Automation 🚀"}
+                {isMissingPost && !isEdit
+                  ? "Pick a Reel to Launch"
+                  : isEdit
+                    ? "Save Changes 🚀"
+                    : "Launch Automation 🚀"}
               </span>
             )}
           </Button>
