@@ -80,6 +80,12 @@ The folders are numbered so they sort in a sensible reading order, like a deskto
 | --- | --- |
 | [Product Analytics (beyond GA4)](10-analytics/PRODUCT_ANALYTICS.md) | PostHog event taxonomy, GA4-blind server-side outcomes, saved dashboards and insights, decision thresholds, and cost controls. |
 
+## 11 — Reliability
+
+| Doc | What it covers |
+| --- | --- |
+| [Production Flow, Incident Diagnosis & Reliability Fix](11-reliability/PRODUCTION_FLOW_INCIDENT.md) | Full comment→DM flowchart, evidence from the 2026-11-26 incident, root causes, hardened flow, deployed fixes and verification procedure. |
+
 ---
 
 ## Suggested Reading Order

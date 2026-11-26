@@ -1,13 +1,15 @@
 import { randomUUID } from "crypto";
 import { after } from "next/server";
-import { PostHog } from "posthog-node";
 
 /**
  * Server-side product analytics for events GA4 cannot see: webhook outcomes,
  * OAuth results, cron summaries and dead-letter failures.
  *
- * A client is created per event with flushAt:1 so serverless invocations never
- * lose queued events. `after()` flushes after the response is committed.
+ * We POST directly to PostHog's capture endpoint instead of using the Node
+ * SDK's batched queue. In a serverless invocation the SDK can be shut down
+ * before its queue drains (we observed "still queued when shutdown ended"
+ * in production logs), which silently loses the event. A single awaited
+ * fetch inside `after()` has no such race.
  */
 export function captureServerEvent(input: {
   event: string;
@@ -30,28 +32,37 @@ export function captureServerEvent(input: {
     return;
   }
 
-  try {
-    const client = new PostHog(token, { host, flushAt: 1, flushInterval: 0 });
-    const anonymous = input.anonymous || !input.distinctId;
-    const distinctId = input.distinctId || randomUUID();
+  const anonymous = input.anonymous || !input.distinctId;
+  const payload = JSON.stringify({
+    api_key: token,
+    event: input.event,
+    distinct_id: input.distinctId || randomUUID(),
+    properties: {
+      ...(input.properties ?? {}),
+      source: "server",
+      ...(anonymous ? { $process_person_profile: false } : {}),
+    },
+  });
+  const endpoint = `${host.replace(/\/$/, "")}/capture/`;
 
-    client.capture({
-      distinctId,
-      event: input.event,
-      properties: {
-        ...(input.properties ?? {}),
-        source: "server",
-        ...(anonymous ? { $process_person_profile: false } : {}),
-      },
-    });
-
-    after(() => {
-      void client.shutdown().catch((error: unknown) => {
-        console.warn("[posthog] Flush failed:", error);
-      });
-    });
-  } catch (error) {
-    // Analytics must never break the request it observes.
-    console.warn("[posthog] Capture failed:", error);
-  }
+  // `after()` callbacks are awaited by Next.js before the invocation ends.
+  after(async () => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: payload,
+          signal: AbortSignal.timeout(8000),
+          cache: "no-store",
+        });
+        if (response.ok) return;
+        console.warn(
+          `[posthog] Capture returned ${response.status} for ${input.event}`
+        );
+      } catch (error) {
+        console.warn(`[posthog] Capture attempt ${attempt + 1} failed:`, error);
+      }
+    }
+  });
 }

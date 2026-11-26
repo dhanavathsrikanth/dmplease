@@ -1,5 +1,6 @@
 import { getAdminDb, hasAdminDb } from "@/lib/db-admin";
 import { decryptToken } from "@/lib/meta/vault";
+import { captureServerEvent } from "@/lib/posthog-server";
 import {
   checkIsFollower,
   getUserMedia,
@@ -218,6 +219,52 @@ export function matchesRuleKeywords(keywords: string[], text: string): boolean {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function metaErrorCode(error: MetaApiError | undefined): number | null {
+  const code = error?.error?.code ?? error?.code;
+  return typeof code === "number" ? code : null;
+}
+
+/**
+ * Meta code 190 means the stored token can no longer authenticate. Retrying
+ * cannot fix it, so we mark the account as needing reconnection and raise an
+ * in-app alert instead of silently failing every future comment.
+ */
+async function markTokenInvalid(
+  accountDbId: string | null | undefined,
+  workspaceId: string | null | undefined,
+  errorMessage: string
+): Promise<void> {
+  if (!hasAdminDb() || !accountDbId) return;
+  const now = new Date().toISOString();
+  try {
+    await getAdminDb()
+      .from("instagram_accounts")
+      .update({
+        token_status: "invalid",
+        token_last_error: errorMessage.slice(0, 500),
+        token_checked_at: now,
+      })
+      .eq("id", accountDbId);
+
+    await getAdminDb().from("admin_alerts").insert({
+      kind: "instagram_token_invalid",
+      severity: "critical",
+      title: "Instagram account needs reconnection",
+      body: `Meta rejected the stored access token (${errorMessage}). Automated DMs are paused until this account is reconnected. Workspace: ${workspaceId ?? "unknown"}`,
+      metrics: { account_id: accountDbId, workspace_id: workspaceId ?? null },
+      email_status: "not_configured",
+    });
+  } catch (error) {
+    console.warn("[webhook] Could not record invalid-token alert:", error);
+  }
+
+  captureServerEvent({
+    event: "instagram_token_invalid",
+    properties: { account_id: accountDbId, error: errorMessage.slice(0, 120) },
+    anonymous: true,
+  });
 }
 
 async function getAccount(instagramId: string) {
@@ -772,7 +819,7 @@ export async function processCommentEventForAutomation(
         buttonUrl: auto.buttonUrl,
       });
       if (pendingId) {
-        await withRetry(() =>
+        const openingResult = await withRetry(() =>
           sendPrivateReplyWithButton(
             token,
             event.instagramAccountId,
@@ -782,6 +829,19 @@ export async function processCommentEventForAutomation(
             `OPTIN:${pendingId}`
           )
         );
+        const code = metaErrorCode(openingResult?.error);
+        if (code === 190) {
+          await markTokenInvalid(
+            account.id,
+            auto.workspaceId,
+            "Meta error 190: invalid OAuth access token"
+          );
+          return {
+            sent: false,
+            skipped: "Token invalid — reconnect required",
+            error: openingResult.error,
+          };
+        }
       }
       return { sent: false, skipped: "Opening message sent; waiting for opt-in" };
     }
@@ -806,13 +866,27 @@ export async function processCommentEventForAutomation(
     attempts,
   });
 
-  return dispatch.sent
-    ? { sent: true }
-    : {
-        sent: false,
-        skipped: "Meta rejected the DM or cap reached",
-        error: dispatch.error,
-      };
+  if (dispatch.sent) return { sent: true };
+
+  const code = metaErrorCode(dispatch.error);
+  if (code === 190) {
+    await markTokenInvalid(
+      account.id,
+      auto.workspaceId,
+      "Meta error 190: invalid OAuth access token"
+    );
+    return {
+      sent: false,
+      skipped: "Token invalid — reconnect required",
+      error: dispatch.error,
+    };
+  }
+
+  return {
+    sent: false,
+    skipped: "Meta rejected the DM or cap reached",
+    error: dispatch.error,
+  };
 }
 
 async function processDirectRule(input: {

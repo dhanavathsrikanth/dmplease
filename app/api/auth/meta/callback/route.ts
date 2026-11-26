@@ -213,6 +213,9 @@ export async function GET(request: NextRequest) {
 
       const rawAccountToken = account.pageToken || longLivedToken;
       const encryptedToken = encryptToken(rawAccountToken);
+      // Without a Page token Meta will reject /messages with error 190. Mark
+      // the account so the dashboard can ask the creator to reconnect.
+      const tokenStatus = account.pageToken ? "active" : "needs_attention";
 
       await supabase.from("instagram_accounts").upsert(
         {
@@ -221,6 +224,11 @@ export async function GET(request: NextRequest) {
           username: account.username,
           name: account.displayName || account.username,
           access_token: encryptedToken,
+          token_status: tokenStatus,
+          token_last_error: account.pageToken
+            ? null
+            : "No Facebook Page access token available; DM sending requires a Page token.",
+          token_checked_at: new Date().toISOString(),
           token_expires_at: tokenExpiresAt.toISOString(),
           webhook_subscribed: true,
           fallback_reply_enabled: false,

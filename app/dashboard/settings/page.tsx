@@ -69,12 +69,14 @@ async function SettingsContent({
   let connectedAccount: {
     username: string;
     webhookSubscribed: boolean;
+    tokenStatus: string | null;
+    tokenLastError: string | null;
   } | null = null;
 
   if (workspaceIds.length > 0) {
     const { data: accounts } = await supabase
       .from("instagram_accounts")
-      .select("username, webhook_subscribed")
+      .select("username, webhook_subscribed, token_status, token_last_error")
       .in("workspace_id", workspaceIds)
       .limit(1);
 
@@ -82,6 +84,8 @@ async function SettingsContent({
       connectedAccount = {
         username: accounts[0].username,
         webhookSubscribed: accounts[0].webhook_subscribed,
+        tokenStatus: accounts[0].token_status,
+        tokenLastError: accounts[0].token_last_error,
       };
     }
   }
@@ -106,6 +110,20 @@ async function SettingsContent({
           <span>Instagram account successfully connected via Meta Graph API!</span>
         </div>
       )}
+
+      {connectedAccount &&
+        connectedAccount.tokenStatus !== "active" &&
+        connectedAccount.tokenStatus !== null && (
+          <div className="p-4 rounded-2xl border border-amber-500/40 bg-amber-50 dark:bg-amber-950/20 text-foreground text-xs space-y-1">
+            <p className="font-semibold">
+              Reconnect required — automated DMs are paused
+            </p>
+            <p className="text-muted-foreground">
+              {connectedAccount.tokenLastError ||
+                "Meta rejected the stored access token. Reconnect with a Facebook account that manages this Instagram account so a Page access token is stored."}
+            </p>
+          </div>
+        )}
 
       {error && (
         <div className="p-4 rounded-2xl border border-destructive/30 bg-destructive/10 text-destructive text-xs font-medium flex items-center gap-2">

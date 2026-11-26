@@ -606,6 +606,56 @@ export async function fetchInstagramAccountsForToken(
     }
   }
 
+  // ── Ensure every Instagram account has a Page access token ────────────────
+  // Accounts discovered through /me/assigned_instagram_accounts have no
+  // facebookPageId and no pageToken. A system-user/user token can read the
+  // account and subscribe to webhooks, but Meta rejects it for /messages with
+  // error 190. Only a Page token can send DMs, so resolve one here.
+  const pageTokensByInstagramId = new Map<string, string>();
+  for (const page of pages) {
+    if (page.instagram_business_account?.id && page.access_token) {
+      pageTokensByInstagramId.set(
+        page.instagram_business_account.id,
+        page.access_token
+      );
+    }
+  }
+  if (accounts.some((account) => !account.pageToken)) {
+    try {
+      const url = `${META_BASE_URL}/me/assigned_pages?fields=${encodeURIComponent(
+        "id,access_token,instagram_business_account{id}"
+      )}&access_token=${encodeURIComponent(accessToken)}`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      const json = (await res.json()) as {
+        data?: FacebookPage[];
+        error?: { code?: number; message?: string };
+      };
+      if (res.ok && Array.isArray(json.data)) {
+        for (const page of json.data) {
+          if (page.instagram_business_account?.id && page.access_token) {
+            pageTokensByInstagramId.set(
+              page.instagram_business_account.id,
+              page.access_token
+            );
+          }
+        }
+      } else {
+        console.warn(
+          `[Meta] /me/assigned_pages token lookup failed: ${describeGraphError(json)}`
+        );
+      }
+    } catch (error) {
+      console.warn("[Meta] /me/assigned_pages token lookup failed:", error);
+    }
+  }
+
+  for (const account of accounts) {
+    if (!account.pageToken) {
+      const pageToken = pageTokensByInstagramId.get(account.instagramBusinessId);
+      if (pageToken) account.pageToken = pageToken;
+    }
+  }
+
   return accounts;
 }
 
