@@ -988,6 +988,87 @@ async function processDirectRule(input: {
   return succeeded;
 }
 
+/**
+ * After a button tap the original comment already has a private reply, and
+ * Meta only allows one per comment. The guide must therefore be sent as a
+ * direct message to the follower's IGSID, not as another comment reply.
+ */
+async function sendOptinDm(input: {
+  token: string;
+  accountId: string;
+  accountDbId: string;
+  workspaceId: string;
+  recipientId: string;
+  auto: AutomationLike;
+  contactId: string | null;
+}): Promise<{ sent: boolean; error?: MetaApiError }> {
+  const variants = input.auto.dmVariants ?? [];
+  const variant = pickVariant(variants);
+  const template = variant.text ?? input.auto.dmMessage ?? "";
+
+  let link = input.auto.buttonUrl || "";
+  if (input.auto.buttonUrl) {
+    const token = createTrackedLink({
+      workspaceId: input.workspaceId,
+      automationId: input.auto.id,
+      contactId: input.contactId ?? undefined,
+      url: personalizeMessage(input.auto.buttonUrl, { keyword: "OPTIN" }),
+    });
+    if (token) {
+      const origin = new URL(
+        cleanEnv("NEXT_PUBLIC_SITE_URL") || "http://localhost:3000"
+      ).origin;
+      link = `${origin}/go/${token}`;
+    }
+  }
+
+  const text = personalizeMessage(template, {
+    username: "there",
+    link,
+    keyword: "OPTIN",
+  });
+
+  const response = await withRetry(
+    () =>
+      sendDirectMessage(
+        input.token,
+        input.accountId,
+        input.recipientId,
+        text
+      ),
+    3
+  );
+  const sent = !response?.error;
+
+  if (sent) {
+    await recordMetricEvent({
+      kind: "dm_sent",
+      creatorId: input.workspaceId,
+      targetId: input.auto.id,
+    });
+    await recordSafety({
+      workspaceId: input.workspaceId,
+      instagramAccountId: input.accountDbId,
+      recipientId: input.recipientId,
+    });
+  }
+
+  if (hasAdminDb()) {
+    await getAdminDb().from("dm_logs").insert({
+      workspace_id: input.workspaceId,
+      instagram_account_id: input.accountDbId,
+      automation_id: input.auto.id,
+      recipient_id: input.recipientId,
+      recipient_username: "instagram_user",
+      trigger_keyword: "OPTIN",
+      dm_message: text,
+      status: sent ? "SENT" : "FAILED",
+    });
+  }
+
+  return { sent, error: response?.error };
+}
+
 // ── Main orchestrator ────────────────────────────────────────────────────────
 
 export async function processWebhookPayload(
@@ -1229,20 +1310,53 @@ export async function processWebhookPayload(
               }
             : null;
           if (auto) {
-            await sendCommentDm({
+            const contactId = await ensureContact(
+              auto.workspaceId,
+              event.userId,
+              undefined,
+              "optin"
+            );
+            const outcome = await sendOptinDm({
               token,
               accountId: event.instagramAccountId,
-              commentId: pending.comment_id,
+              accountDbId: account.id,
               workspaceId: auto.workspaceId,
               recipientId: event.userId,
-              auto: auto as AutomationLike,
-              keyword: "OPTIN",
-              contactId: await ensureContact(auto.workspaceId, event.userId, undefined, "optin"),
-              accountDbId: account.id,
+              auto,
+              contactId,
             });
+            if (outcome.sent) {
+              await deletePending(value);
+              result.events.push({ kind: "postback", accountId: event.instagramAccountId, outcome: "sent", detail: "Opt-in confirmed" });
+              result.sent++;
+            } else {
+              // Keep the pending row so the follower can tap again after a
+              // transient failure instead of losing the lead permanently.
+              const code = metaErrorCode(outcome.error);
+              if (code === 190) {
+                await markTokenInvalid(account.id, auto.workspaceId, "Meta error 190: invalid OAuth access token");
+              }
+              result.errors.push(`Postback ${value} failed: ${code ?? "unknown Meta error"}`);
+              result.events.push({ kind: "postback", accountId: event.instagramAccountId, outcome: "failed", detail: `Meta error ${code ?? "unknown"}` });
+              result.failed++;
+              if (code !== null && !isTransientMetaError({ error: { code } } as MetaApiError)) {
+                result.permanentFailures++;
+              } else {
+                result.transientFailures++;
+              }
+            }
+            continue;
           }
-        } else if (pending.message) {
-          await withRetry(() => sendDirectMessage(token, event.instagramAccountId, event.userId, pending.message!));
+        }
+        if (pending.message) {
+          const outcome = await withRetry(() =>
+            sendDirectMessage(token, event.instagramAccountId, event.userId, pending.message!)
+          );
+          if (outcome?.error) {
+            result.errors.push(`Postback message failed: ${metaErrorCode(outcome.error) ?? "unknown"}`);
+            result.failed++;
+            continue;
+          }
         }
         await deletePending(value);
         result.events.push({ kind: "postback", accountId: event.instagramAccountId, outcome: "sent", detail: "Opt-in confirmed" });

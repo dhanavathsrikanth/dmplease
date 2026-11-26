@@ -15,6 +15,7 @@ The system is **receiving comments correctly**. It failed in two separate places
 3. **Corrupt `META_APP_ID` in Vercel Production** — the stored value had a leading `U+FFFD`, so `debug_token` failed with "Invalid application ID". Rewritten from the clean local value; app token now validates.
 4. **Failed DMs blocked all future DMs for 24h** — the duplicate guard counted `dm_logs` rows with status `FAILED` as "already messaged". After the first rejection, every later comment from that follower was skipped. Fixed by filtering on `status = 'SENT'`.
 5. **Postback delivery crashed on `Invalid URL`** — the opt-in follow-up builds a tracked link from `NEXT_PUBLIC_SITE_URL`, which had a leading `U+FEFF` in Vercel. `new URL()` threw, so tapping "Get it" produced no DM. Rewritten to `https://dmplease.vercel.app`; `cleanEnv()` now centralises BOM removal.
+6. **Opt-in follow-up reused the commented-on post** — after fixing the URL, the follow-up still failed with `Meta error -1 / subcode 2534023: the comment already has a reply`. Meta permits one private reply per comment, so the guide must be a direct DM to the follower's IGSID. Added `sendOptinDm()` which uses `/messages` with `recipient: { id }`, records a real `dm_logs` outcome and only deletes the pending row on success. The old path also reported `sent: 1` unconditionally; that is fixed.
 6. **PostHog server events were sometimes lost** at invocation shutdown (`still queued when shutdown ended`). Fixed by direct awaited `capture/` POSTs.
 
 ### Opt-in postback incident (2026-11-26 04:57 UTC)
