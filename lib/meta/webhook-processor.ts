@@ -779,6 +779,9 @@ export async function processCommentEventForAutomation(
     .select("id")
     .eq("automation_id", auto.id)
     .eq("recipient_id", event.commenterId)
+    // A FAILED delivery is not a delivered message. Without this filter a
+    // single rejected DM blocks every future comment from that person for 24h.
+    .eq("status", "SENT")
     .gte("sent_at", dayAgo)
     .limit(1)
     .maybeSingle();

@@ -42,6 +42,14 @@ export async function POST(request: Request) {
     const result = await processWebhookPayload(body.payload);
     await markWebhookFinished(body.eventId ?? null, result, startedAt);
 
+    if (result.skipped > 0 || result.failed > 0) {
+      console.info("[qstash-worker] Outcomes:", result.events.map((event) => ({
+        kind: event.kind,
+        outcome: event.outcome,
+        detail: event.detail,
+      })));
+    }
+
     // GA4 cannot see server-side DM delivery outcomes. One summary event per
     // worker run keeps cost low while measuring the core product loop.
     captureServerEvent({
@@ -54,6 +62,15 @@ export async function POST(request: Request) {
         permanent_failures: result.permanentFailures,
         duration_ms: Date.now() - startedAt,
         has_event_id: Boolean(body.eventId),
+        // Skip reasons make silent drops diagnosable without exposing PII.
+        outcomes: result.events.map((event) => ({
+          kind: event.kind,
+          outcome: event.outcome,
+          reason:
+            event.outcome === "skipped"
+              ? String(event.detail ?? "unknown").slice(0, 120)
+              : undefined,
+        })),
       },
       anonymous: true,
     });

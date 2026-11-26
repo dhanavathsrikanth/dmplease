@@ -13,7 +13,12 @@ The system is **receiving comments correctly**. It failed in two separate places
 1. **Automation field mapping bug** — the live webhook path cast snake_case database rows to a camelCase TypeScript interface, so every automation field was `undefined` at runtime. Fixed in `f6ff86d`.
 2. **Wrong Graph API host (the real DM blocker)** — DMs, public replies and webhook subscriptions used `graph.instagram.com`, which only accepts Instagram Basic Display (`IG...`) tokens. This account uses a Facebook-linked **system-user** token (`EAA...`), which is valid and has `instagram_manage_messages`, but `graph.instagram.com` rejects it with `OAuthException 190: Invalid OAuth access token - Cannot parse access token`. Sending the same token to `graph.facebook.com` works. Fixed by selecting the host from the token prefix.
 3. **Corrupt `META_APP_ID` in Vercel Production** — the stored value had a leading `U+FFFD`, so `debug_token` failed with "Invalid application ID". Rewritten from the clean local value; app token now validates.
-4. **PostHog server events were sometimes lost** at invocation shutdown (`still queued when shutdown ended`). Fixed by direct awaited `capture/` POSTs.
+4. **Failed DMs blocked all future DMs for 24h** — the duplicate guard counted `dm_logs` rows with status `FAILED` as "already messaged". After the first rejection, every later comment from that follower was skipped. Fixed by filtering on `status = 'SENT'`.
+5. **PostHog server events were sometimes lost** at invocation shutdown (`still queued when shutdown ended`). Fixed by direct awaited `capture/` POSTs.
+
+### Follow-up incident (2026-11-26 04:43 UTC)
+
+After the Graph-host fix, a `GUIDE` comment was still skipped with `sent:0, skipped:2`. Root cause was #4: a `FAILED` `dm_logs` row at `01:05Z` for the same follower meant the `GUIDE` automation returned `Already messaged in 24h` on every later comment. The `LINK` automation separately returned `Post scope mismatch` because that comment was on a different post. Skip reasons are now logged and attached to `dm_batch_processed` as an `outcomes` property, so this class of failure is visible without guessing.
 
 Analytics stayed empty correctly: `dm_sent` is only counted after a successful DM, and none succeeded.
 
