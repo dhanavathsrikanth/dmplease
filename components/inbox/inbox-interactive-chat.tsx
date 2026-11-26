@@ -41,6 +41,7 @@ export interface ConversationItem {
   keyword: string;
   keywordLabel?: string;
   status: string;
+  isBotActive?: boolean | null;
   /** Present for real stored conversations; absent for legacy log-derived rows. */
   messages?: StoredMessage[];
 }
@@ -59,7 +60,8 @@ export function InboxInteractiveChat({
 }: {
   conversations: ConversationItem[];
 }) {
-  const [conversations] = useState<ConversationItem[]>(initialConversations);
+  const [conversations, setConversations] =
+    useState<ConversationItem[]>(initialConversations);
   const [activeId, setActiveId] = useState<string>(
     initialConversations[0]?.id || ""
   );
@@ -67,6 +69,7 @@ export function InboxInteractiveChat({
   const [replyText, setReplyText] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [isSendingPrompt, setIsSendingPrompt] = useState(false);
+  const [isTogglingBot, setIsTogglingBot] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [promptNotice, setPromptNotice] = useState<string | null>(null);
 
@@ -193,6 +196,44 @@ export function InboxInteractiveChat({
     }
   };
 
+  const handleToggleBot = async () => {
+    if (!activeConv?.conversationId || isTogglingBot) return;
+    const nextActive = !activeConv.isBotActive;
+    setIsTogglingBot(true);
+    setSendError(null);
+    try {
+      const res = await fetch("/api/inbox/bot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workspaceId: activeConv.workspaceId,
+          conversationId: activeConv.conversationId,
+          active: nextActive,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setSendError(data.error || "Could not change automation status.");
+        return;
+      }
+      setConversations((prev) =>
+        prev.map((item) =>
+          item.id === activeConv.id ? { ...item, isBotActive: nextActive } : item
+        )
+      );
+      posthog.capture("inbox_bot_toggled", { active: nextActive });
+      setPromptNotice(
+        nextActive
+          ? "Automation resumed for this conversation."
+          : "Automation paused — you have the conversation."
+      );
+    } catch {
+      setSendError("Network error while changing automation status.");
+    } finally {
+      setIsTogglingBot(false);
+    }
+  };
+
   if (conversations.length === 0) {
     return (
       <Card
@@ -295,12 +336,31 @@ export function InboxInteractiveChat({
               </p>
             </div>
           </div>
-          <Badge
-            variant="tag-yellow"
-            className="text-[10px] font-semibold py-0.5 px-3 rounded-full"
-          >
-            {activeConv?.keywordLabel || "Trigger"}: {activeConv?.keyword}
-          </Badge>
+          <div className="flex flex-col items-end gap-1.5">
+            <Badge
+              variant="tag-yellow"
+              className="text-[10px] font-semibold py-0.5 px-3 rounded-full"
+            >
+              {activeConv?.keywordLabel || "Trigger"}: {activeConv?.keyword}
+            </Badge>
+            {activeConv?.conversationId && (
+              <button
+                type="button"
+                onClick={handleToggleBot}
+                disabled={isTogglingBot}
+                title={
+                  activeConv.isBotActive === false
+                    ? "Resume automated replies"
+                    : "Pause automation while you handle this conversation"
+                }
+                className="text-[10px] font-medium text-[#4262ff] hover:underline disabled:opacity-50"
+              >
+                {activeConv.isBotActive === false
+                  ? "Bot paused · resume automation"
+                  : "Bot active · take over"}
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Messages Stream */}

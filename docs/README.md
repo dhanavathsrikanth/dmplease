@@ -27,6 +27,7 @@ The folders are numbered so they sort in a sensible reading order, like a deskto
 | [Meta Signature Verification](02-webhooks/META_WEBHOOK_SIGNATURE_VERIFICATION.md) | `X-Hub-Signature-256` HMAC verification on raw bytes plus the GET verification handshake. |
 | [Webhook Parsing & Processing](02-webhooks/IG_WEBHOOK_PARSING_PROCESSING.md) | Normalizing comment and DM events, skipping echoes/self-events, and routing into the automation pipeline. |
 | [Story to DM](02-webhooks/STORY_TO_DM.md) | Story replies/mentions, DM reactions, aggregate story insights, double-fire prevention, and the required Meta webhook fields. |
+| [DM Keywords & Respond to All](02-webhooks/DM_KEYWORDS_AND_FALLBACK.md) | Deterministic rule priority, catch-all ordering, account fallback, variants, human takeover and throttle/gate guardrails. |
 
 ## 03 — DM Pipeline
 

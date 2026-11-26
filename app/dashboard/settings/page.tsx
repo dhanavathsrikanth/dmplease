@@ -16,6 +16,9 @@ import { BulkConnect } from "@/components/settings/bulk-connect";
 import { VerifiedBadgeToggle } from "@/components/settings/verified-badge-toggle";
 import { ConversionToken } from "@/components/settings/conversion-token";
 import { createWorkspaceToken } from "@/lib/conversions";
+import { normalizeFallbackReply } from "@/lib/dm-rules";
+import { FallbackReplySettings } from "@/components/settings/fallback-reply-settings";
+import type { FallbackAccountOption } from "@/components/settings/fallback-reply-settings";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -101,6 +104,23 @@ async function SettingsContent({
         isVerifiedManual: Boolean(accounts[0].is_verified_manual),
       };
     }
+  }
+
+  let fallbackAccounts: FallbackAccountOption[] = [];
+  if (workspaceIds.length > 0) {
+    const { data: accounts } = await supabase
+      .from("instagram_accounts")
+      .select(
+        "id, workspace_id, username, fallback_reply_enabled, fallback_reply_message, fallback_reply_variants, fallback_once_per_days, fallback_follow_gate_enabled, fallback_opening_message, fallback_follow_gate_button_label, fallback_follow_gate_on_unavailable, fallback_button_text, fallback_button_url"
+      )
+      .in("workspace_id", workspaceIds)
+      .order("username");
+    fallbackAccounts = (accounts ?? []).map((account) => ({
+      id: String(account.id),
+      username: String(account.username || "instagram_account"),
+      workspaceId: String(account.workspace_id),
+      fallback: normalizeFallbackReply(account),
+    }));
   }
 
   const instagramHandle = connectedAccount?.username || null;
@@ -229,6 +249,8 @@ async function SettingsContent({
             )}
           </CardContent>
         </Card>
+
+        <FallbackReplySettings accounts={fallbackAccounts} />
 
         {workspace.id && (
           <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 shadow-subtle bg-card">

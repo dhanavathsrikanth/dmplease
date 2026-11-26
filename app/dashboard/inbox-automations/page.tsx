@@ -24,6 +24,7 @@ interface DmRuleRow {
   trigger_type: string;
   keywords: string[] | null;
   message: string;
+  variants: string[] | null;
   button_text: string | null;
   button_url: string | null;
   collect_field: string | null;
@@ -90,7 +91,7 @@ async function InboxAutomationsContent() {
     const { data: ruleRows, error } = await supabase
       .from("dm_rules")
       .select(
-        "id, workspace_id, name, trigger_type, keywords, message, button_text, button_url, collect_field, follow_gate_enabled, opening_message, follow_gate_button_label, follow_gate_on_unavailable, once_per_days, priority, active, created_at"
+        "id, workspace_id, name, trigger_type, keywords, message, variants, button_text, button_url, collect_field, follow_gate_enabled, opening_message, follow_gate_button_label, follow_gate_on_unavailable, once_per_days, priority, active, created_at"
       )
       .in("workspace_id", workspaceIds)
       .order("priority", { ascending: false })
@@ -108,6 +109,7 @@ async function InboxAutomationsContent() {
           : "DM_KEYWORD",
         keywords: Array.isArray(row.keywords) ? row.keywords : [],
         message: row.message || "",
+        variants: Array.isArray(row.variants) ? row.variants : [],
         buttonText: row.button_text,
         buttonUrl: row.button_url,
         collectField: row.collect_field,

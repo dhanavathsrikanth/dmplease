@@ -147,7 +147,12 @@ export async function POST(request: NextRequest) {
       } else {
         await supabase
           .from("conversations")
-          .update({ last_message_at: new Date().toISOString() })
+          .update({
+            last_message_at: new Date().toISOString(),
+            // A human reply takes over the thread: automation must stay off
+            // until an agent explicitly resumes it.
+            is_bot_active: false,
+          })
           .eq("id", input.conversationId);
       }
     }
@@ -175,5 +180,9 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  return NextResponse.json({ success: true, messageId: result.message_id });
+  return NextResponse.json({
+    success: true,
+    messageId: result.message_id,
+    botPaused: sent && Boolean(input.conversationId),
+  });
 }

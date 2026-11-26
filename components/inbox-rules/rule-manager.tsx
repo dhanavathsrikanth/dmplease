@@ -54,6 +54,7 @@ export interface DmRuleItem {
   triggerType: DmRuleTrigger;
   keywords: string[];
   message: string;
+  variants?: string[];
   buttonText: string | null;
   buttonUrl: string | null;
   collectField: string | null;
@@ -79,6 +80,8 @@ interface RuleFormState {
   triggerType: DmRuleTrigger;
   keywords: string;
   message: string;
+  variants: string;
+  priority: number;
   buttonText: string;
   buttonUrl: string;
   collectField: DmRuleCollectField;
@@ -118,6 +121,8 @@ function emptyForm(workspaceId: string): RuleFormState {
     triggerType: "DM_KEYWORD",
     keywords: "",
     message: "",
+    variants: "",
+    priority: 0,
     buttonText: "",
     buttonUrl: "",
     collectField: "none",
@@ -178,6 +183,8 @@ export function RuleManager({
       triggerType: rule.triggerType,
       keywords: rule.keywords.join(", "),
       message: rule.message,
+      variants: (rule.variants ?? []).join("\n"),
+      priority: rule.priority,
       buttonText: rule.buttonText || "",
       buttonUrl: rule.buttonUrl || "",
       collectField:
@@ -215,6 +222,11 @@ export function RuleManager({
         .map((keyword) => keyword.trim())
         .filter(Boolean),
       message: form.message,
+      variants: form.variants
+        .split("\n")
+        .map((value) => value.trim())
+        .filter(Boolean),
+      priority: form.priority,
       buttonText: form.buttonText,
       buttonUrl: form.buttonUrl,
       collectField: form.collectField,
@@ -241,6 +253,10 @@ export function RuleManager({
         triggerType: form.triggerType,
         keywords: payload.keywords.map((keyword) => keyword.toUpperCase()),
         message: form.message.trim(),
+        variants: form.variants
+          .split("\n")
+          .map((value) => value.trim())
+          .filter(Boolean),
         buttonText: form.buttonText.trim() || null,
         buttonUrl: form.buttonUrl.trim() || null,
         collectField: form.collectField === "none" ? null : form.collectField,
@@ -249,7 +265,7 @@ export function RuleManager({
         followGateButtonLabel: form.followGateEnabled ? form.followGateButtonLabel : null,
         followGateOnUnavailable: form.followGateOnUnavailable,
         oncePerDays: form.oncePerDays,
-        priority: 0,
+        priority: form.priority,
         active: form.active,
         createdAt:
           rules.find((rule) => rule.id === form.id)?.createdAt ||
@@ -590,7 +606,8 @@ export function RuleManager({
                   disabled={busy}
                 />
                 <p className="text-[10px] text-[#6b6f7e]">
-                  Leave blank to respond to all inbound messages for this trigger.
+                  Leave blank for a catch-all. Keyword rules always run first;
+                  catch-alls only fire when nothing matched.
                 </p>
                 <FieldError message={fieldErrors.keywords} />
               </div>
@@ -610,6 +627,46 @@ export function RuleManager({
                 className="flex w-full rounded-2xl border border-[#c7cad5] dark:border-border bg-background px-3.5 py-2.5 text-xs text-foreground placeholder:text-muted-foreground outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 disabled:opacity-50"
               />
               <FieldError message={fieldErrors.message} />
+            </div>
+
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="rule-variants">Variants (one per line)</Label>
+                <textarea
+                  id="rule-variants"
+                  rows={3}
+                  value={form.variants}
+                  onChange={(event) =>
+                    setForm((prev) => ({ ...prev, variants: event.target.value }))
+                  }
+                  disabled={busy}
+                  placeholder={"Hey {username}, here's your link: {link}\nGot it! Your link is here: {link}"}
+                  className="flex w-full rounded-2xl border border-[#c7cad5] dark:border-border bg-background px-3.5 py-2.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                />
+                <p className="text-[10px] text-[#6b6f7e]">
+                  One is picked per send so replies never look scripted.
+                </p>
+                <FieldError message={fieldErrors.variants} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="rule-priority">Priority</Label>
+                <Input
+                  id="rule-priority"
+                  type="number"
+                  min={-100}
+                  max={100}
+                  value={form.priority}
+                  onChange={(event) =>
+                    setForm((prev) => ({ ...prev, priority: Number(event.target.value) }))
+                  }
+                  className="rounded-full h-9 text-xs"
+                  disabled={busy}
+                />
+                <p className="text-[10px] text-[#6b6f7e]">
+                  Higher numbers win. Catch-alls always run after keyword rules.
+                </p>
+                <FieldError message={fieldErrors.priority} />
+              </div>
             </div>
 
             <div className="grid sm:grid-cols-2 gap-4">

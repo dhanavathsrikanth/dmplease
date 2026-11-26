@@ -30,6 +30,10 @@ const ruleSchema = z.object({
     .trim()
     .min(1, "Write the reply message.")
     .max(2000, "Keep the message under 2000 characters."),
+  /** Rotated automatically so repeated senders never get identical copy. */
+  variants: z.array(z.string().trim().min(1).max(500)).max(10).default([]),
+  /** Higher priority rules win; catch-all rules are always considered last. */
+  priority: z.coerce.number().int().min(-100).max(100).default(0),
   buttonText: z.string().trim().max(80).default(""),
   buttonUrl: z
     .union([z.literal(""), z.url("Enter a valid URL or leave this blank.")])
@@ -127,7 +131,7 @@ export async function createRule(payload: RuleInput): Promise<RuleActionResult> 
       trigger_type: values.triggerType,
       keywords: cleanupKeywords(values.keywords),
       message: values.message,
-      variants: [],
+      variants: values.variants,
       button_text: values.buttonText || null,
       button_url: values.buttonUrl || null,
       collect_field: values.collectField === "none" ? null : values.collectField,
@@ -136,7 +140,7 @@ export async function createRule(payload: RuleInput): Promise<RuleActionResult> 
       follow_gate_button_label: values.followGateButtonLabel || null,
       follow_gate_on_unavailable: values.followGateOnUnavailable,
       once_per_days: values.oncePerDays,
-      priority: 0,
+      priority: values.priority,
       active: values.active,
     })
     .select("id")
@@ -169,6 +173,7 @@ export async function updateRule(payload: RuleInput): Promise<RuleActionResult> 
       trigger_type: values.triggerType,
       keywords: cleanupKeywords(values.keywords),
       message: values.message,
+      variants: values.variants,
       button_text: values.buttonText || null,
       button_url: values.buttonUrl || null,
       collect_field: values.collectField === "none" ? null : values.collectField,
@@ -177,6 +182,7 @@ export async function updateRule(payload: RuleInput): Promise<RuleActionResult> 
       follow_gate_button_label: values.followGateButtonLabel || null,
       follow_gate_on_unavailable: values.followGateOnUnavailable,
       once_per_days: values.oncePerDays,
+      priority: values.priority,
       active: values.active,
       updated_at: new Date().toISOString(),
     })

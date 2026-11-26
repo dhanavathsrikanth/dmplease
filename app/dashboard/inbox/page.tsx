@@ -163,6 +163,7 @@ async function InboxContent() {
           keyword: (row.status || "open").toUpperCase(),
           keywordLabel: "Status",
           status: row.status || "open",
+          isBotActive: row.is_bot_active,
           messages,
         });
       }

@@ -28,6 +28,18 @@ import {
   type FollowVerification,
 } from "@/lib/meta/follow-gate";
 import { FOLLOW_GATE_LIMITS } from "@/lib/follow-gate-constants";
+import {
+  fallbackAsRule,
+  matchesRuleKeywords,
+  normalizeFallbackReply,
+  selectInboundRule,
+  type DispatchRule,
+  type FallbackRow,
+} from "@/lib/dm-rules";
+
+// Kept exported for existing callers/tests; the implementation now lives in
+// the pure dm-rules decision module.
+export { matchesRuleKeywords };
 import { recordMetricEvent } from "@/lib/metrics";
 import {
   parseCommentEvents,
@@ -135,24 +147,7 @@ export function toAutomationLike(row: AutomationRow): AutomationLike {
   };
 }
 
-interface DmRule {
-  id: string;
-  workspace_id: string;
-  name: string;
-  trigger_type: string;
-  keywords: string[];
-  message: string;
-  variants: string[];
-  button_text: string | null;
-  button_url: string | null;
-  collect_field: string | null;
-  follow_gate_enabled: boolean | null;
-  opening_message: string | null;
-  follow_gate_button_label: string | null;
-  follow_gate_on_unavailable: string | null;
-  once_per_days: number;
-  priority: number;
-}
+type DmRule = DispatchRule & { workspace_id: string };
 
 /** Small jitter to spread bursts against Meta's per-token rate limits. */
 export function jitter(minMs = 50, maxMs = 350): Promise<void> {
@@ -266,13 +261,6 @@ export function findMatchingKeyword(
   );
 }
 
-/** Whole-word matching for inbox DM rules. */
-export function matchesRuleKeywords(keywords: string[], text: string): boolean {
-  if (keywords.length === 0) return true;
-  const words = new Set(text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean));
-  return keywords.some((keyword) => words.has(keyword.toLowerCase().trim()));
-}
-
 // ── Persistence helpers (Supabase HTTPS REST via service role) ──────────────
 
 function nowIso() {
@@ -338,7 +326,9 @@ async function getAccount(instagramId: string) {
   try {
     const { data, error } = await getAdminDb()
       .from("instagram_accounts")
-      .select("id, workspace_id, access_token")
+      .select(
+        "id, workspace_id, access_token, fallback_reply_enabled, fallback_reply_message, fallback_reply_variants, fallback_once_per_days, fallback_follow_gate_enabled, fallback_opening_message, fallback_follow_gate_button_label, fallback_follow_gate_on_unavailable, fallback_button_text, fallback_button_url"
+      )
       .eq("instagram_id", instagramId)
       .limit(1)
       .maybeSingle();
@@ -348,6 +338,7 @@ async function getAccount(instagramId: string) {
           id: data.id as string,
           workspace_id: data.workspace_id as string,
           access_token: (data.access_token as string | null) ?? null,
+          fallback: data as FallbackRow,
         }
       : null;
   } catch {
@@ -1042,7 +1033,10 @@ async function sendRuleOptinDm(input: {
             input.token,
             input.accountId,
             input.recipientId,
-            `${text}\n\n${input.rule.button_text}: ${personalizeMessage(input.rule.button_url, vars)}`
+            `${text}\n\n${input.rule.button_text}: ${linkForMessage(
+              personalizeMessage(input.rule.button_url, vars),
+              input.rule.id
+            )}`
           )
         : sendDirectMessage(input.token, input.accountId, input.recipientId, text),
     3
@@ -1816,7 +1810,10 @@ async function processDirectRule(input: {
           input.token,
           input.accountId,
           input.recipientId,
-          `${text}\n\n${rule.button_text}: ${personalizeMessage(rule.button_url, { username: input.username })}`
+          `${text}\n\n${rule.button_text}: ${linkForMessage(
+            personalizeMessage(rule.button_url, { username: input.username }),
+            rule.id
+          )}`
         )
       : sendDirectMessage(input.token, input.accountId, input.recipientId, text)
   );
@@ -2101,6 +2098,17 @@ export async function processWebhookPayload(
         targetId: account.id,
       });
 
+      // Human takeover is authoritative: no automation replies while an agent
+      // has paused the bot on this conversation.
+      if (conversationId) {
+        const { data: conversation } = await getAdminDb()
+          .from("conversations")
+          .select("is_bot_active")
+          .eq("id", conversationId)
+          .maybeSingle();
+        if (conversation && conversation.is_bot_active === false) continue;
+      }
+
       // A reply to a lead-capture question is stored on the contact first.
       const { data: pendingRows } = await getAdminDb()
         .from("pending_dms")
@@ -2133,6 +2141,8 @@ export async function processWebhookPayload(
           event.messageText
         );
         await deletePending(pending.id);
+        // A lead answer is data, not a keyword — never also fire a rule on it.
+        continue;
       }
 
       // Ask for Follow: replying to the opening DM also grants Meta consent,
@@ -2261,33 +2271,48 @@ export async function processWebhookPayload(
       const rules = await getRules(account.workspace_id, ["DM_KEYWORD"]);
       if (!token) continue;
 
-      let handled = false;
-      for (const rule of rules) {
-        if (!matchesRuleKeywords(rule.keywords, event.messageText)) continue;
-        const succeeded = await processDirectRule({
-          workspaceId: account.workspace_id,
-          accountId: event.instagramAccountId,
-          accountDbId: account.id,
-          token,
-          recipientId: event.senderId,
-          rule,
-          externalId: event.messageId,
-          matchedText: event.messageText,
-        });
+      // Deterministic selection: specific keywords always beat catch-alls,
+      // priority breaks ties, and the account fallback runs only if nothing
+      // matched. This makes "Respond to all DMs" predictable in production.
+      const selection = selectInboundRule(rules, event.messageText);
+      const fallback = normalizeFallbackReply(account.fallback);
+      const chosen: DmRule | null =
+        selection.rule ??
+        (fallback.enabled && fallback.message
+          ? {
+              ...fallbackAsRule(fallback, account.id),
+              workspace_id: account.workspace_id,
+            }
+          : null);
+
+      if (!chosen) {
         result.events.push({
           kind: "message",
           accountId: event.instagramAccountId,
-          outcome: succeeded ? "sent" : "skipped",
-          detail: rule.name,
+          outcome: "ignored",
+          detail: "No matching DM rule and no fallback configured",
         });
-        if (succeeded) result.sent++;
-        else result.skipped++;
-        handled = true;
-        break; // highest-priority matching rule wins
+        continue;
       }
-      if (!handled) {
-        result.events.push({ kind: "message", accountId: event.instagramAccountId, outcome: "ignored", detail: "No matching DM rule" });
-      }
+
+      const succeeded = await processDirectRule({
+        workspaceId: account.workspace_id,
+        accountId: event.instagramAccountId,
+        accountDbId: account.id,
+        token,
+        recipientId: event.senderId,
+        rule: chosen,
+        externalId: event.messageId,
+        matchedText: selection.matchedKeyword ?? event.messageText,
+      });
+      result.events.push({
+        kind: "message",
+        accountId: event.instagramAccountId,
+        outcome: succeeded ? "sent" : "skipped",
+        detail: `${selection.catchAll ? "Catch-all: " : fallback.enabled && !selection.rule ? "Fallback: " : ""}${chosen.name}`,
+      });
+      if (succeeded) result.sent++;
+      else result.skipped++;
     } catch (error) {
       result.errors.push(`Inbound DM ${event.messageId} failed: ${error instanceof Error ? error.message : "unknown"}`);
     }
@@ -2467,15 +2492,19 @@ export async function processWebhookPayload(
     try {
       const account = await getAccount(event.instagramAccountId);
       if (!account) continue;
-      const rules = (await getRules(account.workspace_id, ["STORY_MENTION", "STORY_REPLY"])).filter(
+      const candidates = (
+        await getRules(account.workspace_id, ["STORY_MENTION", "STORY_REPLY"])
+      ).filter(
         (rule) =>
-          rule.trigger_type === (event.kind === "MENTION" ? "STORY_MENTION" : "STORY_REPLY") &&
-          matchesRuleKeywords(rule.keywords, event.text ?? "")
+          rule.trigger_type ===
+          (event.kind === "MENTION" ? "STORY_MENTION" : "STORY_REPLY")
       );
+      const selection = selectInboundRule(candidates, event.text ?? "");
+      const chosen = selection.rule;
       const token = await getToken(event.instagramAccountId, account);
       if (!token) continue;
 
-      if (rules.length === 0) {
+      if (!chosen) {
         result.events.push({ kind: "story", accountId: event.instagramAccountId, outcome: "ignored", detail: "No matching story rule" });
         continue;
       }
@@ -2487,14 +2516,15 @@ export async function processWebhookPayload(
         token,
         recipientId: event.senderId,
         username: event.senderName,
-        rule: rules[0],
+        rule: chosen,
         externalId: `story:${event.externalId}`,
+        matchedText: selection.matchedKeyword ?? event.text ?? "",
       });
       result.events.push({
         kind: "story",
         accountId: event.instagramAccountId,
         outcome: succeeded ? "sent" : "skipped",
-        detail: rules[0].name,
+        detail: chosen.name,
       });
       if (succeeded) result.sent++;
       else result.skipped++;
