@@ -2,7 +2,7 @@
 
 > **Purpose:** Define the product moat that beats Zorcha and LinkPlease: provable ROI per post, keyword and follow-up — not vanity counters.
 > **Audience:** Creators, D2C brands, agencies.
-> **Status:** Phases A and B.1/B.3 are implemented (commits `ce09d88`, `58a8613`). Follow-up lift, intent clusters and Phase C/D remain planned.
+> **Status:** Phases A and B are implemented (commits `ce09d88`, `58a8613`, `ff15a29`, `292cde1`). Intent clusters and Phase C/D remain planned.
 > **Last updated:** 2026-11-26
 
 ---
@@ -196,7 +196,7 @@ Do **not** gate the basic funnel — it is the proof that the product works. Gat
 1. ✅ `conversions` table + signed workspace token + public CORS-enabled ingest endpoint with UTM and last-click attribution.
 2. ⬜ Stripe/Shopify/Razorpay webhook adapters — the generic endpoint already accepts their payloads if mapped; native adapters remain.
 3. ✅ Revenue by post/keyword, tracked revenue and repeat-buyer count on Overview; AOV is derivable from the same rows.
-4. ⬜ Follow-up step attribution with an optional holdout (`sequence_step` is already stored on conversions).
+4. ✅ Follow-up steps with a deterministic 10% holdout, cron sender (hourly via QStash), and a sent/held-out/conversions/revenue report on the campaign edit page. No real follow-ups were sent during verification.
 5. ✅ Verified: a test purchase was attributed to keyword `GUIDE`, post `17941881339122339` and the correct automation; duplicate replay returned `duplicate: true`; invalid token returned 401. Test row removed after verification.
 
 ### Phase C — Intelligence & action (6–8 weeks) 🟡
@@ -235,4 +235,4 @@ Native payment integrations, Meta CAPI conversion upload, flow builder, link-in-
 
 ## 10. Next step
 
-Revenue attribution is shipped. The next highest-leverage step is **Phase C** — intent clusters on inbound replies plus a "clicked but didn't buy" recovery action. That turns analytics into a revenue action rather than a report.
+Phase B is complete. The next highest-leverage step is **Phase C** — intent clusters on inbound replies plus a "clicked but didn't buy" recovery action. That turns analytics into a revenue action rather than a report.
