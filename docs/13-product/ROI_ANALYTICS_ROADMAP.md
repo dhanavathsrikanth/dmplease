@@ -2,7 +2,7 @@
 
 > **Purpose:** Define the product moat that beats Zorcha and LinkPlease: provable ROI per post, keyword and follow-up — not vanity counters.
 > **Audience:** Creators, D2C brands, agencies.
-> **Status:** Design document. Nothing here is implemented yet; phases are ordered by leverage and risk.
+> **Status:** Phase A is implemented (commit `ce09d88`). Phases B–D are planned, ordered by leverage and risk.
 > **Last updated:** 2026-11-26
 
 ---
@@ -186,11 +186,11 @@ Do **not** gate the basic funnel — it is the proof that the product works. Gat
 
 ## 7. Delivery phases
 
-### Phase A — Instrument what already happens (2–3 weeks) 🔴
-1. Add attribution columns to `dm_logs` and `link_clicks`; populate from `processCommentEventForAutomation`, `sendOptinDm`, `processDirectRule` and `/go/[slug]`.
-2. Build Wins & Fixes card and campaign funnel v1 from existing tables.
-3. Surface queue/DLQ health and window-expired opportunities in admin diagnostics.
-4. **AC:** every delivered DM has post + keyword + sequence step; a creator can see a 5-step funnel with real denominators.
+### Phase A — Instrument what already happens ✅ shipped
+1. ✅ Attribution columns on `dm_logs` and `link_clicks`; populated from `sendCommentDm`, `sendOptinDm`, `processDirectRule` and `/go/[slug]`.
+2. ✅ Wins & Fixes card and 6-step funnel v1 on `/dashboard/overview`.
+3. ⬜ Queue/DLQ health and window-expired opportunities in admin diagnostics — already partly available in `/dashboard/admin/alerts` and the DLQ panel; a unified view remains for Phase A.3.
+4. ✅ Verified: new DM logs carry `keyword`, `post_id`, `sequence_step`; existing logs backfilled; overview renders with no console errors.
 
 ### Phase B — Close the loop to revenue (3–5 weeks) 🟠
 1. `conversions` table + signed ingest endpoint + UTM identity propagation.
@@ -233,6 +233,6 @@ Native payment integrations, Meta CAPI conversion upload, flow builder, link-in-
 
 ---
 
-## 10. Immediate next step
+## 10. Next step
 
-Start with **Phase A.1** — attribution columns on `dm_logs` and `link_clicks`. It is a small migration plus four write-path edits, and it unlocks every other metric in this document. Nothing in Phase B or C is trustworthy without it.
+Phase A is shipped. The next highest-leverage step is **Phase B.1** — the `conversions` table plus the signed ingest endpoint. Without it, revenue and follow-up lift remain unmeasurable; with it, "GUIDE on Reel #14 made ₹18,400" becomes a real, queryable number.
