@@ -993,7 +993,7 @@ async function processDirectRule(input: {
  * Meta only allows one per comment. The guide must therefore be sent as a
  * direct message to the follower's IGSID, not as another comment reply.
  */
-async function sendOptinDm(input: {
+export async function sendOptinDm(input: {
   token: string;
   accountId: string;
   accountDbId: string;
