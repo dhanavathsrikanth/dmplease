@@ -16,6 +16,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 import {
   matchesPostScope,
   personalizeMessage,
+  toAutomationLike,
   withRetry,
 } from "@/lib/meta/webhook-processor";
 
@@ -37,6 +38,49 @@ describe("DM personalization", () => {
 
   it("uses safe defaults for missing values", () => {
     expect(personalizeMessage("Hi {username} {link} {keyword}", {})).toBe("Hi there  ");
+  });
+
+  it("never crashes on an undefined template", () => {
+    expect(personalizeMessage(undefined, { username: "alice" })).toBe("");
+    expect(personalizeMessage(null, { username: "alice" })).toBe("");
+  });
+});
+
+describe("database row mapping", () => {
+  it("maps snake_case automation rows to the processor shape", () => {
+    const auto = toAutomationLike({
+      id: "auto-1",
+      workspace_id: "workspace-1",
+      name: "LINK campaign",
+      trigger_keywords: ["LINK"],
+      post_scope: "SPECIFIC_POST",
+      post_id: "media-1",
+      dm_message: "Here is your {keyword}, {username}",
+      button_text: "Get it",
+      button_url: "https://example.com/guide",
+      public_reply_enabled: true,
+      follow_gate_enabled: true,
+      dm_variants: [],
+      hourly_cap: 10,
+    });
+
+    expect(auto.workspaceId).toBe("workspace-1");
+    expect(auto.triggerKeywords).toEqual(["LINK"]);
+    expect(auto.postScope).toBe("SPECIFIC_POST");
+    expect(auto.postId).toBe("media-1");
+    expect(auto.dmMessage).toBe("Here is your {keyword}, {username}");
+    expect(auto.buttonText).toBe("Get it");
+    expect(auto.buttonUrl).toBe("https://example.com/guide");
+    expect(auto.publicReplyEnabled).toBe(true);
+    expect(auto.followGateEnabled).toBe(true);
+    expect(auto.hourlyCap).toBe(10);
+  });
+
+  it("defaults missing fields so no template is undefined", () => {
+    const auto = toAutomationLike({ id: "auto-2", workspace_id: "workspace-2" });
+    expect(auto.triggerKeywords).toEqual([]);
+    expect(auto.dmMessage).toBe("");
+    expect(auto.followGateEnabled).toBe(false);
   });
 });
 

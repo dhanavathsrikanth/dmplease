@@ -71,6 +71,53 @@ export interface AutomationLike {
   hourlyCap?: number;
 }
 
+/** Raw `automations` row as returned by Supabase (snake_case). */
+type AutomationRow = {
+  id: string;
+  workspace_id: string;
+  name?: string | null;
+  trigger_keywords?: string[] | null;
+  post_scope?: string | null;
+  post_id?: string | null;
+  dm_message?: string | null;
+  button_text?: string | null;
+  button_url?: string | null;
+  public_reply_enabled?: boolean | null;
+  public_reply_messages?: string[] | null;
+  follow_gate_enabled?: boolean | null;
+  dm_variants?: string[] | null;
+  collect_field?: string | null;
+  opening_message?: string | null;
+  hourly_cap?: number | null;
+};
+
+/**
+ * Map a database row to the shape the processor uses. Without this the live
+ * webhook path would cast snake_case rows to camelCase and every field would
+ * be undefined — keywords would match everything and `personalizeMessage`
+ * would crash on an undefined template.
+ */
+export function toAutomationLike(row: AutomationRow): AutomationLike {
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    name: row.name,
+    triggerKeywords: row.trigger_keywords ?? [],
+    postScope: row.post_scope,
+    postId: row.post_id,
+    dmMessage: row.dm_message ?? "",
+    buttonText: row.button_text,
+    buttonUrl: row.button_url,
+    publicReplyEnabled: row.public_reply_enabled ?? false,
+    publicReplyMessages: row.public_reply_messages ?? [],
+    followGateEnabled: row.follow_gate_enabled ?? false,
+    dmVariants: row.dm_variants ?? [],
+    collectField: row.collect_field,
+    openingMessage: row.opening_message,
+    hourlyCap: row.hourly_cap ?? 0,
+  };
+}
+
 interface DmRule {
   id: string;
   workspace_id: string;
@@ -113,10 +160,10 @@ export async function withRetry<T extends { error?: MetaApiError }>(
 
 /** Replaces {username}, {link} and {keyword} placeholders in DM templates. */
 export function personalizeMessage(
-  template: string,
+  template: string | null | undefined,
   vars: { username?: string; link?: string; keyword?: string }
 ): string {
-  return template
+  return (template ?? "")
     .replace(/\{username\}/gi, vars.username || "there")
     .replace(/\{link\}/gi, vars.link || "")
     .replace(/\{keyword\}/gi, vars.keyword || "");
@@ -918,7 +965,9 @@ export async function processWebhookPayload(
         .select("*")
         .eq("workspace_id", account.workspace_id)
         .eq("active", true);
-      const automations = (automationRows ?? []) as AutomationLike[];
+      const automations = (automationRows ?? []).map((row) =>
+        toAutomationLike(row as AutomationRow)
+      );
 
       if (automations.length === 0) {
         result.events.push({ kind: "comment", accountId: event.instagramAccountId, outcome: "skipped", detail: "No active automation" });

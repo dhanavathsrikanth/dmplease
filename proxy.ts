@@ -1,9 +1,13 @@
+import { withPostHogProxy } from "@posthog/next";
 import { updateSession } from "@/lib/supabase/proxy";
-import { type NextRequest } from "next/server";
 
-export async function proxy(request: NextRequest) {
-  return await updateSession(request);
-}
+const token = process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN;
+const host = process.env.NEXT_PUBLIC_POSTHOG_HOST;
+
+export const proxy =
+  token && host
+    ? withPostHogProxy(updateSession, { apiKey: token, host })
+    : updateSession;
 
 export const config = {
   matcher: [
