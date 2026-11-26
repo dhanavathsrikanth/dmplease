@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { connection } from "next/server";
 import { notFound } from "next/navigation";
 import { CampaignBuilder } from "@/components/campaigns/campaign-builder";
+import { FollowupReport } from "@/components/campaigns/followup-report";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getCurrentProfile } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
@@ -75,7 +76,59 @@ async function EditCampaignContent({
     .limit(1);
   if (accounts?.[0]?.username) connectedHandle = accounts[0].username;
 
+  const [stepsRes, eventsRes, conversionsRes] = await Promise.all([
+    supabase
+      .from("followup_steps")
+      .select("step, delay_minutes, enabled, holdout_percent")
+      .eq("automation_id", id)
+      .order("step"),
+    supabase
+      .from("followup_events")
+      .select("step, action, contact_id")
+      .eq("automation_id", id),
+    supabase
+      .from("conversions")
+      .select("contact_id, revenue_minor")
+      .eq("workspace_id", campaign.workspace_id),
+  ]);
+
+  const conversionsByContact = new Map<string, number>();
+  for (const row of conversionsRes.data ?? []) {
+    if (!row.contact_id) continue;
+    conversionsByContact.set(
+      row.contact_id,
+      (conversionsByContact.get(row.contact_id) ?? 0) + Number(row.revenue_minor ?? 0)
+    );
+  }
+
+  const followupReport = {
+    steps: (stepsRes.data ?? []).map((step) => {
+      const events = (eventsRes.data ?? []).filter((e) => e.step === step.step);
+      const sentContacts = events
+        .filter((e) => e.action === "sent" && e.contact_id)
+        .map((e) => String(e.contact_id));
+      const holdoutContacts = events
+        .filter((e) => e.action === "held_out" && e.contact_id)
+        .map((e) => String(e.contact_id));
+      const sumRevenue = (contacts: string[]) =>
+        contacts.reduce((sum, c) => sum + (conversionsByContact.get(c) ?? 0), 0);
+      return {
+        step: Number(step.step),
+        delayMinutes: Number(step.delay_minutes),
+        enabled: Boolean(step.enabled),
+        holdoutPercent: Number(step.holdout_percent),
+        sent: events.filter((e) => e.action === "sent").length,
+        heldOut: events.filter((e) => e.action === "held_out").length,
+        converted: events.filter((e) => e.action === "converted").length,
+        conversionsFromSent: sentContacts.filter((c) => conversionsByContact.has(c)).length,
+        conversionsFromHoldout: holdoutContacts.filter((c) => conversionsByContact.has(c)).length,
+        revenueFromSent: sumRevenue(sentContacts) / 100,
+      };
+    }),
+  };
+
   return (
+    <div className="space-y-6">
     <CampaignBuilder
       mode="edit"
       initialHandle={connectedHandle}
@@ -95,5 +148,7 @@ async function EditCampaignContent({
         followGateEnabled: campaign.follow_gate_enabled as boolean | null,
       }}
     />
+    <FollowupReport data={followupReport} />
+    </div>
   );
 }
