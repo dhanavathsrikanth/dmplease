@@ -14,6 +14,8 @@ import { createClient } from "@/lib/supabase/server";
 import { DisconnectButton } from "@/components/settings/disconnect-button";
 import { BulkConnect } from "@/components/settings/bulk-connect";
 import { VerifiedBadgeToggle } from "@/components/settings/verified-badge-toggle";
+import { ConversionToken } from "@/components/settings/conversion-token";
+import { createWorkspaceToken } from "@/lib/conversions";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -227,6 +229,20 @@ async function SettingsContent({
             )}
           </CardContent>
         </Card>
+
+        {workspace.id && (
+          <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 shadow-subtle bg-card">
+            <CardHeader className="pb-3 border-b border-[#e0e2e8] dark:border-border/60">
+              <CardTitle className="text-sm font-semibold">Revenue attribution</CardTitle>
+              <CardDescription className="text-xs text-[#555a6a] dark:text-muted-foreground">
+                Tie external purchases and leads back to the Reel and keyword that started them.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="pt-5">
+              <ConversionToken token={createWorkspaceToken(String(workspace.id))} />
+            </CardContent>
+          </Card>
+        )}
 
         <BulkConnect enabled={isConnected} />
 

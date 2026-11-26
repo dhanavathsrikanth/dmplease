@@ -163,9 +163,20 @@ async function OverviewContent({ searchParams }: PageProps) {
   let openingMessages = 0;
   let linkClicks = 0;
   let leadsCaptured = 0;
+  interface ConversionRow {
+    type: string;
+    revenue_minor: number;
+    currency: string;
+    keyword: string | null;
+    post_id: string | null;
+    contact_id: string | null;
+    sequence_step: number;
+    occurred_at: string;
+  }
+  let conversionRows: ConversionRow[] = [];
 
   if (workspaceIds.length > 0) {
-    const [commentsRes, pendingRes, clicksRes, contactsRes] = await Promise.all([
+    const [commentsRes, pendingRes, clicksRes, contactsRes, conversionsRes] = await Promise.all([
       scopedInPeriod(
         supabase
           .from("comment_events")
@@ -197,12 +208,64 @@ async function OverviewContent({ searchParams }: PageProps) {
           .select("id", { count: "exact", head: true })
           .in("workspace_id", workspaceIds)
       ),
+      periodCutoff
+        ? supabase
+            .from("conversions")
+            .select("type, revenue_minor, currency, keyword, post_id, contact_id, sequence_step, occurred_at")
+            .in("workspace_id", workspaceIds)
+            .gte("occurred_at", periodCutoff)
+        : supabase
+            .from("conversions")
+            .select("type, revenue_minor, currency, keyword, post_id, contact_id, sequence_step, occurred_at")
+            .in("workspace_id", workspaceIds),
     ]);
     triggerComments = commentsRes.count ?? 0;
     openingMessages = pendingRes.count ?? 0;
     linkClicks = clicksRes.count ?? 0;
     leadsCaptured = contactsRes.count ?? 0;
+    conversionRows = (conversionsRes.data as ConversionRow[] | null) ?? [];
   }
+
+  const revenueMinor = conversionRows.reduce(
+    (sum, row) => sum + Number(row.revenue_minor ?? 0),
+    0
+  );
+  const purchases = conversionRows.filter(
+    (row) => row.type === "purchase" || row.type === "checkout"
+  ).length;
+  const currency = conversionRows.find((row) => row.currency)?.currency ?? "INR";
+  const revenueLabel =
+    revenueMinor > 0
+      ? `${currency} ${(revenueMinor / 100).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`
+      : null;
+
+  const revenueByCreative = new Map<string, { revenue: number; count: number }>();
+  for (const row of conversionRows) {
+    if (!row.post_id && !row.keyword) continue;
+    const key = row.keyword
+      ? `${row.keyword}${row.post_id ? ` · ${row.post_id.slice(-6)}` : ""}`
+      : `Post · ${String(row.post_id).slice(-6)}`;
+    const current = revenueByCreative.get(key) ?? { revenue: 0, count: 0 };
+    current.revenue += Number(row.revenue_minor ?? 0);
+    current.count += 1;
+    revenueByCreative.set(key, current);
+  }
+  const topCreatives = Array.from(revenueByCreative.entries())
+    .map(([label, value]) => ({ label, ...value }))
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, 5);
+
+  const conversionContactCounts = new Map<string, number>();
+  for (const row of conversionRows) {
+    if (!row.contact_id) continue;
+    conversionContactCounts.set(
+      row.contact_id,
+      (conversionContactCounts.get(row.contact_id) ?? 0) + 1
+    );
+  }
+  const repeatBuyers = Array.from(conversionContactCounts.values()).filter(
+    (count) => count > 1
+  ).length;
 
   const sentLogs = (logs ?? []).filter(
     (log) => log.status === "SENT" || log.status === "Delivered" || !log.status
@@ -438,11 +501,12 @@ async function OverviewContent({ searchParams }: PageProps) {
             <Sparkles className="size-4" /> This week
           </div>
           <p className="text-lg font-semibold tracking-tight text-foreground">
-            {weeklySent} DMs · {leadsCaptured} leads
+            {revenueLabel ?? `${weeklySent} DMs · ${leadsCaptured} leads`}
           </p>
           <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground">
-            {confirmedOptins} opt-ins · {linkClicks} tracked clicks
-            {linkClicks === 0 ? " (real links need conversion tracking)" : ""}
+            {revenueLabel
+              ? `${purchases} tracked purchases · ${repeatBuyers} repeat buyers`
+              : `${confirmedOptins} opt-ins · ${linkClicks} tracked clicks — add your conversion token in Settings to see revenue`}
           </p>
           <Button asChild variant="outline" size="sm" className="rounded-full text-[11px] h-8">
             <Link href="/dashboard/campaigns">View campaigns</Link>
@@ -491,6 +555,50 @@ async function OverviewContent({ searchParams }: PageProps) {
               );
             })}
           </div>
+        </CardContent>
+      </Card>
+
+      {/* ── Revenue by creative ── */}
+      <Card className="rounded-2xl glass-card border border-[#e0e2e8] dark:border-border shadow-subtle">
+        <CardHeader className="pb-4 border-b border-[#e0e2e8] dark:border-border/60">
+          <CardTitle className="text-base font-semibold tracking-tight">
+            Revenue by keyword &amp; creative
+          </CardTitle>
+          <CardDescription className="text-xs text-[#555a6a] dark:text-muted-foreground">
+            Server-verified conversions only. Connect your checkout with the token in Settings.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="pt-5">
+          {topCreatives.length > 0 ? (
+            <div className="space-y-3">
+              {topCreatives.map((creative) => (
+                <div
+                  key={creative.label}
+                  className="flex items-center justify-between gap-3 rounded-xl border border-[#e0e2e8] dark:border-border/80 px-3 py-2.5"
+                >
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold truncate">{creative.label}</p>
+                    <p className="text-[10px] text-muted-foreground">
+                      {creative.count} conversions
+                    </p>
+                  </div>
+                  <p className="text-sm font-bold shrink-0">
+                    {currency} {(creative.revenue / 100).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                  </p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="py-10 text-center space-y-2">
+              <BarChart3 className="size-8 mx-auto text-muted-foreground" />
+              <p className="text-sm font-semibold text-foreground">
+                No tracked revenue yet
+              </p>
+              <p className="text-[11px] text-muted-foreground max-w-md mx-auto">
+                Copy your conversion token from Settings and send a purchase event from your checkout. Revenue will appear against the keyword and post that started it.
+              </p>
+            </div>
+          )}
         </CardContent>
       </Card>
 
