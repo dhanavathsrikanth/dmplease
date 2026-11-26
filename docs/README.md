@@ -86,6 +86,12 @@ The folders are numbered so they sort in a sensible reading order, like a deskto
 | --- | --- |
 | [Production Flow, Incident Diagnosis & Reliability Fix](11-reliability/PRODUCTION_FLOW_INCIDENT.md) | Full comment→DM flowchart, evidence from the 2026-11-26 incident, root causes, hardened flow, deployed fixes and verification procedure. |
 
+## 13 — Product
+
+| Doc | What it covers |
+| --- | --- |
+| [Beyond Auto-DM — ROI Analytics Roadmap](13-product/ROI_ANALYTICS_ROADMAP.md) | Four-layer analytics moat vs Zorcha/LinkPlease, required data model, product surfaces, packaging and phased delivery. |
+
 ---
 
 ## Suggested Reading Order
