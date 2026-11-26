@@ -50,6 +50,7 @@ model Workspace {
   linkClicks        LinkClick[]
   safetyEvents      SafetyEvent[]
   followChecks      FollowCheck[]
+  followPrompts     FollowPrompt[]
   insightSnapshots  InsightSnapshot[]
 
   @@map("workspaces")
@@ -290,6 +291,33 @@ model SafetyEvent {
   @@map("safety_events")
 }
 
+/// In-chat "Ask to follow" prompt sent from the Direct Inbox.
+model FollowPrompt {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId        String    @map("workspace_id") @db.Uuid
+  instagramAccountId String?   @map("instagram_account_id") @db.Uuid
+  contactId          String?   @map("contact_id") @db.Uuid
+  conversationId     String?   @map("conversation_id") @db.Uuid
+  pendingId          String?   @map("pending_id") @db.Uuid
+  recipientId        String    @map("recipient_id")
+  source             String    @default("inbox_agent")
+  status             String    @default("pending")
+  priorFollower      Boolean?  @map("prior_follower")
+  handle             String?
+  promisedContent    String?   @map("promised_content")
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  tappedAt           DateTime? @map("tapped_at") @db.Timestamptz(6)
+  resolvedAt         DateTime? @map("resolved_at") @db.Timestamptz(6)
+  deliveredAt        DateTime? @map("delivered_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@index([conversationId, createdAt(sort: Desc)])
+  @@index([pendingId])
+  @@map("follow_prompts")
+}
+
 /// Durable record of every Ask-for-Follow verification attempt.
 model FollowCheck {
   id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -302,6 +330,7 @@ model FollowCheck {
   status             String
   method             String    @default("none")
   reason             String?
+  promptId           String?   @map("prompt_id") @db.Uuid
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)

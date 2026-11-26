@@ -768,8 +768,11 @@ async function recordFollowCheck(input: {
   automationId?: string | null;
   ruleId?: string | null;
   pendingId?: string | null;
+  promptId?: string | null;
   recipientId: string;
-  verification: Pick<FollowVerification, "status" | "method" | "reason">;
+  verification: Pick<FollowVerification, "status" | "method" | "reason"> & {
+    fromCache?: boolean;
+  };
 }): Promise<void> {
   if (!hasAdminDb()) return;
   try {
@@ -779,6 +782,7 @@ async function recordFollowCheck(input: {
       automation_id: input.automationId ?? null,
       rule_id: input.ruleId ?? null,
       pending_id: input.pendingId ?? null,
+      prompt_id: input.promptId ?? null,
       recipient_id: input.recipientId,
       status: input.verification.status,
       method: input.verification.method,
@@ -1275,6 +1279,199 @@ async function releasePendingOptin(input: {
     });
   }
   return { sent, error: result?.error };
+}
+
+// ── In-chat "Ask to follow" prompts ─────────────────────────────────────────
+
+interface FollowPromptRow {
+  id: string;
+  workspace_id: string;
+  contact_id: string | null;
+  conversation_id: string | null;
+  pending_id: string | null;
+  recipient_id: string;
+  source: string;
+  status: string;
+  prior_follower: boolean | null;
+  handle: string | null;
+  promised_content: string | null;
+  created_at: string;
+  tapped_at: string | null;
+  resolved_at: string | null;
+  delivered_at: string | null;
+}
+
+async function getFollowPromptByPending(
+  pendingId: string
+): Promise<FollowPromptRow | null> {
+  if (!hasAdminDb()) return null;
+  try {
+    const { data, error } = await getAdminDb()
+      .from("follow_prompts")
+      .select("*")
+      .eq("pending_id", pendingId)
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    return (data as FollowPromptRow | null) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function updateFollowPrompt(
+  id: string,
+  patch: Partial<Pick<FollowPromptRow, "status" | "tapped_at" | "resolved_at" | "delivered_at">>
+): Promise<void> {
+  if (!hasAdminDb()) return;
+  try {
+    await getAdminDb().from("follow_prompts").update(patch).eq("id", id);
+  } catch {
+    // Analytics ledger is best-effort.
+  }
+}
+
+/**
+ * Resolves an in-chat follow prompt after a tap or DM reply.
+ * Hard gate: content is released only after Meta confirms the follow.
+ */
+async function resolveFollowPrompt(input: {
+  prompt: FollowPromptRow;
+  pending: PendingOptinDelivery;
+  token: string;
+  accountId: string;
+  accountDbId: string;
+  userId: string;
+  verification: FollowVerification;
+}): Promise<{ sent: boolean; skipped?: string; error?: MetaApiError }> {
+  const { prompt, pending, verification } = input;
+  await recordFollowCheck({
+    workspaceId: prompt.workspace_id,
+    accountDbId: input.accountDbId,
+    recipientId: input.userId,
+    pendingId: pending.id,
+    promptId: prompt.id,
+    verification,
+  });
+
+  const hardGate = normalizeFollowGateConfig({
+    enabled: true,
+    onUnavailable: "hold",
+  });
+  const decision = decideFollowGateAction(hardGate, verification);
+
+  if (decision === "ask") {
+    const checks = await countFollowChecksForPending(pending.id);
+    const expired = checks >= FOLLOW_GATE_LIMITS.maxChecksPerPending;
+    await updateFollowPrompt(prompt.id, {
+      status: expired ? "expired" : verification.status,
+      tapped_at: prompt.tapped_at ?? nowIso(),
+      resolved_at: expired ? nowIso() : null,
+    });
+    if (expired) await deletePending(pending.id);
+    await withRetry(
+      () =>
+        sendDirectMessage(
+          input.token,
+          input.accountId,
+          input.userId,
+          expired
+            ? "This offer has expired. Message us again and we'll send it right over."
+            : "Almost there — follow the account, then tap the button again so we can confirm."
+        ),
+      2
+    );
+    return { sent: false, skipped: expired ? "Follow prompt expired" : "Follow not confirmed" };
+  }
+
+  // Confirmed follower (or an explicit deliver policy).
+  await updateFollowPrompt(prompt.id, {
+    status: "follower",
+    tapped_at: prompt.tapped_at ?? nowIso(),
+    resolved_at: nowIso(),
+  });
+  await setFollowVerification(prompt.workspace_id, input.userId, true);
+  await markContactLedger(prompt.workspace_id, input.userId, "opted_in_at", nowIso());
+
+  if (prompt.prior_follower === false) {
+    await recordSafety({
+      workspaceId: prompt.workspace_id,
+      instagramAccountId: input.accountDbId,
+      recipientId: input.userId,
+      kind: "follow_growth",
+    });
+    captureServerEvent({
+      event: "follow_growth_attributed",
+      properties: {
+        prompt_id: prompt.id,
+        source: prompt.source,
+        conversation_id: prompt.conversation_id ?? null,
+      },
+      anonymous: true,
+    });
+  }
+
+  let outcome: { sent: boolean; error?: MetaApiError };
+  if (pending.message || prompt.promised_content) {
+    outcome = await releasePendingOptin({
+      pending: { ...pending, message: pending.message ?? prompt.promised_content },
+      rule: null,
+      token: input.token,
+      accountId: input.accountId,
+      accountDbId: input.accountDbId,
+      userId: input.userId,
+    });
+  } else {
+    const result = await withRetry(
+      () =>
+        sendDirectMessage(
+          input.token,
+          input.accountId,
+          input.userId,
+          "Thanks for following! 🎉 You're all set."
+        ),
+      3
+    );
+    outcome = { sent: !result?.error, error: result?.error };
+    if (hasAdminDb()) {
+      const contactId = await ensureContact(
+        prompt.workspace_id,
+        input.userId,
+        undefined,
+        "follow_prompt"
+      );
+      const conversationId = contactId
+        ? await ensureConversation(prompt.workspace_id, input.accountDbId, contactId)
+        : prompt.conversation_id;
+      if (conversationId) {
+        await recordMessage({
+          workspaceId: prompt.workspace_id,
+          conversationId,
+          externalId: result?.message_id ?? null,
+          direction: "outbound",
+          senderType: "bot",
+          text: "Thanks for following! 🎉 You're all set.",
+          status: outcome.sent ? "sent" : "failed",
+        });
+      }
+      await getAdminDb().from("dm_logs").insert({
+        workspace_id: prompt.workspace_id,
+        instagram_account_id: input.accountDbId,
+        recipient_id: input.userId,
+        trigger_keyword: "FOLLOW_CONFIRMED",
+        dm_message: "Thanks for following! 🎉 You're all set.",
+        status: outcome.sent ? "SENT" : "FAILED",
+        keyword: "FOLLOW_CONFIRMED",
+        sequence_step: 2,
+      });
+    }
+  }
+
+  if (outcome.sent) {
+    await updateFollowPrompt(prompt.id, { delivered_at: nowIso() });
+    await deletePending(pending.id);
+  }
+  return outcome;
 }
 
 // ── Dispatch helpers ─────────────────────────────────────────────────────────
@@ -1950,6 +2147,37 @@ export async function processWebhookPayload(
           .limit(1);
         const optin = optinRows?.[0] as PendingOptinDelivery | undefined;
         if (optin) {
+          // A DM reply also grants consent, so it can confirm an in-chat prompt.
+          const inChatPrompt = await getFollowPromptByPending(optin.id);
+          if (inChatPrompt) {
+            const verification = await verifyFollowership(
+              token,
+              event.instagramAccountId,
+              event.senderId
+            );
+            const resolved = await resolveFollowPrompt({
+              prompt: inChatPrompt,
+              pending: optin,
+              token,
+              accountId: event.instagramAccountId,
+              accountDbId: account.id,
+              userId: event.senderId,
+              verification,
+            });
+            if (resolved.sent) {
+              result.events.push({ kind: "message", accountId: event.instagramAccountId, outcome: "sent", detail: "Follow confirmed — content delivered" });
+              result.sent++;
+            } else if (resolved.error) {
+              result.errors.push(`Follow prompt reply failed: ${describeMetaError(resolved.error)}`);
+              result.events.push({ kind: "message", accountId: event.instagramAccountId, outcome: "failed", detail: "Follow prompt delivery failed" });
+              result.failed++;
+            } else {
+              result.events.push({ kind: "message", accountId: event.instagramAccountId, outcome: "skipped", detail: resolved.skipped ?? "Follow not confirmed" });
+              result.skipped++;
+            }
+            continue;
+          }
+
           const { config, rule } = await loadPendingGateConfig({
             workspace_id: optin.workspace_id,
             automation_id: optin.automation_id,
@@ -2077,6 +2305,37 @@ export async function processWebhookPayload(
         if (!pending) {
           result.events.push({ kind: "postback", accountId: event.instagramAccountId, outcome: "skipped", detail: "Opt-in link expired" });
           result.skipped++;
+          continue;
+        }
+
+        // In-chat "Ask to follow" prompts have their own hard-gate resolver.
+        const inChatPrompt = await getFollowPromptByPending(value);
+        if (inChatPrompt) {
+          const verification = await verifyFollowership(
+            token,
+            event.instagramAccountId,
+            event.userId
+          );
+          const resolved = await resolveFollowPrompt({
+            prompt: inChatPrompt,
+            pending,
+            token,
+            accountId: event.instagramAccountId,
+            accountDbId: account.id,
+            userId: event.userId,
+            verification,
+          });
+          if (resolved.sent) {
+            result.events.push({ kind: "postback", accountId: event.instagramAccountId, outcome: "sent", detail: "Follow confirmed — content delivered" });
+            result.sent++;
+          } else if (resolved.error) {
+            result.errors.push(`Follow prompt ${value} failed: ${describeMetaError(resolved.error)}`);
+            result.events.push({ kind: "postback", accountId: event.instagramAccountId, outcome: "failed", detail: "Follow prompt delivery failed" });
+            result.failed++;
+          } else {
+            result.events.push({ kind: "postback", accountId: event.instagramAccountId, outcome: "skipped", detail: resolved.skipped ?? "Follow not confirmed" });
+            result.skipped++;
+          }
           continue;
         }
 

@@ -16,6 +16,7 @@ import {
   Trophy,
   TrendingDown,
   Sparkles,
+  UserPlus,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -26,6 +27,11 @@ import { getCurrentProfile } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
 import { getWebhookHealth } from "@/lib/meta/webhook-events";
 import { getWorkspaceAnalytics } from "@/lib/analytics";
+import {
+  EMPTY_FOLLOW_PROMPT_STATS,
+  summarizeFollowPrompts,
+  type FollowPromptRow,
+} from "@/lib/follow-analytics";
 
 export const metadata = {
   title: "Analytics & Performance - dmplease",
@@ -268,6 +274,22 @@ async function OverviewContent({ searchParams }: PageProps) {
   const repeatBuyers = Array.from(conversionContactCounts.values()).filter(
     (count) => count > 1
   ).length;
+
+  // Follower growth attributed to in-chat "Ask to follow" prompts.
+  let followStats = EMPTY_FOLLOW_PROMPT_STATS;
+  if (workspaceIds.length > 0) {
+    const since = new Date(Date.now() - analyticsDays * 86400000).toISOString();
+    const { data: promptRows } = await supabase
+      .from("follow_prompts")
+      .select("id, status, prior_follower, created_at, tapped_at, resolved_at, delivered_at")
+      .in("workspace_id", workspaceIds)
+      .gte("created_at", since)
+      .limit(2000);
+    followStats = summarizeFollowPrompts(
+      (promptRows ?? []) as FollowPromptRow[],
+      analyticsDays
+    );
+  }
 
   const sentLogs = (logs ?? []).filter(
     (log) => log.status === "SENT" || log.status === "Delivered" || !log.status
@@ -556,6 +578,44 @@ async function OverviewContent({ searchParams }: PageProps) {
                 </Link>
               );
             })}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ── Follower growth from in-chat prompts ── */}
+      <Card className="rounded-2xl glass-card border border-[#e0e2e8] dark:border-border shadow-subtle">
+        <CardHeader className="pb-4 border-b border-[#e0e2e8] dark:border-border/60">
+          <CardTitle className="text-base font-semibold tracking-tight flex items-center gap-2">
+            <UserPlus className="size-4 text-[#4262ff]" aria-hidden="true" />
+            Follower growth from in-chat prompts
+          </CardTitle>
+          <CardDescription className="text-xs text-[#555a6a] dark:text-muted-foreground">
+            Only people who were not following before the prompt and were verified afterwards count as growth.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="pt-5">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {[
+              { label: "New followers", value: followStats.newFollowers },
+              { label: "Prompts sent", value: followStats.sent },
+              {
+                label: "Tap rate",
+                value: followStats.tapRate === null ? "—" : `${followStats.tapRate}%`,
+              },
+              { label: "Content delivered", value: followStats.delivered },
+            ].map((item) => (
+              <div
+                key={item.label}
+                className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 bg-[#f7f8fa] dark:bg-muted/30 p-3.5"
+              >
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-[#6b6f7e]">
+                  {item.label}
+                </p>
+                <p className="mt-1.5 text-2xl font-bold tracking-tight text-foreground">
+                  {item.value}
+                </p>
+              </div>
+            ))}
           </div>
         </CardContent>
       </Card>

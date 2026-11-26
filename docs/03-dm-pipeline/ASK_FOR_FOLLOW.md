@@ -39,3 +39,13 @@ Authorization: Bearer <PAGE_ACCESS_TOKEN>
 - Meta code 190 marks the account as needing reconnection.
 - The gate is not applied to manual agent replies (human replies are not gated).
 - Use the gate only for content people asked for; do not gate purchases, bookings or support responses.
+
+## In-chat "Ask to follow" prompt & follower-growth analytics
+
+The Direct Inbox composer has an **Ask to follow** action. It sends a follow card to the current conversation with a hard gate — the promised content (typed in the composer, optional) is released only after Meta confirms the follow. A DM reply also counts as consent and can confirm the prompt.
+
+Because the person has already messaged the business, Meta can answer `is_user_follow_business` **before** the prompt. That snapshot (`follow_prompts.prior_follower`) is what makes the growth number incremental: only people who were *not* following before the prompt and are verified afterwards count as **new followers from this feature**. Already-following people are delivered their content but do not inflate growth.
+
+Prompt state is stored in `follow_prompts` (`status`, `prior_follower`, `tapped_at`, `resolved_at`, `delivered_at`) and each verification writes a `follow_checks` row with `prompt_id`. `lib/follow-analytics.ts` aggregates these into: prompts sent, taps, attributed new followers, already-following, unverified, expired, delivered, tap rate and a daily series. The card is shown in **Direct Inbox** and **Analytics & Performance (Overview)**.
+
+API: `POST /api/inbox/follow-prompt` returns `already_follower` (no prompt sent) when Meta confirms the relationship up front, otherwise `prompt_sent` with the opening copy. Migration: `supabase/migrations/20261126_follow_prompts.sql`.

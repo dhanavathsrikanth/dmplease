@@ -10,6 +10,8 @@ import {
   Loader2,
   AlertCircle,
   MessageCircle,
+  UserPlus,
+  UserCheck,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -49,6 +51,7 @@ interface MessageBubble {
   text: string;
   time: string;
   status?: string;
+  kind?: "follow_prompt";
 }
 
 export function InboxInteractiveChat({
@@ -63,7 +66,9 @@ export function InboxInteractiveChat({
   const [searchQuery, setSearchQuery] = useState("");
   const [replyText, setReplyText] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [isSendingPrompt, setIsSendingPrompt] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [promptNotice, setPromptNotice] = useState<string | null>(null);
 
   // Per-conversation extra sent messages
   const [extraMessages, setExtraMessages] = useState<
@@ -134,6 +139,57 @@ export function InboxInteractiveChat({
       setSendError("Network error while connecting to Meta Graph API");
     } finally {
       setIsSending(false);
+    }
+  };
+
+  const handleSendFollowPrompt = async () => {
+    if (!activeConv || isSendingPrompt || isSending) return;
+    setIsSendingPrompt(true);
+    setSendError(null);
+    setPromptNotice(null);
+    try {
+      const res = await fetch("/api/inbox/follow-prompt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workspaceId: activeConv.workspaceId,
+          conversationId: activeConv.conversationId,
+          instagramAccountId: activeConv.instagramAccountId,
+          recipientId: activeConv.recipientId,
+          recipientUsername: activeConv.username,
+          promisedContent: replyText.trim() || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setSendError(data.error || "Could not send the follow prompt.");
+        return;
+      }
+      if (data.status === "already_follower") {
+        setPromptNotice(`@${activeConv.username} already follows you — no prompt needed.`);
+        return;
+      }
+      posthog.capture("inbox_follow_prompt_sent", {
+        prior_follower: data.priorFollower,
+      });
+      setPromptNotice("Follow prompt sent — content stays locked until they follow.");
+      const bubble: MessageBubble = {
+        id: `follow-${Date.now()}`,
+        sender: "manual",
+        text: data.openingText || "Follow the account, then tap below to unlock your content.",
+        time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        status: "Awaiting follow confirmation",
+        kind: "follow_prompt",
+      };
+      setExtraMessages((prev) => ({
+        ...prev,
+        [activeConv.id]: [...(prev[activeConv.id] || []), bubble],
+      }));
+      setReplyText("");
+    } catch {
+      setSendError("Network error while sending the follow prompt.");
+    } finally {
+      setIsSendingPrompt(false);
     }
   };
 
@@ -312,9 +368,15 @@ export function InboxInteractiveChat({
             <div key={msg.id} className="flex justify-end animate-in fade-in slide-in-from-bottom-1 duration-200">
               <div className="max-w-md rounded-2xl bg-[#4262ff] text-white p-4 space-y-1.5 shadow-card">
                 <p className="leading-relaxed font-sans">{msg.text}</p>
+                {msg.kind === "follow_prompt" && (
+                  <div className="mt-2 flex items-center justify-center gap-1.5 rounded-full bg-white/95 px-3 py-1.5 text-[11px] font-semibold text-[#262626]">
+                    <UserCheck className="size-3" aria-hidden="true" />
+                    I&apos;m following ✅
+                  </div>
+                )}
                 <div className="text-[9px] text-violet-200 text-right flex items-center justify-end gap-1.5 pt-1">
                   <Badge variant="outline" className="border-white/30 text-white text-[8px] py-0 px-1.5">
-                    Manual Reply
+                    {msg.kind === "follow_prompt" ? "Follow gate · awaiting tap" : "Manual Reply"}
                   </Badge>
                   <CheckCircle2 className="size-2.5 text-emerald-300 inline" /> {msg.time}
                 </div>
@@ -328,12 +390,22 @@ export function InboxInteractiveChat({
               <span>{sendError}</span>
             </div>
           )}
+
+          {promptNotice && (
+            <div
+              role="status"
+              className="p-3 rounded-xl border border-emerald-300/60 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 text-xs flex items-center gap-2"
+            >
+              <UserCheck className="size-4 shrink-0" />
+              <span>{promptNotice}</span>
+            </div>
+          )}
         </div>
 
         {/* Chat Reply Input Bar */}
         <div className="p-3.5 border-t border-[#e0e2e8] dark:border-border/60 flex items-center gap-2">
           <Input
-            placeholder={`Type a manual reply to @${activeConv?.username}...`}
+            placeholder={`Reply to @${activeConv?.username}, or write content to unlock after a follow...`}
             value={replyText}
             onChange={(e) => setReplyText(e.target.value)}
             onKeyDown={(e) => {
@@ -342,13 +414,28 @@ export function InboxInteractiveChat({
                 handleSendReply();
               }
             }}
-            disabled={isSending}
+            disabled={isSending || isSendingPrompt}
             className="text-xs rounded-full h-9 bg-background border-[#c7cad5]"
           />
           <Button
+            type="button"
+            variant="outline"
+            onClick={handleSendFollowPrompt}
+            disabled={isSending || isSendingPrompt}
+            title="Send an in-chat follow prompt — content stays locked until they follow"
+            className="h-9 rounded-full px-3 text-[11px] font-semibold gap-1.5 shrink-0 border-[#c7cad5] dark:border-border"
+          >
+            {isSendingPrompt ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <UserPlus className="size-3.5" aria-hidden="true" />
+            )}
+            <span className="hidden sm:inline">Ask to follow</span>
+          </Button>
+          <Button
             size="icon"
             onClick={handleSendReply}
-            disabled={!replyText.trim() || isSending}
+            disabled={!replyText.trim() || isSending || isSendingPrompt}
             className="size-9 rounded-full shrink-0 bg-[#1c1c1e] hover:bg-[#2c2c34] text-white dark:bg-white dark:text-[#1c1c1e]"
           >
             {isSending ? (

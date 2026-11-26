@@ -8,6 +8,12 @@ import {
   type ConversationItem,
   type StoredMessage,
 } from "@/components/inbox/inbox-interactive-chat";
+import { FollowGrowthCard } from "@/components/inbox/follow-growth-card";
+import {
+  EMPTY_FOLLOW_PROMPT_STATS,
+  summarizeFollowPrompts,
+  type FollowPromptRow,
+} from "@/lib/follow-analytics";
 
 export const metadata = {
   title: "Inbox - dmplease",
@@ -195,6 +201,18 @@ async function InboxContent() {
     }
   }
 
+  let followStats = EMPTY_FOLLOW_PROMPT_STATS;
+  if (workspaceIds.length > 0) {
+    const since = new Date(Date.now() - 7 * 86400000).toISOString();
+    const { data: promptRows } = await supabase
+      .from("follow_prompts")
+      .select("id, status, prior_follower, created_at, tapped_at, resolved_at, delivered_at")
+      .in("workspace_id", workspaceIds)
+      .gte("created_at", since)
+      .limit(2000);
+    followStats = summarizeFollowPrompts((promptRows ?? []) as FollowPromptRow[], 7);
+  }
+
   return (
     <div className="space-y-6 animate-in fade-in duration-300 antialiased selection:bg-[#ffd02f] selection:text-[#1c1c1e]">
       <div className="pb-3 border-b border-[#e0e2e8] dark:border-border/80">
@@ -206,6 +224,7 @@ async function InboxContent() {
         </p>
       </div>
 
+      <FollowGrowthCard stats={followStats} />
       <InboxInteractiveChat conversations={conversations} />
     </div>
   );
