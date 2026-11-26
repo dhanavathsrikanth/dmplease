@@ -11,6 +11,7 @@ The folders are numbered so they sort in a sensible reading order, like a deskto
 | Doc | What it covers |
 | --- | --- |
 | [Production Launch Checklist](00-overview/PRODUCTION_LAUNCH_CHECKLIST.md) | End-to-end pre-launch checklist: webhook security, Redis/QStash reliability, R2/analytics pipeline, and smoke tests. |
+| [External Actions Before Launch](00-overview/EXTERNAL_ACTIONS_BEFORE_LAUNCH.md) | **Start here.** Dashboard/console actions that cannot be done in code — Meta webhook field subscriptions (`message_reactions`, `story_insights`), Supabase/Vercel/Upstash/QStash checks, and production smoke tests. |
 
 ## 01 — Auth & Tokens
 
@@ -25,6 +26,7 @@ The folders are numbered so they sort in a sensible reading order, like a deskto
 | --- | --- |
 | [Meta Signature Verification](02-webhooks/META_WEBHOOK_SIGNATURE_VERIFICATION.md) | `X-Hub-Signature-256` HMAC verification on raw bytes plus the GET verification handshake. |
 | [Webhook Parsing & Processing](02-webhooks/IG_WEBHOOK_PARSING_PROCESSING.md) | Normalizing comment and DM events, skipping echoes/self-events, and routing into the automation pipeline. |
+| [Story to DM](02-webhooks/STORY_TO_DM.md) | Story replies/mentions, DM reactions, aggregate story insights, double-fire prevention, and the required Meta webhook fields. |
 
 ## 03 — DM Pipeline
 
@@ -33,6 +35,7 @@ The folders are numbered so they sort in a sensible reading order, like a deskto
 | [Dedupe & Rate Limits](03-dm-pipeline/INSTAGRAM_DM_AUTOMATION_UPSTASH.md) | Idempotency lock, per-creator and per-recipient limiters, and delayed QStash overflow instead of dropped leads. |
 | [Send-DM Worker](03-dm-pipeline/INSTAGRAM_SEND_DM_WORKER.md) | Signed worker route that fetches the token, calls the Instagram Graph API, and classifies transient vs. permanent errors. |
 | [Follow-Up Scheduling & Cancellation](03-dm-pipeline/INSTAGRAM_DM_FOLLOWUP_SCHEDULING.md) | Delayed follow-up DMs cancelled on link click or reply via QStash `cancel()` + Redis engagement state. |
+| [Ask for Follow](03-dm-pipeline/ASK_FOR_FOLLOW.md) | Verified follow gate, in-chat follow prompts, hold/deliver policy, and follower-growth attribution. |
 
 ## 04 — Caching
 

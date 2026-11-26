@@ -4,6 +4,8 @@ Here is a concise production launch checklist for a LinkPlease / Zorcha alternat
 
 ---
 
+> ⚠️ **First, complete [EXTERNAL_ACTIONS_BEFORE_LAUNCH.md](./EXTERNAL_ACTIONS_BEFORE_LAUNCH.md).** It tracks the dashboard/console actions that cannot be done in code — including **subscribing the Meta app to `message_reactions` and `story_insights` webhook fields**, without which Story-to-DM reactions and aggregate story-insight events will never be delivered.
+
 ### 1. Security & Instagram Webhook Readiness
 
 * **Verify X-Hub-Signature-256 on raw bytes:** Read the raw body before JSON.parse and compare the HMAC-SHA256 digest with crypto.timingSafeEqual using META_APP_SECRET, returning 401 on invalid signatures.
