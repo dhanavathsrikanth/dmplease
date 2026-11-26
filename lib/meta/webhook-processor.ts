@@ -201,7 +201,9 @@ export function formatDmText(
       const clean = url.replace(/[.,;:!?)\]}]+$/g, "");
       return `\n\n${clean}\n`;
     })
+    .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
+    .replace(/\n[ \t]+/g, "\n")
     .trim();
 }
 
