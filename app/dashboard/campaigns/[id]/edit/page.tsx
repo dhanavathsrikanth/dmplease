@@ -236,6 +236,9 @@ async function EditCampaignContent({
         collectField: campaign.collect_field as string | null,
         shortLinksEnabled: campaign.short_links_enabled as boolean | null,
         linkRotatorId: campaign.link_rotator_id as string | null,
+        hourlyCap: campaign.hourly_cap as number | null,
+        delayMinMs: campaign.delay_min_ms as number | null,
+        delayMaxMs: campaign.delay_max_ms as number | null,
       }}
       linkRotators={linkRotators}
     />

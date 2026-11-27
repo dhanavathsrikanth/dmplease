@@ -114,6 +114,9 @@ interface CampaignInitialData {
   } | null;
   shortLinksEnabled?: boolean | null;
   linkRotatorId?: string | null;
+  hourlyCap?: number | null;
+  delayMinMs?: number | null;
+  delayMaxMs?: number | null;
 }
 
 interface CampaignBuilderProps {
@@ -201,6 +204,16 @@ export function CampaignBuilder({
       ? initial
       : "none";
   });
+
+  const [hourlyCap, setHourlyCap] = useState<number>(() =>
+    typeof initialCampaign?.hourlyCap === "number" ? initialCampaign.hourlyCap : 0
+  );
+  const [delayMinMs, setDelayMinMs] = useState<number>(() =>
+    typeof initialCampaign?.delayMinMs === "number" ? initialCampaign.delayMinMs : 0
+  );
+  const [delayMaxMs, setDelayMaxMs] = useState<number>(() =>
+    typeof initialCampaign?.delayMaxMs === "number" ? initialCampaign.delayMaxMs : 2000
+  );
 
   const [buttonUrl, setButtonUrl] = useState(() => {
     // A Next Post campaign created before this feature has no URL at all —
@@ -353,6 +366,9 @@ export function CampaignBuilder({
       },
       shortLinksEnabled,
       linkRotatorId,
+      hourlyCap,
+      delayMinMs,
+      delayMaxMs,
       buttonText,
       buttonUrl,
       publicReplyEnabled,
@@ -914,6 +930,59 @@ export function CampaignBuilder({
             fieldErrors={fieldErrors}
             disabled={publishStatus === "publishing"}
           />
+
+          {/* Safety & delivery */}
+          <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 p-5 shadow-subtle space-y-4">
+            <div>
+              <h3 className="font-semibold text-sm text-foreground">Safety &amp; delivery</h3>
+              <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground mt-0.5">
+                Caps and randomized delays keep you under Meta&apos;s limits during a viral spike.
+              </p>
+            </div>
+            <div className="grid sm:grid-cols-3 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="hourlyCap" className="text-[11px]">Hourly cap</Label>
+                <Input
+                  id="hourlyCap"
+                  type="number"
+                  min={0}
+                  max={10000}
+                  value={hourlyCap}
+                  onChange={(e) => setHourlyCap(Number(e.target.value))}
+                  disabled={publishStatus === "publishing"}
+                  className="h-8 text-xs"
+                />
+                <p className="text-[10px] text-muted-foreground">0 = unlimited. The 101st DM is queued.</p>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="delayMinMs" className="text-[11px]">Delay min (ms)</Label>
+                <Input
+                  id="delayMinMs"
+                  type="number"
+                  min={0}
+                  max={60000}
+                  value={delayMinMs}
+                  onChange={(e) => setDelayMinMs(Number(e.target.value))}
+                  disabled={publishStatus === "publishing"}
+                  className="h-8 text-xs"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="delayMaxMs" className="text-[11px]">Delay max (ms)</Label>
+                <Input
+                  id="delayMaxMs"
+                  type="number"
+                  min={0}
+                  max={60000}
+                  value={delayMaxMs}
+                  onChange={(e) => setDelayMaxMs(Number(e.target.value))}
+                  disabled={publishStatus === "publishing"}
+                  className="h-8 text-xs"
+                />
+                <p className="text-[10px] text-muted-foreground">Randomized 0–50s keeps bursts low.</p>
+              </div>
+            </div>
+          </Card>
 
           {/* STEP 6: Follow-ups (configured after the campaign exists) */}
           <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 p-4 shadow-subtle">

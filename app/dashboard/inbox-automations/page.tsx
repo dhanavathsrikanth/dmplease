@@ -10,6 +10,8 @@ import {
   type DmRuleTrigger,
   type WorkspaceOption,
 } from "@/components/inbox-rules/rule-manager";
+import { PostbackRouteEditor } from "@/components/inbox-rules/postback-route-editor";
+import { listPostbackRoutes } from "@/app/dashboard/campaigns/postback-actions";
 import { getCurrentProfile } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
 
@@ -42,6 +44,7 @@ const KNOWN_TRIGGERS: DmRuleTrigger[] = [
   "DM_KEYWORD",
   "STORY_REPLY",
   "STORY_MENTION",
+  "STORY_REACTION",
   "SHARE_TO_DM",
   "MESSAGE_REACTION",
 ];
@@ -78,6 +81,8 @@ async function InboxAutomationsContent() {
 
   let isConnected = false;
   let rules: DmRuleItem[] = [];
+  let postbackRoutes: Awaited<ReturnType<typeof listPostbackRoutes>> = [];
+  const primaryWorkspaceId = workspaceIds[0] ?? null;
 
   if (workspaceIds.length > 0) {
     const { data: accounts } = await supabase
@@ -126,6 +131,10 @@ async function InboxAutomationsContent() {
     }
   }
 
+  if (primaryWorkspaceId) {
+    postbackRoutes = await listPostbackRoutes(primaryWorkspaceId);
+  }
+
   return (
     <div className="space-y-6 animate-in fade-in duration-300 antialiased selection:bg-[#ffd02f] selection:text-[#1c1c1e]">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-[#e0e2e8] dark:border-border/80">
@@ -162,6 +171,9 @@ async function InboxAutomationsContent() {
         </div>
       )}
 
+      {primaryWorkspaceId && (
+        <PostbackRouteEditor workspaceId={primaryWorkspaceId} routes={postbackRoutes} />
+      )}
       <RuleManager initialRules={rules} workspaces={workspaceOptions} />
     </div>
   );

@@ -15,9 +15,11 @@ import {
 import {
   acquireSendSlot,
   checkRecipientCooldown,
+  hasRepliedRecently,
   isViralSpike,
+  markReplied,
   randomizedDelay,
-} from "@/lib/meta/safety";
+} from "@/lib/meta/rate-limit";
 import { getQstash, getQstashWorkerUrl, getRedis, hasQstash, hasUpstashRedis } from "@/lib/upstash";
 import {
   decideFollowGateAction,
@@ -96,6 +98,7 @@ import {
   parseStoryInsightEvents,
   type WebhookCommentEvent,
   type WebhookPayload,
+  type WebhookPostbackEvent,
 } from "@/lib/meta/webhook";
 
 export type EventOutcome = "sent" | "skipped" | "failed" | "ignored";
@@ -138,6 +141,8 @@ export interface AutomationLike {
   collectField?: string | null;
   openingMessage?: string | null;
   hourlyCap?: number;
+  delayMinMs?: number;
+  delayMaxMs?: number;
   messageFormat?: string | null;
   messageAssets?: MessageFormatConfig | null;
   shortLinksEnabled?: boolean | null;
@@ -164,6 +169,8 @@ type AutomationRow = {
   collect_field?: string | null;
   opening_message?: string | null;
   hourly_cap?: number | null;
+  delay_min_ms?: number | null;
+  delay_max_ms?: number | null;
   message_format?: string | null;
   message_assets?: unknown;
   short_links_enabled?: boolean | null;
@@ -196,6 +203,8 @@ export function toAutomationLike(row: AutomationRow): AutomationLike {
     collectField: row.collect_field,
     openingMessage: row.opening_message,
     hourlyCap: row.hourly_cap ?? 0,
+    delayMinMs: row.delay_min_ms ?? 0,
+    delayMaxMs: row.delay_max_ms ?? 2000,
     messageFormat: row.message_format ?? "text",
     messageAssets:
       row.message_assets && typeof row.message_assets === "object" &&
@@ -367,10 +376,20 @@ export async function recordOptOut(
   }
 }
 
-/** Marks a sender as handled by a story trigger (5-min window). */
-async function markStoryHandled(accountId: string, senderId: string): Promise<void> {
+/** Marks a sender+media as handled by a story trigger (5-min window). */
+async function markStoryHandled(
+  accountId: string,
+  senderId: string,
+  mediaId?: string | null
+): Promise<void> {
   if (!hasUpstashRedis()) return;
   try {
+    const key = mediaId
+      ? `story:handled:${accountId}:${senderId}:${mediaId}`
+      : `story:handled:${accountId}:${senderId}`;
+    await getRedis().set(key, "1", { ex: 300 });
+    // Also set a sender-only key for the inbound DM dedupe path, since
+    // inbound DMs don't carry the story media id.
     await getRedis().set(`story:handled:${accountId}:${senderId}`, "1", { ex: 300 });
   } catch {
     // Dedupe is best-effort; never block a DM on Redis.
@@ -378,9 +397,18 @@ async function markStoryHandled(accountId: string, senderId: string): Promise<vo
 }
 
 /** True if this sender was recently handled by a story trigger. */
-async function wasStoryHandled(accountId: string, senderId: string): Promise<boolean> {
+async function wasStoryHandled(
+  accountId: string,
+  senderId: string,
+  mediaId?: string | null
+): Promise<boolean> {
   if (!hasUpstashRedis()) return false;
   try {
+    // Check the precise key first, then the sender-only fallback.
+    if (mediaId) {
+      const precise = await getRedis().get(`story:handled:${accountId}:${senderId}:${mediaId}`);
+      if (precise) return true;
+    }
     const value = await getRedis().get(`story:handled:${accountId}:${senderId}`);
     return Boolean(value);
   } catch {
@@ -635,6 +663,9 @@ async function getRules(
       opening_message: rule.opening_message ?? null,
       follow_gate_button_label: rule.follow_gate_button_label ?? null,
       follow_gate_on_unavailable: rule.follow_gate_on_unavailable ?? "hold",
+      delay_min_ms: (rule as { delay_min_ms?: number | null }).delay_min_ms ?? 0,
+      delay_max_ms: (rule as { delay_max_ms?: number | null }).delay_max_ms ?? 2000,
+      hourly_cap: (rule as { hourly_cap?: number | null }).hourly_cap ?? 0,
     }));
   } catch {
     return [];
@@ -799,6 +830,121 @@ async function markContactLedger(
   } catch (error) {
     console.warn("[webhook] Could not update contact:", error);
   }
+}
+
+interface PostbackRouteRow {
+  id: string;
+  workspace_id: string;
+  automation_id: string | null;
+  payload: string;
+  action: "tag" | "branch" | "followup" | "optin";
+  config: Record<string, unknown>;
+  active: boolean;
+}
+
+async function loadPostbackRoute(
+  workspaceId: string,
+  payload: string
+): Promise<PostbackRouteRow | null> {
+  if (!hasAdminDb()) return null;
+  try {
+    const { data } = await getAdminDb()
+      .from("postback_routes")
+      .select("id, workspace_id, automation_id, payload, action, config, active")
+      .eq("workspace_id", workspaceId)
+      .eq("payload", payload)
+      .eq("active", true)
+      .maybeSingle();
+    return (data as PostbackRouteRow | null) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function executePostbackRoute(input: {
+  route: PostbackRouteRow;
+  event: WebhookPostbackEvent;
+  account: { id: string; workspace_id: string };
+  token: string;
+}): Promise<boolean> {
+  const { route, event, account } = input;
+  const db = hasAdminDb() ? getAdminDb() : null;
+
+  // Tag action: add a tag to the contact.
+  if (route.action === "tag") {
+    const tag = String(route.config?.tag ?? "").trim();
+    if (!tag || !db) return false;
+    try {
+      const { data: contact } = await db
+        .from("contacts")
+        .select("id, tags")
+        .eq("workspace_id", account.workspace_id)
+        .eq("instagram_id", event.userId)
+        .maybeSingle();
+      if (!contact) return false;
+      const tags = Array.isArray(contact.tags) ? [...contact.tags] : [];
+      if (!tags.includes(tag)) tags.push(tag);
+      await db
+        .from("contacts")
+        .update({ tags, updated_at: nowIso() })
+        .eq("id", contact.id);
+      return true;
+    } catch (error) {
+      console.warn("[postback] Tag action failed:", error);
+      return false;
+    }
+  }
+
+  // Branch action: send a specific message.
+  if (route.action === "branch") {
+    const message = String(route.config?.message ?? "").trim();
+    if (!message) return false;
+    try {
+      const result = await withRetry(() =>
+        sendDirectMessage(input.token, event.instagramAccountId, event.userId, message)
+      );
+      return !result?.error;
+    } catch {
+      return false;
+    }
+  }
+
+  // Followup action: schedule a follow-up step by creating a followup_step
+  // row if one doesn't exist, or trigger an existing one.
+  if (route.action === "followup") {
+    const delayMinutes = Number(route.config?.delayMinutes ?? 1440);
+    const message = String(route.config?.message ?? "").trim();
+    if (!message || !db) return false;
+    try {
+      // Find an automation for this workspace to anchor the follow-up.
+      const { data: automation } = await db
+        .from("automations")
+        .select("id")
+        .eq("workspace_id", account.workspace_id)
+        .eq("active", true)
+        .limit(1)
+        .maybeSingle();
+      if (!automation) return false;
+      await db.from("followup_steps").upsert(
+        {
+          workspace_id: account.workspace_id,
+          automation_id: automation.id,
+          step: Number(route.config?.step ?? 1),
+          delay_minutes: delayMinutes,
+          message,
+          enabled: true,
+          holdout_percent: 0,
+        },
+        { onConflict: "automation_id,step" }
+      );
+      return true;
+    } catch (error) {
+      console.warn("[postback] Followup action failed:", error);
+      return false;
+    }
+  }
+
+  return false;
 }
 
 // ── Ask for Follow ───────────────────────────────────────────────────────────
@@ -1926,6 +2072,14 @@ async function sendCommentDm(input: {
     await jitter(throttle.delayMs, throttle.delayMs);
   }
 
+  // Configurable randomized pre-send delay (safety). Spreads bursts against
+  // Meta's per-account rate limits. Defaults to 0-2s; creators can raise it.
+  const delayMin = auto.delayMinMs ?? 0;
+  const delayMax = auto.delayMaxMs ?? 0;
+  if (delayMax > 0) {
+    await jitter(delayMin, delayMax);
+  }
+
   const { choice: variant, recent: variantRecent } = await chooseDmVariant(
     `auto:${auto.id}`,
     auto.dmVariants,
@@ -2001,6 +2155,7 @@ async function sendCommentDm(input: {
 
   if (succeeded) {
     await recordDmVariant(`auto:${auto.id}`, variant, variantRecent);
+    await markReplied(input.accountId, input.event?.mediaId ?? "", input.recipientId, 30);
     await recordSafety({
       workspaceId: input.workspaceId,
       instagramAccountId: input.accountDbId,
@@ -2126,6 +2281,15 @@ export async function processCommentEventForAutomation(
   );
   if (!cooldownOk) return { sent: false, skipped: "Recipient cooldown (10 min per post)" };
 
+  // Reply-once-per-person-per-post (30-day memory). Prevents the same person
+  // getting the same DM twice for the same post even across retries.
+  const alreadyReplied = await hasRepliedRecently(
+    event.instagramAccountId,
+    event.mediaId,
+    event.commenterId
+  );
+  if (alreadyReplied) return { sent: false, skipped: "Already replied to this person for this post (30-day)" };
+
   const contactId = await ensureContact(
     auto.workspaceId,
     event.commenterId,
@@ -2234,6 +2398,23 @@ async function processDirectRule(input: {
   if (await recentlyMessaged(input.workspaceId, input.recipientId, rule.id, rule.once_per_days)) {
     return false;
   }
+
+  // Safety: hourly cap + viral throttle + randomized delay for inbox/story/share rules.
+  const cap = (rule.hourly_cap ?? 0) || 0;
+  if (cap > 0) {
+    const slot = await acquireSendSlot(`${input.accountId}:${rule.id}`, cap);
+    if (!slot.allowed) {
+      return false;
+    }
+  }
+  const throttle = await acquireThrottleSlot(input.accountId);
+  if (!throttle.allowed) {
+    return false;
+  }
+  if (throttle.delayMs > 0) await jitter(throttle.delayMs, throttle.delayMs);
+  const dMin = rule.delay_min_ms ?? 0;
+  const dMax = rule.delay_max_ms ?? 0;
+  if (dMax > 0) await jitter(dMin, dMax);
 
   const contactId = await ensureContact(
     input.workspaceId,
@@ -2513,6 +2694,14 @@ export async function processWebhookPayload(
         result.skipped++;
         continue;
       }
+      // Skip comment-thread replies: only top-level comments trigger automations.
+      // Meta sets parent_id on replies to a comment.
+      if (event.parentCommentId) {
+        result.events.push({ kind: "comment", accountId: event.instagramAccountId, outcome: "skipped", detail: "Comment thread reply (skipped)" });
+        result.skipped++;
+        continue;
+      }
+
       await persistCommentEvent(account.workspace_id, account.id, event);
 
       const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
@@ -2889,11 +3078,48 @@ export async function processWebhookPayload(
   // ── Postbacks → opt-in, tags, follow-ups ────────────────────────────────────
   for (const event of parsePostbackEvents(payload)) {
     try {
-      const [action, value] = event.payload.split(":");
       const account = await getAccount(event.instagramAccountId);
       if (!account) continue;
       const token = await getToken(event.instagramAccountId, account);
       if (!token) continue;
+
+      // Refresh Meta's 24-hour messaging window on any button tap. This is what
+      // lets a follow-up be scheduled after the user engages with a button.
+      if (hasAdminDb()) {
+        try {
+          await getAdminDb()
+            .from("contacts")
+            .update({ last_interaction_at: nowIso(), updated_at: nowIso() })
+            .eq("workspace_id", account.workspace_id)
+            .eq("instagram_id", event.userId);
+        } catch {
+          // Best effort.
+        }
+      }
+
+      const [action, value] = event.payload.split(":");
+
+      // Configurable postback routes (tag / branch / followup) take priority
+      // over the built-in OPTIN flow so creators can build custom button
+      // actions without changing code.
+      const route = await loadPostbackRoute(account.workspace_id, event.payload);
+      if (route && route.active) {
+        const succeeded = await executePostbackRoute({
+          route,
+          event,
+          account,
+          token,
+        });
+        result.events.push({
+          kind: "postback",
+          accountId: event.instagramAccountId,
+          outcome: succeeded ? "sent" : "skipped",
+          detail: `${route.action}: ${route.payload}`,
+        });
+        if (succeeded) result.sent++;
+        else result.skipped++;
+        continue;
+      }
 
       if (action === "OPTIN" && value) {
         const pending = await consumePending(value);
@@ -3060,6 +3286,29 @@ export async function processWebhookPayload(
     try {
       const account = await getAccount(event.instagramAccountId);
       if (!account) continue;
+
+      // Persist for re-run (T1.8) and diagnostics. Best-effort.
+      if (hasAdminDb()) {
+        try {
+          await getAdminDb().from("story_events").upsert(
+            {
+              workspace_id: account.workspace_id,
+              instagram_account_id: account.id,
+              external_id: event.externalId,
+              media_id: event.mediaId ?? null,
+              sender_id: event.senderId,
+              sender_username: event.senderName ?? null,
+              kind: event.kind,
+              reaction: event.reaction ?? null,
+              text: event.text ?? null,
+            },
+            { onConflict: "workspace_id,external_id", ignoreDuplicates: true }
+          );
+        } catch (error) {
+          console.warn("[story] Could not persist story event:", error);
+        }
+      }
+
       const triggerTypes =
         event.kind === "MENTION"
           ? ["STORY_MENTION"]
@@ -3081,7 +3330,7 @@ export async function processWebhookPayload(
       // Mark this sender as handled by a story trigger so the same message
       // (delivered as an inbound DM by Meta) does not also fire a DM keyword
       // rule — that is the double-fire the audit calls out.
-      await markStoryHandled(event.instagramAccountId, event.senderId);
+      await markStoryHandled(event.instagramAccountId, event.senderId, event.mediaId);
       // Only one live story rule should fire per mention (Zorcha parity).
       const succeeded = await processDirectRule({
         workspaceId: account.workspace_id,

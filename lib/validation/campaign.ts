@@ -69,6 +69,12 @@ export const campaignSchema = z.object({
   openingMessage: openingMessageSchema.nullable().optional(),
   followGateButtonLabel: followGateButtonLabelSchema.nullable().optional(),
   followGateOnUnavailable: z.enum(["hold", "deliver"]).default("hold"),
+  /** Safety: max automated sends per hour for this campaign. 0 = unlimited. */
+  hourlyCap: z.coerce.number().int().min(0).max(10000).default(0),
+  /** Safety: randomized pre-send delay in ms (min). */
+  delayMinMs: z.coerce.number().int().min(0).max(60000).default(0),
+  /** Safety: randomized pre-send delay in ms (max). */
+  delayMaxMs: z.coerce.number().int().min(0).max(60000).default(2000),
 });
 
 export type ValidCampaign = z.infer<typeof campaignSchema>;

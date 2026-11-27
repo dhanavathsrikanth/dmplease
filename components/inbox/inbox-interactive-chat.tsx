@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import posthog from "posthog-js";
 import {
@@ -12,6 +13,7 @@ import {
   MessageCircle,
   UserPlus,
   UserCheck,
+  RefreshCw,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -72,6 +74,7 @@ export function InboxInteractiveChat({
   const [isTogglingBot, setIsTogglingBot] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [promptNotice, setPromptNotice] = useState<string | null>(null);
+  const router = useRouter();
 
   // Per-conversation extra sent messages
   const [extraMessages, setExtraMessages] = useState<
@@ -261,7 +264,7 @@ export function InboxInteractiveChat({
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[560px]">
       {/* ── Left: Conversations List ── */}
       <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 shadow-subtle flex flex-col overflow-hidden bg-card">
-        <div className="p-3.5 border-b border-[#e0e2e8] dark:border-border/60">
+        <div className="p-3.5 border-b border-[#e0e2e8] dark:border-border/60 space-y-2">
           <div className="relative">
             <Search className="size-3.5 absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -271,19 +274,31 @@ export function InboxInteractiveChat({
               className="pl-9 text-xs rounded-full h-9 bg-[#f7f8fa] dark:bg-muted/40 border-[#e0e2e8] dark:border-border"
             />
           </div>
+          <button
+            type="button"
+            onClick={() => router.refresh()}
+            aria-label="Refresh inbox"
+            className="flex items-center gap-1 text-[10px] font-medium text-[#6b6f7e] hover:text-foreground transition-colors"
+          >
+            <RefreshCw className="size-3" aria-hidden="true" />
+            Refresh
+          </button>
         </div>
 
         <div className="flex-1 overflow-y-auto divide-y divide-[#e0e2e8]/60 dark:divide-border/60">
           {filteredConversations.map((c) => {
             const isSelected = c.id === activeConv?.id;
             return (
-              <div
+              <button
                 key={c.id}
+                type="button"
                 onClick={() => {
                   setActiveId(c.id);
                   setSendError(null);
                 }}
-                className={`p-3.5 flex items-start gap-3 cursor-pointer transition-colors ${
+                aria-pressed={isSelected}
+                aria-label={`Conversation with @${c.username}, trigger: ${c.keyword}`}
+                className={`w-full text-left p-3.5 flex items-start gap-3 cursor-pointer transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none ${
                   isSelected
                     ? "bg-[#fff8e0]/70 dark:bg-[#746019]/25 border-l-4 border-l-[#ffd02f]"
                     : "hover:bg-[#f7f8fa] dark:hover:bg-muted/30"
@@ -311,7 +326,7 @@ export function InboxInteractiveChat({
                     {c.lastMessage}
                   </p>
                 </div>
-              </div>
+              </button>
             );
           })}
         </div>
@@ -390,10 +405,21 @@ export function InboxInteractiveChat({
                       }`}
                     >
                       {message.direction === "outbound" && (
-                        <CheckCircle2 className="size-2.5 text-[#00b473] inline" />
+                        <>
+                          {message.status === "FAILED" ? (
+                            <AlertCircle className="size-2.5 text-destructive inline" aria-hidden="true" />
+                          ) : (
+                            <CheckCircle2 className="size-2.5 text-[#00b473] inline" aria-hidden="true" />
+                          )}
+                        </>
                       )}
-                      {message.senderType === "agent" ? "Manual reply · " : ""}
+                      {message.senderType === "agent" ? "Manual reply · " : message.senderType === "bot" ? "Auto · " : ""}
                       {message.time}
+                      {message.status && message.status !== "SENT" && message.status !== "Delivered" && (
+                        <span className="ml-1 text-[8px] uppercase font-semibold">
+                          {message.status}
+                        </span>
+                      )}
                     </p>
                   </div>
                 </div>

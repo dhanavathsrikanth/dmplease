@@ -24,6 +24,9 @@ export interface DispatchRule {
   priority: number;
   short_links_enabled?: boolean | null;
   link_rotator_id?: string | null;
+  delay_min_ms?: number;
+  delay_max_ms?: number;
+  hourly_cap?: number;
 }
 
 export interface RuleSelection<T extends DispatchRule> {

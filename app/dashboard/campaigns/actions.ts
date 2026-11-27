@@ -35,6 +35,9 @@ export interface CreateCampaignPayload {
   messageAssets?: Record<string, unknown> | null;
   shortLinksEnabled?: boolean;
   linkRotatorId?: string | null;
+  hourlyCap?: number;
+  delayMinMs?: number;
+  delayMaxMs?: number;
 }
 
 export async function createCampaign(payload: CreateCampaignPayload) {
@@ -134,6 +137,9 @@ export async function createCampaign(payload: CreateCampaignPayload) {
         message_assets: values.messageAssets ?? {},
         short_links_enabled: values.shortLinksEnabled,
         link_rotator_id: values.linkRotatorId || null,
+        hourly_cap: values.hourlyCap ?? 0,
+        delay_min_ms: values.delayMinMs ?? 0,
+        delay_max_ms: values.delayMaxMs ?? 2000,
         active: true,
       })
       .select("id")
@@ -252,6 +258,9 @@ export async function updateCampaign(
         message_assets: values.messageAssets ?? {},
         short_links_enabled: values.shortLinksEnabled,
         link_rotator_id: values.linkRotatorId || null,
+        hourly_cap: values.hourlyCap ?? 0,
+        delay_min_ms: values.delayMinMs ?? 0,
+        delay_max_ms: values.delayMaxMs ?? 2000,
         updated_at: new Date().toISOString(),
       })
       .eq("id", id);

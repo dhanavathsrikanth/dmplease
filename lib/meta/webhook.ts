@@ -58,6 +58,7 @@ export interface WebhookCommentEvent {
   commenterId: string;
   commenterName?: string;
   mediaId: string;
+  parentCommentId?: string | null;
 }
 
 export interface WebhookEntry {
@@ -78,6 +79,8 @@ export interface WebhookEntry {
       };
       media_id?: string;
       story_id?: string;
+      parent_id?: string;
+      parent?: { id?: string };
       mid?: string;
       reaction?: {
         mid?: string;
@@ -262,6 +265,7 @@ export function parseCommentEvents(
       const commentId = value?.id ?? value?.comment_id;
       const mediaId = value?.media?.id ?? value?.media_id;
       const commenterId = value?.from?.id;
+      const parentCommentId = value?.parent_id ?? value?.parent?.id ?? null;
 
       if (!entry.id || !commentId || !mediaId || !commenterId) {
         continue;
@@ -279,6 +283,7 @@ export function parseCommentEvents(
         commenterId,
         commenterName: value.from?.username,
         mediaId,
+        parentCommentId,
       });
     }
   }

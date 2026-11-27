@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { checkMetaApiLatency } from "@/lib/meta/client";
 import { getWebhookHealth } from "@/lib/meta/webhook-events";
+import { getQueueStats } from "@/lib/dm-queue";
 import { hasWebhookSigningSecret } from "@/lib/meta/webhook";
 import { hasDatabaseUrl, hasSecret } from "@/lib/config";
 import { getCurrentProfile } from "@/lib/profile";
@@ -99,6 +100,10 @@ async function DiagnosticsContent() {
   let trackedClicks = 0;
   let activityError = false;
   let connectedHandle: string | null = null;
+  let sendsLastHour = 0;
+  let queuePending = 0;
+  let queueFailed = 0;
+  let breaches24h = 0;
 
   // Real database check + workspace-scoped reads, all in one round-trip batch.
   const dbStart = performance.now();
@@ -130,6 +135,34 @@ async function DiagnosticsContent() {
   const dbLatencyMs = Math.max(1, Math.round(performance.now() - dbStart));
 
   if (accountRes?.data?.[0]?.username) connectedHandle = accountRes.data[0].username;
+
+  // Safety & delivery metrics.
+  if (workspaceIds.length > 0) {
+    try {
+      const since1h = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      const [sendsHourRes, breachesRes, queueStats] = await Promise.all([
+        supabase
+          .from("dm_logs")
+          .select("id", { count: "exact", head: true })
+          .in("workspace_id", workspaceIds)
+          .eq("status", "SENT")
+          .gte("sent_at", since1h),
+        supabase
+          .from("safety_events")
+          .select("id", { count: "exact", head: true })
+          .in("workspace_id", workspaceIds)
+          .eq("kind", "rate_limit_breach")
+          .gte("created_at", last24Hours),
+        getQueueStats(workspaceIds),
+      ]);
+      sendsLastHour = sendsHourRes.count ?? 0;
+      breaches24h = breachesRes.count ?? 0;
+      queuePending = queueStats.pending;
+      queueFailed = queueStats.failed;
+    } catch (error) {
+      console.warn("[diagnostics] Could not load safety metrics:", error);
+    }
+  }
 
   if (safetyResult?.error || clicksResult?.error) {
     console.warn(
@@ -322,6 +355,42 @@ async function DiagnosticsContent() {
                 {activityError ? "—" : trackedClicks}
               </p>
               <p className="text-[10px] font-mono text-[#6b6f7e]">Tracked link clicks (24h)</p>
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 shadow-subtle p-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-start gap-3.5">
+            <div className="size-10 rounded-xl flex items-center justify-center shrink-0 border bg-[#f0fdf4] text-[#00b473] border-[#00b473]/30 dark:bg-[#00b473]/20 dark:text-[#4ade80] dark:border-[#00b473]/40">
+              <ShieldCheck className="size-5" aria-hidden="true" />
+            </div>
+            <div className="space-y-1">
+              <p className="font-semibold text-xs sm:text-sm text-foreground">
+                Safety &amp; delivery
+              </p>
+              <p className="text-xs text-[#555a6a] dark:text-muted-foreground leading-relaxed">
+                Sends, queued overflow and limit breaches across your workspaces.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-6 self-end sm:self-center shrink-0">
+            <div className="text-right">
+              <p className="text-lg font-mono font-medium text-foreground">{sendsLastHour}</p>
+              <p className="text-[10px] font-mono text-[#6b6f7e]">Sends (1h)</p>
+            </div>
+            <div className="text-right">
+              <p className="text-lg font-mono font-medium text-foreground">{queuePending}</p>
+              <p className="text-[10px] font-mono text-[#6b6f7e]">Queued</p>
+            </div>
+            <div className="text-right">
+              <p className="text-lg font-mono font-medium text-foreground">{queueFailed}</p>
+              <p className="text-[10px] font-mono text-[#6b6f7e]">Failed</p>
+            </div>
+            <div className="text-right">
+              <p className="text-lg font-mono font-medium text-foreground">{breaches24h}</p>
+              <p className="text-[10px] font-mono text-[#6b6f7e]">Breaches (24h)</p>
             </div>
           </div>
         </div>
