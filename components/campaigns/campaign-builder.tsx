@@ -13,6 +13,7 @@ import {
   ExternalLink,
   Loader2,
   Clock,
+  UserPlus,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -106,6 +107,11 @@ interface CampaignInitialData {
   followGateButtonLabel?: string | null;
   followGateOnUnavailable?: string | null;
   collectField?: string | null;
+  collectRetryMessage?: string | null;
+  collectSkipMessage?: string | null;
+  collectSuccessMessage?: string | null;
+  collectSkipKeywords?: string[] | null;
+  collectMaxAttempts?: number | null;
   dmVariants?: string[] | null;
   messageFormat?: string | null;
   messageAssets?: {
@@ -196,14 +202,35 @@ export function CampaignBuilder({
   const [buttonText, setButtonText] = useState(
     initialCampaign?.buttonText ?? "Download Guide 📖"
   );
-  const [collectField, setCollectField] = useState<
-    "none" | "email" | "phone" | "name"
-  >(() => {
+  const [collectField, setCollectField] = useState<string>(() => {
     const initial = initialCampaign?.collectField;
-    return initial === "email" || initial === "phone" || initial === "name"
-      ? initial
-      : "none";
+    if (!initial) return "none";
+    if (initial === "email" || initial === "phone" || initial === "name") {
+      return initial;
+    }
+    if (initial.startsWith("custom:")) return "custom";
+    return "none";
   });
+  const [collectCustomKey, setCollectCustomKey] = useState<string>(() => {
+    const initial = initialCampaign?.collectField;
+    return initial?.startsWith("custom:") ? initial.slice("custom:".length) : "";
+  });
+  const [collectRetryMessage, setCollectRetryMessage] = useState<string>(
+    () => initialCampaign?.collectRetryMessage ?? ""
+  );
+  const [collectSkipMessage, setCollectSkipMessage] = useState<string>(
+    () => initialCampaign?.collectSkipMessage ?? ""
+  );
+  const [collectSuccessMessage, setCollectSuccessMessage] = useState<string>(
+    () => initialCampaign?.collectSuccessMessage ?? ""
+  );
+  const [collectSkipKeywords, setCollectSkipKeywords] = useState<string>(
+    () =>
+      (initialCampaign?.collectSkipKeywords ?? ["skip", "later", "no thanks", "not now"]).join(", ")
+  );
+  const [collectMaxAttempts, setCollectMaxAttempts] = useState<number>(
+    () => initialCampaign?.collectMaxAttempts ?? 3
+  );
 
   const [hourlyCap, setHourlyCap] = useState<number>(() =>
     typeof initialCampaign?.hourlyCap === "number" ? initialCampaign.hourlyCap : 0
@@ -377,7 +404,20 @@ export function CampaignBuilder({
       openingMessage: followGateEnabled ? openingMessage : null,
       followGateButtonLabel: followGateEnabled ? followGateButtonLabel : null,
       followGateOnUnavailable,
-      collectField,
+      collectField:
+        collectField === "custom"
+          ? collectCustomKey.trim()
+            ? `custom:${collectCustomKey.trim()}`
+            : "none"
+          : collectField,
+      collectRetryMessage: collectRetryMessage.trim() || null,
+      collectSkipMessage: collectSkipMessage.trim() || null,
+      collectSuccessMessage: collectSuccessMessage.trim() || null,
+      collectSkipKeywords: collectSkipKeywords
+        .split(",")
+        .map((keyword) => keyword.trim())
+        .filter(Boolean),
+      collectMaxAttempts,
     };
 
     try {
@@ -869,20 +909,27 @@ export function CampaignBuilder({
             disabled={publishStatus === "publishing"}
           />
 
-          {/* Lead capture — powers {name}, {email} and {phone} */}
-          <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 p-5 shadow-subtle space-y-3">
-            <div className="space-y-0.5">
-              <h3 className="font-semibold text-xs sm:text-sm text-foreground">
-                Collect details
-              </h3>
-              <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground">
-                Ask followers to reply with a detail, then use it in your messages with{" "}
-                <code className="font-mono">{"{name}"}</code>,{" "}
-                <code className="font-mono">{"{email}"}</code> or{" "}
-                <code className="font-mono">{"{phone}"}</code>. Optional — skip if you only
-                want to send a link.
-              </p>
+          {/* STEP 3: Collect info (lead capture) */}
+          <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 p-5 shadow-subtle space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="space-y-0.5">
+                <h3 className="font-semibold text-xs sm:text-sm text-foreground flex items-center gap-2">
+                  <UserPlus className="size-4 text-[#4262ff]" aria-hidden="true" />
+                  Collect info
+                </h3>
+                <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground">
+                  Ask one question after the DM, validate the reply, and save it to the
+                  contact. Use it later with{" "}
+                  <code className="font-mono">{"{name}"}</code>,{" "}
+                  <code className="font-mono">{"{email}"}</code> or{" "}
+                  <code className="font-mono">{"{phone}"}</code>.
+                </p>
+              </div>
+              <Badge variant="outline" className="text-[10px] rounded-full shrink-0">
+                Optional
+              </Badge>
             </div>
+
             <div className="space-y-1">
               <Label htmlFor="campaign-collect-field" className="text-[11px]">
                 What should we ask for?
@@ -890,11 +937,7 @@ export function CampaignBuilder({
               <select
                 id="campaign-collect-field"
                 value={collectField}
-                onChange={(event) =>
-                  setCollectField(
-                    event.target.value as "none" | "email" | "phone" | "name"
-                  )
-                }
+                onChange={(event) => setCollectField(event.target.value)}
                 disabled={publishStatus === "publishing"}
                 className="h-9 w-full rounded-lg border border-[#c7cad5] dark:border-border bg-background px-3 text-xs outline-none focus:border-[#4262ff] focus:ring-2 focus:ring-[#4262ff]/20"
               >
@@ -902,8 +945,129 @@ export function CampaignBuilder({
                 <option value="name">Their name</option>
                 <option value="email">Their email address</option>
                 <option value="phone">Their phone number</option>
+                <option value="custom">A custom property</option>
               </select>
             </div>
+
+            {collectField === "custom" && (
+              <div className="space-y-1">
+                <Label htmlFor="campaign-collect-key" className="text-[11px]">
+                  Property name
+                </Label>
+                <Input
+                  id="campaign-collect-key"
+                  value={collectCustomKey}
+                  onChange={(event) => setCollectCustomKey(event.target.value)}
+                  placeholder="e.g. company, city, budget"
+                  disabled={publishStatus === "publishing"}
+                  className="h-9 text-xs"
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  Saved under this key on the contact&apos;s custom properties.
+                </p>
+              </div>
+            )}
+
+            {collectField !== "none" && (
+              <div className="space-y-3 rounded-xl border border-[#e0e2e8] dark:border-border p-3.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-[#6b6f7e]">
+                  Conversation copy
+                </p>
+                <div className="space-y-1">
+                  <Label htmlFor="campaign-collect-retry" className="text-[11px]">
+                    Retry message (invalid reply)
+                  </Label>
+                  <textarea
+                    id="campaign-collect-retry"
+                    rows={2}
+                    value={collectRetryMessage}
+                    onChange={(event) => setCollectRetryMessage(event.target.value)}
+                    placeholder="That doesn't look quite right. Please try again, or reply SKIP to continue."
+                    disabled={publishStatus === "publishing"}
+                    className="w-full rounded-xl border border-[#c7cad5] dark:border-border bg-background px-3.5 py-2.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 resize-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="campaign-collect-skip" className="text-[11px]">
+                    Skip message
+                  </Label>
+                  <textarea
+                    id="campaign-collect-skip"
+                    rows={2}
+                    value={collectSkipMessage}
+                    onChange={(event) => setCollectSkipMessage(event.target.value)}
+                    placeholder="No problem — I'll skip that. Here's everything else you need."
+                    disabled={publishStatus === "publishing"}
+                    className="w-full rounded-xl border border-[#c7cad5] dark:border-border bg-background px-3.5 py-2.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 resize-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="campaign-collect-success" className="text-[11px]">
+                    Success message
+                  </Label>
+                  <textarea
+                    id="campaign-collect-success"
+                    rows={2}
+                    value={collectSuccessMessage}
+                    onChange={(event) => setCollectSuccessMessage(event.target.value)}
+                    placeholder="Got it, thank you! ✅"
+                    disabled={publishStatus === "publishing"}
+                    className="w-full rounded-xl border border-[#c7cad5] dark:border-border bg-background px-3.5 py-2.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 resize-none"
+                  />
+                </div>
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label htmlFor="campaign-collect-keywords" className="text-[11px]">
+                      Skip keywords
+                    </Label>
+                    <Input
+                      id="campaign-collect-keywords"
+                      value={collectSkipKeywords}
+                      onChange={(event) => setCollectSkipKeywords(event.target.value)}
+                      placeholder="skip, later, no thanks"
+                      disabled={publishStatus === "publishing"}
+                      className="h-9 text-xs"
+                    />
+                    <p className="text-[10px] text-muted-foreground">
+                      Comma-separated. A reply matching one skips the step.
+                    </p>
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="campaign-collect-attempts" className="text-[11px]">
+                      Max attempts
+                    </Label>
+                    <Input
+                      id="campaign-collect-attempts"
+                      type="number"
+                      min={1}
+                      max={10}
+                      value={collectMaxAttempts}
+                      onChange={(event) => setCollectMaxAttempts(Number(event.target.value))}
+                      disabled={publishStatus === "publishing"}
+                      className="h-9 text-xs"
+                    />
+                    <p className="text-[10px] text-muted-foreground">
+                      After this many invalid replies we send the skip message.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <ol className="space-y-1.5 text-[11px] text-[#555a6a] dark:text-muted-foreground">
+              <li className="flex gap-2">
+                <span className="font-mono text-[10px] text-[#4262ff]">1</span>
+                Follower comments your keyword and gets the DM.
+              </li>
+              <li className="flex gap-2">
+                <span className="font-mono text-[10px] text-[#4262ff]">2</span>
+                We ask for the detail and validate the reply.
+              </li>
+              <li className="flex gap-2">
+                <span className="font-mono text-[10px] text-[#4262ff]">3</span>
+                The contact is saved and appears in Contacts.
+              </li>
+            </ol>
           </Card>
 
           {/* STEP 4: Optional Public Comment Reply */}
@@ -1033,6 +1197,20 @@ export function CampaignBuilder({
             followGateEnabled={followGateEnabled}
             followGateOpeningMessage={openingMessage}
             followGateButtonLabel={followGateButtonLabel}
+            collectField={
+              collectField === "custom"
+                ? collectCustomKey.trim()
+                  ? `custom:${collectCustomKey.trim()}`
+                  : "none"
+                : collectField
+            }
+            collectRetryMessage={collectRetryMessage}
+            collectSkipMessage={collectSkipMessage}
+            collectSuccessMessage={collectSuccessMessage}
+            collectSkipKeywords={collectSkipKeywords
+              .split(",")
+              .map((keyword) => keyword.trim())
+              .filter(Boolean)}
             instagramHandle={instagramHandle}
             profilePictureUrl={profilePictureUrl}
             isVerified={isVerified}

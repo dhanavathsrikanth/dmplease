@@ -27,6 +27,11 @@ export interface DispatchRule {
   delay_min_ms?: number;
   delay_max_ms?: number;
   hourly_cap?: number;
+  collect_retry_message?: string | null;
+  collect_skip_message?: string | null;
+  collect_success_message?: string | null;
+  collect_skip_keywords?: string[] | null;
+  collect_max_attempts?: number | null;
 }
 
 export interface RuleSelection<T extends DispatchRule> {

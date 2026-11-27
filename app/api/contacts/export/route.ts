@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 
 interface ContactExportRow {
@@ -11,7 +11,10 @@ interface ContactExportRow {
   tags: string[] | null;
   properties: Record<string, unknown> | null;
   source: string | null;
+  status: string | null;
+  notes: string | null;
   opted_in_at: string | null;
+  last_interaction_at: string | null;
   created_at: string;
 }
 
@@ -25,7 +28,10 @@ const HEADERS = [
   "tags",
   "properties",
   "source",
+  "status",
+  "notes",
   "opted_in_at",
+  "last_interaction_at",
   "created_at",
 ];
 
@@ -37,7 +43,7 @@ function csvCell(value: unknown): string {
   return `"${raw.replace(/"/g, '""')}"`;
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const supabase = await createClient();
   const {
     data: { user },
@@ -64,14 +70,26 @@ export async function GET() {
     });
   }
 
-  const { data, error } = await supabase
+  const params = request.nextUrl.searchParams;
+  const query = (params.get("q") || "").trim().toLowerCase();
+  const source = (params.get("source") || "").trim();
+  const tag = (params.get("tag") || "").trim();
+  const has = (params.get("has") || "").trim();
+
+  let dbQuery = supabase
     .from("contacts")
     .select(
-      "id, instagram_id, username, display_name, email, phone, tags, properties, source, opted_in_at, created_at"
+      "id, instagram_id, username, display_name, email, phone, tags, properties, source, status, notes, opted_in_at, last_interaction_at, created_at"
     )
     .in("workspace_id", workspaceIds)
     .order("created_at", { ascending: false })
     .limit(5000);
+
+  if (source) dbQuery = dbQuery.eq("source", source);
+  if (has === "email") dbQuery = dbQuery.not("email", "is", null);
+  if (has === "phone") dbQuery = dbQuery.not("phone", "is", null);
+
+  const { data, error } = await dbQuery;
 
   if (error) {
     console.error("[contacts/export] Query failed:", error.message);
@@ -81,8 +99,30 @@ export async function GET() {
     );
   }
 
+  let rows = (data || []) as ContactExportRow[];
+  if (tag) rows = rows.filter((row) => (row.tags || []).includes(tag));
+  if (query) {
+    rows = rows.filter((row) => {
+      const haystack = [
+        row.display_name,
+        row.username,
+        row.instagram_id,
+        row.email,
+        row.phone,
+        row.source,
+        row.status,
+        ...(row.tags || []),
+        row.properties ? JSON.stringify(row.properties) : "",
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(query);
+    });
+  }
+
   const lines = [HEADERS.map(csvCell).join(",")];
-  for (const row of (data || []) as ContactExportRow[]) {
+  for (const row of rows) {
     lines.push(
       [
         row.id,
@@ -94,7 +134,10 @@ export async function GET() {
         row.tags,
         row.properties,
         row.source,
+        row.status,
+        row.notes,
         row.opted_in_at,
+        row.last_interaction_at,
         row.created_at,
       ]
         .map(csvCell)

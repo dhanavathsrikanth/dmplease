@@ -935,3 +935,61 @@ px tsc --noEmit - clean.
 ## 92. Part 14 takeaway
 
 **Every tap is counted and every receipt is stored:** clicks survive transient database errors, button URLs are always tracked, and delivery/read status flows from Meta into the campaign analytics.
+
+---
+
+# Part 15 - Lead capture / Contacts
+
+## 93. What problem it solves
+
+A DM that only sends a link leaves the creator with an anonymous follower. T1.7 adds a dedicated collect step so the creator can ask for a name, email, phone or any custom property, validate the reply, and keep a real contact record with tags, source and conversation history.
+
+## 94. Behavior
+
+| Situation | Result |
+|---|---|
+| Campaign has a collect step | After the DM, the follower is asked for the chosen detail. |
+| Valid reply | Value is normalized, saved to the contact (column or custom property), and a success message is sent. |
+| Invalid reply | A retry message is sent and the attempt counter increments. |
+| Attempts exhausted | The skip message is sent and the prompt closes. |
+| Follower replies SKIP / LATER / NO THANKS | The skip message is sent and the prompt closes. |
+| Contact list | Search, source/tag/has-email/has-phone filters, status, and a link to the detail page. |
+| Contact detail | Conversation history, lead timeline, tags, custom properties, status and notes. |
+| CSV export | Exports the current filter, including status, notes and last interaction. |
+| Campaign analytics | Prompts sent, captured, skipped and capture rate. |
+
+## 95. Architecture / file map
+
+| File | Role |
+|---|---|
+| lib/lead-capture.ts | Pure parsing, validation, skip detection, prompt rendering, config normalization. |
+| lib/meta/webhook-processor.ts | Collect prompt creation, reply handling, contact save, lead events. |
+| supabase/migrations/20261127_lead_capture.sql | Collect config columns, pending_dms.collect_config/attempts, contacts.status/notes, lead_events. |
+| components/campaigns/campaign-builder.tsx | "Collect info" step with copy, keywords and attempts. |
+| components/campaigns/phone-preview.tsx | Live phone preview of the collect conversation. |
+| pp/dashboard/contacts/page.tsx | Filterable contacts table. |
+| pp/dashboard/contacts/[id]/page.tsx | Contact detail with conversation + lead timeline. |
+| components/contacts/contact-editor.tsx | Tags, custom properties, status and notes editor. |
+| pp/dashboard/contacts/actions.ts | Ownership-checked contact updates. |
+| pp/api/contacts/export/route.ts | Filtered CSV export. |
+| lib/campaign-analytics.ts | Lead capture metrics. |
+
+## 96. UI and accessibility
+
+- Every input has a visible <Label htmlFor> and a plain-English hint.
+- The collect step is its own card, not mixed into other settings.
+- The phone preview shows the prompt, a sample reply, the success bubble, the retry copy and the skip keyword.
+- Contacts filters are labelled selects; the table uses real <th scope> semantics.
+- Errors use ole="alert"; saved state uses ole="status".
+
+## 97. Tests and verification
+
+- 	ests/lead-capture.test.ts - parsing, email/phone/name/custom validation, skip keywords, prompt rendering, config clamping.
+- 
+pm test, 
+pm run lint, 
+px tsc --noEmit - clean.
+
+## 98. Part 15 takeaway
+
+**Lead capture is now a first-class step:** validated replies become real contacts, every prompt/capture/skip is recorded, and the creator can see, edit and export the data without leaving the dashboard.

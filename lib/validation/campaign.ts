@@ -63,7 +63,28 @@ export const campaignSchema = z.object({
   publicReplyEnabled: z.boolean().default(false),
   publicReplyMessages: publicRepliesSchema,
   /** Lead field collected with a reply so it can be interpolated later. */
-  collectField: z.enum(["none", "email", "phone", "name"]).default("none"),
+  collectField: z
+    .string()
+    .trim()
+    .max(80)
+    .default("none")
+    .refine(
+      (value) =>
+        value === "none" ||
+        value === "email" ||
+        value === "phone" ||
+        value === "name" ||
+        /^custom:[A-Za-z0-9 _-]{1,60}$/.test(value),
+      { message: "Choose a valid field to collect." }
+    ),
+  collectRetryMessage: z.string().trim().max(500).nullable().optional(),
+  collectSkipMessage: z.string().trim().max(500).nullable().optional(),
+  collectSuccessMessage: z.string().trim().max(500).nullable().optional(),
+  collectSkipKeywords: z
+    .array(z.string().trim().min(1).max(30))
+    .max(10)
+    .default(["skip", "later", "no thanks", "not now"]),
+  collectMaxAttempts: z.coerce.number().int().min(1).max(10).default(3),
   followGateEnabled: z.boolean().default(false),
   /** Ask-for-Follow: copy shown before Meta can confirm the relationship. */
   openingMessage: openingMessageSchema.nullable().optional(),

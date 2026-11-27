@@ -19,6 +19,11 @@ import { cn } from "@/lib/utils";
 import { formatDmText } from "@/lib/meta/dm-template";
 import { buildDmVars, type DmVars } from "@/lib/dm-variables";
 import { shortLinkPreview } from "@/lib/link-preview";
+import {
+  normalizeCollectConfig,
+  parseCollectField,
+  renderCollectPrompt,
+} from "@/lib/lead-capture";
 
 interface PhonePreviewProps {
   postScope: "ANY_POST" | "SPECIFIC_POST" | "NEXT_POST";
@@ -42,6 +47,11 @@ interface PhonePreviewProps {
   followGateEnabled?: boolean;
   followGateOpeningMessage?: string | null;
   followGateButtonLabel?: string | null;
+  collectField?: string | null;
+  collectRetryMessage?: string | null;
+  collectSkipMessage?: string | null;
+  collectSuccessMessage?: string | null;
+  collectSkipKeywords?: string[];
   instagramHandle?: string;
   profilePictureUrl?: string | null;
   isVerified?: boolean;
@@ -122,6 +132,11 @@ export function PhonePreview({
   followGateEnabled = false,
   followGateOpeningMessage,
   followGateButtonLabel,
+  collectField,
+  collectRetryMessage,
+  collectSkipMessage,
+  collectSuccessMessage,
+  collectSkipKeywords,
   instagramHandle = "yourbrand",
   profilePictureUrl = null,
   isVerified = false,
@@ -144,6 +159,22 @@ export function PhonePreview({
     followGateOpeningMessage || "Follow the account, then tap below to get your {keyword}. 👇",
     sampleVars
   );
+  const collect = parseCollectField(collectField);
+  const collectConfig = normalizeCollectConfig({
+    retryMessage: collectRetryMessage,
+    skipMessage: collectSkipMessage,
+    successMessage: collectSuccessMessage,
+    skipKeywords: collectSkipKeywords,
+  });
+  const collectPrompt = collect ? renderCollectPrompt(collect, collectConfig) : null;
+  const sampleReply =
+    collect?.kind === "email"
+      ? "alex@example.com"
+      : collect?.kind === "phone"
+        ? "+91 98765 43210"
+        : collect?.kind === "name"
+          ? "Alex"
+          : "Acme Inc";
   const linkMatch = formattedDm.match(/https?:\/\/[^\s]+/);
   const linkUrl = linkMatch?.[0] || buttonUrl || "";
   let linkHost = "";
@@ -338,6 +369,49 @@ export function PhonePreview({
                   </div>
                   <span className="text-[9px] text-[#8e8e8e] pr-1">Seen · now</span>
                 </div>
+
+                {collectPrompt && (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <div className="h-px flex-1 bg-[#dbdbdb] dark:bg-[#262626]" />
+                      <span className="text-[9px] font-semibold uppercase tracking-wide text-[#8e8e8e]">
+                        Collect info
+                      </span>
+                      <div className="h-px flex-1 bg-[#dbdbdb] dark:bg-[#262626]" />
+                    </div>
+
+                    <div className="flex flex-col items-end gap-1">
+                      <div className="max-w-[248px] rounded-[20px] rounded-br-sm px-3 py-2.5 text-[12px] leading-[1.45] text-white bg-gradient-to-br from-[#515bd4] via-[#d62976] to-[#f58529] break-words whitespace-pre-wrap shadow-sm">
+                        <p>{collectPrompt}</p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-end gap-2">
+                      <div className="size-6 rounded-full bg-[#efefef] dark:bg-[#363636] grid place-items-center text-[9px] font-semibold text-[#8e8e8e] shrink-0">
+                        F
+                      </div>
+                      <div className="max-w-[210px] rounded-[20px] rounded-bl-sm bg-[#efefef] dark:bg-[#262626] px-3 py-2 text-[12px] leading-[1.45] break-words whitespace-pre-wrap">
+                        {sampleReply}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col items-end gap-1">
+                      <div className="max-w-[248px] rounded-[20px] rounded-br-sm px-3 py-2.5 text-[12px] leading-[1.45] text-white bg-gradient-to-br from-[#515bd4] via-[#d62976] to-[#f58529] break-words whitespace-pre-wrap shadow-sm">
+                        <p>{collectConfig.successMessage}</p>
+                      </div>
+                      <span className="text-[9px] text-[#8e8e8e] pr-1">
+                        Saved to Contacts
+                      </span>
+                    </div>
+
+                    <p className="text-center text-[9px] text-[#8e8e8e]">
+                      Invalid reply → “{collectConfig.retryMessage}”
+                    </p>
+                    <p className="text-center text-[9px] text-[#8e8e8e]">
+                      Reply {collectConfig.skipKeywords[0]?.toUpperCase() ?? "SKIP"} → skip
+                    </p>
+                  </div>
+                )}
 
                 {publicReplyEnabled && (
                   <p className="text-center text-[10px] text-[#8e8e8e]">

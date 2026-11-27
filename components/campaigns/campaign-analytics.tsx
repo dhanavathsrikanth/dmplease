@@ -1,4 +1,4 @@
-import { BarChart3, Layers, MessageSquare, ShieldCheck, Ticket, Zap } from "lucide-react";
+import { BarChart3, Layers, MessageSquare, ShieldCheck, Ticket, UserPlus, Zap } from "lucide-react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -191,6 +191,31 @@ export function CampaignAnalyticsCard({ data }: CampaignAnalyticsCardProps) {
                     <span className="text-muted-foreground">openers sent</span>
                   </span>
                 )}
+              </div>
+            </div>
+          )}
+
+          {data.collectPrompts > 0 && (
+            <div className="rounded-xl border border-[#e0e2e8] dark:border-border px-3.5 py-3 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <UserPlus className="size-3.5 text-[#4262ff]" aria-hidden="true" />
+                <span className="text-xs font-semibold">Lead capture</span>
+              </div>
+              <div className="flex items-center gap-4 text-xs">
+                <span>
+                  <strong className="text-foreground">{data.leadsCaptured}</strong>{" "}
+                  <span className="text-muted-foreground">captured</span>
+                </span>
+                <span>
+                  <strong className="text-foreground">{data.leadsSkipped}</strong>{" "}
+                  <span className="text-muted-foreground">skipped</span>
+                </span>
+                <span>
+                  <strong className="text-foreground">
+                    {data.leadCaptureRate === null ? "—" : `${data.leadCaptureRate}%`}
+                  </strong>{" "}
+                  <span className="text-muted-foreground">capture rate</span>
+                </span>
               </div>
             </div>
           )}

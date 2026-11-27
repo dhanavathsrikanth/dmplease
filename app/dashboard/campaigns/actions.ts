@@ -30,7 +30,12 @@ export interface CreateCampaignPayload {
   openingMessage?: string | null;
   followGateButtonLabel?: string | null;
   followGateOnUnavailable?: "hold" | "deliver";
-  collectField?: "none" | "email" | "phone" | "name";
+  collectField?: string;
+  collectRetryMessage?: string | null;
+  collectSkipMessage?: string | null;
+  collectSuccessMessage?: string | null;
+  collectSkipKeywords?: string[];
+  collectMaxAttempts?: number;
   messageFormat?: string;
   messageAssets?: Record<string, unknown> | null;
   shortLinksEnabled?: boolean;
@@ -134,6 +139,11 @@ export async function createCampaign(payload: CreateCampaignPayload) {
         follow_gate_button_label: values.followGateButtonLabel || null,
         follow_gate_on_unavailable: values.followGateOnUnavailable,
         collect_field: values.collectField === "none" ? null : values.collectField,
+        collect_retry_message: values.collectRetryMessage || null,
+        collect_skip_message: values.collectSkipMessage || null,
+        collect_success_message: values.collectSuccessMessage || null,
+        collect_skip_keywords: values.collectSkipKeywords,
+        collect_max_attempts: values.collectMaxAttempts,
         message_format: values.messageFormat || "text",
         message_assets: values.messageAssets ?? {},
         short_links_enabled: values.shortLinksEnabled,
@@ -256,6 +266,11 @@ export async function updateCampaign(
         follow_gate_button_label: values.followGateButtonLabel || null,
         follow_gate_on_unavailable: values.followGateOnUnavailable,
         collect_field: values.collectField === "none" ? null : values.collectField,
+        collect_retry_message: values.collectRetryMessage || null,
+        collect_skip_message: values.collectSkipMessage || null,
+        collect_success_message: values.collectSuccessMessage || null,
+        collect_skip_keywords: values.collectSkipKeywords,
+        collect_max_attempts: values.collectMaxAttempts,
         message_format: values.messageFormat || "text",
         message_assets: values.messageAssets ?? {},
         short_links_enabled: values.shortLinksEnabled,

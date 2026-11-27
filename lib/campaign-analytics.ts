@@ -28,6 +28,10 @@ export interface CampaignAnalytics {
   formats: Array<{ format: string; sent: number }>;
   vouchersGenerated: number;
   voucherConversions: number;
+  collectPrompts: number;
+  leadsCaptured: number;
+  leadsSkipped: number;
+  leadCaptureRate: number | null;
 }
 
 const EMPTY: CampaignAnalytics = {
@@ -50,6 +54,10 @@ const EMPTY: CampaignAnalytics = {
   formats: [],
   vouchersGenerated: 0,
   voucherConversions: 0,
+  collectPrompts: 0,
+  leadsCaptured: 0,
+  leadsSkipped: 0,
+  leadCaptureRate: null,
 };
 
 export async function loadCampaignAnalytics(
@@ -68,6 +76,7 @@ export async function loadCampaignAnalytics(
     conversionsRes,
     vouchersRes,
     followChecksRes,
+    leadEventsRes,
   ] = await Promise.all([
     db
       .from("dm_logs")
@@ -106,6 +115,12 @@ export async function loadCampaignAnalytics(
       .from("follow_checks")
       .select("status")
       .eq("automation_id", automationId)
+      .limit(5000),
+    db
+      .from("lead_events")
+      .select("kind")
+      .eq("automation_id", automationId)
+      .gte("created_at", since)
       .limit(5000),
   ]);
 
@@ -172,6 +187,14 @@ export async function loadCampaignAnalytics(
     (r) => r.trigger_keyword === "OPENING" || r.keyword === "OPENING"
   ).length;
 
+  // Lead capture
+  const leadEvents = leadEventsRes.data ?? [];
+  const collectPrompts = leadEvents.filter((e) => e.kind === "prompt").length;
+  const leadsCaptured = leadEvents.filter((e) => e.kind === "captured").length;
+  const leadsSkipped = leadEvents.filter((e) => e.kind === "skipped").length;
+  const leadCaptureRate =
+    collectPrompts > 0 ? Math.round((leadsCaptured / collectPrompts) * 100) : null;
+
   return {
     dmSent,
     dmFailed,
@@ -192,5 +215,9 @@ export async function loadCampaignAnalytics(
     formats,
     vouchersGenerated: vouchers.length,
     voucherConversions,
+    collectPrompts,
+    leadsCaptured,
+    leadsSkipped,
+    leadCaptureRate,
   };
 }

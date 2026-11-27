@@ -21,6 +21,14 @@ import {
   randomizedDelay,
 } from "@/lib/meta/rate-limit";
 import { ACCOUNT_HOURLY_CEILING } from "@/lib/meta/limits";
+import {
+  isSkipKeyword,
+  normalizeCollectConfig,
+  parseCollectField,
+  renderCollectPrompt,
+  validateLeadValue,
+  type CollectConfig,
+} from "@/lib/lead-capture";
 import { getQstash, getQstashWorkerUrl, getRedis, hasQstash, hasUpstashRedis } from "@/lib/upstash";
 import {
   decideFollowGateAction,
@@ -141,6 +149,11 @@ export interface AutomationLike {
   followGateOnUnavailable?: string | null;
   dmVariants?: string[];
   collectField?: string | null;
+  collectRetryMessage?: string | null;
+  collectSkipMessage?: string | null;
+  collectSuccessMessage?: string | null;
+  collectSkipKeywords?: string[] | null;
+  collectMaxAttempts?: number | null;
   openingMessage?: string | null;
   hourlyCap?: number;
   delayMinMs?: number;
@@ -169,6 +182,11 @@ type AutomationRow = {
   follow_gate_on_unavailable?: string | null;
   dm_variants?: string[] | null;
   collect_field?: string | null;
+  collect_retry_message?: string | null;
+  collect_skip_message?: string | null;
+  collect_success_message?: string | null;
+  collect_skip_keywords?: string[] | null;
+  collect_max_attempts?: number | null;
   opening_message?: string | null;
   hourly_cap?: number | null;
   delay_min_ms?: number | null;
@@ -203,6 +221,11 @@ export function toAutomationLike(row: AutomationRow): AutomationLike {
     followGateOnUnavailable: row.follow_gate_on_unavailable ?? "hold",
     dmVariants: row.dm_variants ?? [],
     collectField: row.collect_field,
+    collectRetryMessage: row.collect_retry_message ?? null,
+    collectSkipMessage: row.collect_skip_message ?? null,
+    collectSuccessMessage: row.collect_success_message ?? null,
+    collectSkipKeywords: row.collect_skip_keywords ?? null,
+    collectMaxAttempts: row.collect_max_attempts ?? null,
     openingMessage: row.opening_message,
     hourlyCap: row.hourly_cap ?? 0,
     delayMinMs: row.delay_min_ms ?? 0,
@@ -734,6 +757,16 @@ async function getRules(
       delay_min_ms: (rule as { delay_min_ms?: number | null }).delay_min_ms ?? 0,
       delay_max_ms: (rule as { delay_max_ms?: number | null }).delay_max_ms ?? 2000,
       hourly_cap: (rule as { hourly_cap?: number | null }).hourly_cap ?? 0,
+      collect_retry_message:
+        (rule as { collect_retry_message?: string | null }).collect_retry_message ?? null,
+      collect_skip_message:
+        (rule as { collect_skip_message?: string | null }).collect_skip_message ?? null,
+      collect_success_message:
+        (rule as { collect_success_message?: string | null }).collect_success_message ?? null,
+      collect_skip_keywords:
+        (rule as { collect_skip_keywords?: string[] | null }).collect_skip_keywords ?? null,
+      collect_max_attempts:
+        (rule as { collect_max_attempts?: number | null }).collect_max_attempts ?? null,
     }));
   } catch {
     return [];
@@ -807,6 +840,7 @@ async function createPending(input: {
   buttonText?: string | null;
   buttonUrl?: string | null;
   collectField?: string | null;
+  collectConfig?: CollectConfig | null;
 }): Promise<string | null> {
   if (!hasAdminDb()) return null;
   try {
@@ -824,6 +858,7 @@ async function createPending(input: {
         button_text: input.buttonText ?? null,
         button_url: input.buttonUrl ?? null,
         collect_field: input.collectField ?? null,
+        collect_config: input.collectConfig ?? null,
       })
       .select("id")
       .single();
@@ -897,6 +932,76 @@ async function markContactLedger(
       .eq("instagram_id", recipientId);
   } catch (error) {
     console.warn("[webhook] Could not update contact:", error);
+  }
+}
+
+/** Saves a collected value on the contact (column or custom property). */
+async function saveContactField(input: {
+  workspaceId: string;
+  recipientId: string;
+  field: ReturnType<typeof parseCollectField>;
+  value: string;
+}): Promise<string | null> {
+  if (!hasAdminDb() || !input.field) return null;
+  const db = getAdminDb();
+  try {
+    const { data: contact } = await db
+      .from("contacts")
+      .select("id, properties")
+      .eq("workspace_id", input.workspaceId)
+      .eq("instagram_id", input.recipientId)
+      .maybeSingle();
+    if (!contact?.id) return null;
+
+    const patch: Record<string, unknown> = {
+      updated_at: nowIso(),
+      last_interaction_at: nowIso(),
+    };
+    if (input.field.kind === "email") patch.email = input.value;
+    else if (input.field.kind === "phone") patch.phone = input.value;
+    else if (input.field.kind === "name") patch.display_name = input.value;
+    else if (input.field.kind === "custom" && input.field.key) {
+      const properties =
+        contact.properties && typeof contact.properties === "object"
+          ? { ...(contact.properties as Record<string, unknown>) }
+          : {};
+      properties[input.field.key] = input.value;
+      patch.properties = properties;
+    }
+
+    await db.from("contacts").update(patch).eq("id", contact.id);
+    return String(contact.id);
+  } catch (error) {
+    console.warn("[webhook] Could not save contact field:", error);
+    return null;
+  }
+}
+
+/** Appends a lead-capture event for analytics and audit. */
+async function recordLeadEvent(input: {
+  workspaceId: string;
+  automationId?: string | null;
+  ruleId?: string | null;
+  contactId?: string | null;
+  recipientId?: string | null;
+  kind: "prompt" | "captured" | "skipped" | "invalid";
+  field?: string | null;
+  value?: string | null;
+}): Promise<void> {
+  if (!hasAdminDb()) return;
+  try {
+    await getAdminDb().from("lead_events").insert({
+      workspace_id: input.workspaceId,
+      automation_id: input.automationId ?? null,
+      rule_id: input.ruleId ?? null,
+      contact_id: input.contactId ?? null,
+      recipient_id: input.recipientId ?? null,
+      kind: input.kind,
+      field: input.field ?? null,
+      value: input.value ?? null,
+    });
+  } catch (error) {
+    console.warn("[webhook] Could not record lead event:", error);
   }
 }
 
@@ -2282,15 +2387,34 @@ async function sendCommentDm(input: {
     }
 
     if (input.contactId && auto.collectField) {
-      await createPending({
-        workspaceId: input.workspaceId,
-        kind: "collect",
-        automationId: auto.id,
-        instagramAccountId: input.accountDbId,
-        recipientId: input.recipientId,
-        message: `Reply with your ${auto.collectField} to finish claiming this.`,
-        collectField: auto.collectField,
-      });
+      const field = parseCollectField(auto.collectField);
+      if (field) {
+        const config = normalizeCollectConfig({
+          retryMessage: auto.collectRetryMessage,
+          skipMessage: auto.collectSkipMessage,
+          successMessage: auto.collectSuccessMessage,
+          skipKeywords: auto.collectSkipKeywords,
+          maxAttempts: auto.collectMaxAttempts,
+        });
+        await createPending({
+          workspaceId: input.workspaceId,
+          kind: "collect",
+          automationId: auto.id,
+          instagramAccountId: input.accountDbId,
+          recipientId: input.recipientId,
+          message: renderCollectPrompt(field, config),
+          collectField: auto.collectField,
+          collectConfig: config,
+        });
+        await recordLeadEvent({
+          workspaceId: input.workspaceId,
+          automationId: auto.id,
+          contactId: input.contactId,
+          recipientId: input.recipientId,
+          kind: "prompt",
+          field: auto.collectField,
+        });
+      }
     }
   }
 
@@ -2636,15 +2760,34 @@ async function processDirectRule(input: {
   }
 
   if (succeeded && rule.collect_field && contactId) {
-    await createPending({
-      workspaceId: input.workspaceId,
-      kind: "collect",
-      ruleId: rule.id,
-      instagramAccountId: input.accountDbId,
-      recipientId: input.recipientId,
-      message: `Reply with your ${rule.collect_field} to finish.`,
-      collectField: rule.collect_field,
-    });
+    const field = parseCollectField(rule.collect_field);
+    if (field) {
+      const config = normalizeCollectConfig({
+        retryMessage: rule.collect_retry_message,
+        skipMessage: rule.collect_skip_message,
+        successMessage: rule.collect_success_message,
+        skipKeywords: rule.collect_skip_keywords,
+        maxAttempts: rule.collect_max_attempts,
+      });
+      await createPending({
+        workspaceId: input.workspaceId,
+        kind: "collect",
+        ruleId: rule.id,
+        instagramAccountId: input.accountDbId,
+        recipientId: input.recipientId,
+        message: renderCollectPrompt(field, config),
+        collectField: rule.collect_field,
+        collectConfig: config,
+      });
+      await recordLeadEvent({
+        workspaceId: input.workspaceId,
+        ruleId: rule.id,
+        contactId,
+        recipientId: input.recipientId,
+        kind: "prompt",
+        field: rule.collect_field,
+      });
+    }
   }
 
   return succeeded;
@@ -2970,37 +3113,133 @@ export async function processWebhookPayload(
       // A reply to a lead-capture question is stored on the contact first.
       const { data: pendingRows } = await getAdminDb()
         .from("pending_dms")
-        .select("id, collect_field")
+        .select("id, collect_field, collect_config, attempts, automation_id, rule_id")
         .eq("workspace_id", account.workspace_id)
         .eq("recipient_id", event.senderId)
         .eq("kind", "collect")
         .gt("expires_at", nowIso())
         .order("created_at", { ascending: false })
         .limit(1);
-      const pending = pendingRows?.[0];
-      if (pending?.collect_field) {
-        const field = pending.collect_field;
-        if (field === "email" && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(event.messageText)) {
-          if (conversationId) {
-            await recordMessage({
-              workspaceId: account.workspace_id,
-              conversationId,
-              direction: "outbound",
-              senderType: "bot",
-              text: "That email doesn't look right. Please try again.",
-            });
+      const pending = pendingRows?.[0] as
+        | {
+            id: string;
+            collect_field: string | null;
+            collect_config: Record<string, unknown> | null;
+            attempts: number | null;
+            automation_id: string | null;
+            rule_id: string | null;
           }
+        | undefined;
+      if (pending?.collect_field) {
+        const field = parseCollectField(pending.collect_field);
+        if (field) {
+          const stored = (pending.collect_config ?? {}) as Record<string, unknown>;
+          const config = normalizeCollectConfig({
+            retryMessage: stored.retryMessage as string | undefined,
+            skipMessage: stored.skipMessage as string | undefined,
+            successMessage: stored.successMessage as string | undefined,
+            skipKeywords: stored.skipKeywords as string[] | undefined,
+            maxAttempts: stored.maxAttempts as number | undefined,
+          });
+          const attempts = Number(pending.attempts ?? 0);
+
+          const reply = async (text: string) => {
+            if (!token) return;
+            await withRetry(
+              () =>
+                sendDirectMessage(
+                  token,
+                  event.instagramAccountId,
+                  event.senderId,
+                  text
+                ),
+              2
+            );
+            if (conversationId) {
+              await recordMessage({
+                workspaceId: account.workspace_id,
+                conversationId,
+                direction: "outbound",
+                senderType: "bot",
+                text,
+              });
+            }
+          };
+
+          // 1. Explicit skip.
+          if (isSkipKeyword(event.messageText, config.skipKeywords)) {
+            await reply(config.skipMessage);
+            await deletePending(pending.id);
+            await recordLeadEvent({
+              workspaceId: account.workspace_id,
+              automationId: pending.automation_id,
+              ruleId: pending.rule_id,
+              contactId,
+              recipientId: event.senderId,
+              kind: "skipped",
+              field: pending.collect_field,
+            });
+            continue;
+          }
+
+          // 2. Validate.
+          const validation = validateLeadValue(field.kind, event.messageText);
+          if (!validation.valid) {
+            const nextAttempts = attempts + 1;
+            await recordLeadEvent({
+              workspaceId: account.workspace_id,
+              automationId: pending.automation_id,
+              ruleId: pending.rule_id,
+              contactId,
+              recipientId: event.senderId,
+              kind: "invalid",
+              field: pending.collect_field,
+              value: event.messageText.slice(0, 200),
+            });
+            if (nextAttempts >= config.maxAttempts) {
+              await reply(config.skipMessage);
+              await deletePending(pending.id);
+              await recordLeadEvent({
+                workspaceId: account.workspace_id,
+                automationId: pending.automation_id,
+                ruleId: pending.rule_id,
+                contactId,
+                recipientId: event.senderId,
+                kind: "skipped",
+                field: pending.collect_field,
+              });
+            } else {
+              await getAdminDb()
+                .from("pending_dms")
+                .update({ attempts: nextAttempts })
+                .eq("id", pending.id);
+              await reply(config.retryMessage);
+            }
+            continue;
+          }
+
+          // 3. Save the value and confirm.
+          const savedContactId = await saveContactField({
+            workspaceId: account.workspace_id,
+            recipientId: event.senderId,
+            field,
+            value: validation.normalized,
+          });
+          await deletePending(pending.id);
+          await reply(config.successMessage);
+          await recordLeadEvent({
+            workspaceId: account.workspace_id,
+            automationId: pending.automation_id,
+            ruleId: pending.rule_id,
+            contactId: savedContactId ?? contactId,
+            recipientId: event.senderId,
+            kind: "captured",
+            field: pending.collect_field,
+            value: validation.normalized.slice(0, 200),
+          });
+          // A lead answer is data, not a keyword - never also fire a rule on it.
           continue;
         }
-        await markContactLedger(
-          account.workspace_id,
-          event.senderId,
-          field === "email" ? "email" : field === "phone" ? "phone" : "display_name",
-          event.messageText
-        );
-        await deletePending(pending.id);
-        // A lead answer is data, not a keyword — never also fire a rule on it.
-        continue;
       }
 
       // Ask for Follow: replying to the opening DM also grants Meta consent,

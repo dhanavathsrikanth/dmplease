@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import { connection } from "next/server";
+import Link from "next/link";
 import {
   Download,
   Search,
@@ -36,11 +37,12 @@ interface ContactRow {
   tags: string[] | null;
   properties: Record<string, unknown> | null;
   source: string | null;
+  status: string | null;
   created_at: string;
 }
 
 interface ContactsPageProps {
-  searchParams?: Promise<{ q?: string }>;
+  searchParams?: Promise<{ q?: string; source?: string; tag?: string; has?: string }>;
 }
 
 function ContactsSkeleton() {
@@ -83,6 +85,9 @@ async function ContactsContent({ searchParams }: ContactsPageProps) {
   const params = await searchParams;
   const query = (params?.q || "").trim();
   const normalizedQuery = query.toLowerCase();
+  const sourceFilter = (params?.source || "").trim();
+  const tagFilter = (params?.tag || "").trim();
+  const hasFilter = (params?.has || "").trim();
 
   await connection();
   const profile = await getCurrentProfile();
@@ -96,7 +101,7 @@ async function ContactsContent({ searchParams }: ContactsPageProps) {
     const { data, error } = await supabase
       .from("contacts")
       .select(
-        "id, instagram_id, username, display_name, email, phone, tags, properties, source, created_at"
+        "id, instagram_id, username, display_name, email, phone, tags, properties, source, status, created_at"
       )
       .in("workspace_id", workspaceIds)
       .order("created_at", { ascending: false })
@@ -110,24 +115,45 @@ async function ContactsContent({ searchParams }: ContactsPageProps) {
     }
   }
 
-  const filtered = normalizedQuery
-    ? contacts.filter((contact) => {
-        const haystack = [
-          contact.display_name,
-          contact.username,
-          contact.instagram_id,
-          contact.email,
-          contact.phone,
-          contact.source,
-          ...(contact.tags || []),
-          formatProperties(contact.properties),
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase();
-        return haystack.includes(normalizedQuery);
-      })
-    : contacts;
+  const filtered = contacts.filter((contact) => {
+    if (sourceFilter && (contact.source || "") !== sourceFilter) return false;
+    if (tagFilter && !(contact.tags || []).includes(tagFilter)) return false;
+    if (hasFilter === "email" && !contact.email) return false;
+    if (hasFilter === "phone" && !contact.phone) return false;
+    if (!normalizedQuery) return true;
+    const haystack = [
+      contact.display_name,
+      contact.username,
+      contact.instagram_id,
+      contact.email,
+      contact.phone,
+      contact.source,
+      contact.status,
+      ...(contact.tags || []),
+      formatProperties(contact.properties),
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return haystack.includes(normalizedQuery);
+  });
+
+  const sources = Array.from(
+    new Set(contacts.map((contact) => contact.source).filter(Boolean))
+  ) as string[];
+  const tags = Array.from(
+    new Set(contacts.flatMap((contact) => contact.tags || []))
+  ).sort();
+
+  const exportParams = new URLSearchParams({
+    ...(query ? { q: query } : {}),
+    ...(sourceFilter ? { source: sourceFilter } : {}),
+    ...(tagFilter ? { tag: tagFilter } : {}),
+    ...(hasFilter ? { has: hasFilter } : {}),
+  });
+  const exportHref = `/api/contacts/export${
+    exportParams.toString() ? `?${exportParams.toString()}` : ""
+  }`;
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300 antialiased selection:bg-[#ffd02f] selection:text-[#1c1c1e]">
@@ -147,7 +173,7 @@ async function ContactsContent({ searchParams }: ContactsPageProps) {
           variant="outline"
           className="rounded-full h-9 text-xs font-semibold px-5 shrink-0"
         >
-          <a href="/api/contacts/export" download="contacts.csv">
+          <a href={exportHref} download="contacts.csv">
             <Download className="size-3.5" />
             Export CSV
           </a>
@@ -155,28 +181,98 @@ async function ContactsContent({ searchParams }: ContactsPageProps) {
       </div>
 
       <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 shadow-subtle overflow-hidden">
-        <div className="p-4 border-b border-[#e0e2e8] dark:border-border/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <Users className="size-4 text-[#746019] dark:text-[#ffd02f]" />
-            <span className="text-xs font-semibold text-foreground">
-              {filtered.length} contact{filtered.length === 1 ? "" : "s"}
-            </span>
-            {query && (
-              <Badge variant="tag-yellow" className="text-[10px] font-semibold rounded-full">
-                Filtered
-              </Badge>
-            )}
+        <div className="p-4 border-b border-[#e0e2e8] dark:border-border/60 space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Users className="size-4 text-[#746019] dark:text-[#ffd02f]" />
+              <span className="text-xs font-semibold text-foreground">
+                {filtered.length} contact{filtered.length === 1 ? "" : "s"}
+              </span>
+              {(query || sourceFilter || tagFilter || hasFilter) && (
+                <Badge variant="tag-yellow" className="text-[10px] font-semibold rounded-full">
+                  Filtered
+                </Badge>
+              )}
+            </div>
+            <form method="get" action="/dashboard/contacts" className="relative w-full sm:w-72">
+              <Search className="size-3.5 absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                type="search"
+                name="q"
+                defaultValue={query}
+                placeholder="Search name, username, email, tag..."
+                aria-label="Search contacts"
+                className="pl-9 h-9 text-xs rounded-full bg-[#f7f8fa] dark:bg-muted/40 border-[#e0e2e8] dark:border-border"
+              />
+            </form>
           </div>
-          <form method="get" action="/dashboard/contacts" className="relative w-full sm:w-72">
-            <Search className="size-3.5 absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              type="search"
-              name="q"
-              defaultValue={query}
-              placeholder="Search name, username, email, tag..."
-              aria-label="Search contacts"
-              className="pl-9 h-9 text-xs rounded-full bg-[#f7f8fa] dark:bg-muted/40 border-[#e0e2e8] dark:border-border"
-            />
+
+          <form
+            method="get"
+            action="/dashboard/contacts"
+            className="flex flex-wrap items-end gap-2"
+            aria-label="Filter contacts"
+          >
+            <input type="hidden" name="q" value={query} />
+            <div className="space-y-1">
+              <label htmlFor="filter-source" className="text-[10px] font-semibold text-muted-foreground">
+                Source
+              </label>
+              <select
+                id="filter-source"
+                name="source"
+                defaultValue={sourceFilter}
+                className="h-8 rounded-lg border border-[#c7cad5] dark:border-border bg-background px-2 text-[11px]"
+              >
+                <option value="">All sources</option>
+                {sources.map((source) => (
+                  <option key={source} value={source}>
+                    {source}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label htmlFor="filter-tag" className="text-[10px] font-semibold text-muted-foreground">
+                Tag
+              </label>
+              <select
+                id="filter-tag"
+                name="tag"
+                defaultValue={tagFilter}
+                className="h-8 rounded-lg border border-[#c7cad5] dark:border-border bg-background px-2 text-[11px]"
+              >
+                <option value="">All tags</option>
+                {tags.map((tag) => (
+                  <option key={tag} value={tag}>
+                    {tag}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label htmlFor="filter-has" className="text-[10px] font-semibold text-muted-foreground">
+                Has
+              </label>
+              <select
+                id="filter-has"
+                name="has"
+                defaultValue={hasFilter}
+                className="h-8 rounded-lg border border-[#c7cad5] dark:border-border bg-background px-2 text-[11px]"
+              >
+                <option value="">Any detail</option>
+                <option value="email">Email</option>
+                <option value="phone">Phone</option>
+              </select>
+            </div>
+            <Button type="submit" size="sm" variant="outline" className="h-8 text-[11px] rounded-full px-4">
+              Apply
+            </Button>
+            {(sourceFilter || tagFilter || hasFilter) && (
+              <Button asChild size="sm" variant="ghost" className="h-8 text-[11px] rounded-full px-3">
+                <Link href="/dashboard/contacts">Clear</Link>
+              </Button>
+            )}
           </form>
         </div>
 
@@ -216,6 +312,7 @@ async function ContactsContent({ searchParams }: ContactsPageProps) {
                 <TableHead>Instagram ID</TableHead>
                 <TableHead>Email / Phone</TableHead>
                 <TableHead>Tags</TableHead>
+                <TableHead>Status</TableHead>
                 <TableHead>Source</TableHead>
                 <TableHead>Captured properties</TableHead>
                 <TableHead>Created</TableHead>
@@ -234,7 +331,12 @@ async function ContactsContent({ searchParams }: ContactsPageProps) {
                           {initials}
                         </span>
                         <div className="min-w-0">
-                          <p className="font-semibold text-xs text-foreground truncate">{displayName}</p>
+                          <Link
+                            href={`/dashboard/contacts/${contact.id}`}
+                            className="font-semibold text-xs text-foreground truncate hover:text-[#4262ff] hover:underline"
+                          >
+                            {displayName}
+                          </Link>
                           {contact.username && (
                             <p className="text-[10px] text-[#6b6f7e] truncate">@{contact.username}</p>
                           )}
@@ -260,6 +362,11 @@ async function ContactsContent({ searchParams }: ContactsPageProps) {
                           <span className="text-[11px] text-muted-foreground">—</span>
                         )}
                       </div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className="text-[9px] rounded-full px-2 py-0.5 capitalize">
+                        {contact.status || "new"}
+                      </Badge>
                     </TableCell>
                     <TableCell className="text-[11px] text-muted-foreground capitalize">
                       {contact.source || "—"}
