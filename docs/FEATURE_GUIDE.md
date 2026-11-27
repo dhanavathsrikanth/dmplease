@@ -880,3 +880,58 @@ px tsc --noEmit - clean.
 ## 86. Part 13 takeaway
 
 **Insights are now first-class:** real Meta reach and impressions, per-post and per-campaign conversion, a graceful permission state, and a daily refresh that never calls Meta without the scope.
+
+---
+
+# Part 14 - Link click + open tracking
+
+## 87. What problem it solves
+
+A DM button is the moment intent becomes action, but without tracking a creator cannot tell whether the button was tapped, which campaign drove it, or whether the message was even read. T1.6 makes every tap and every Meta receipt durable and visible.
+
+## 88. Behavior
+
+| Situation | Result |
+|---|---|
+| Someone taps a DM button | /go/{code} records workspace, campaign, contact, timestamp, referrer, user-agent and bot flag, then redirects with UTM attribution. |
+| Smart Links is off | The campaign button is still tracked; only the message-body link stays raw. |
+| Database write fails | The click is pushed to a Redis buffer and replayed by the 5-minute cron. |
+| Duplicate delivery of the same click | event_id is unique, so the upsert is idempotent. |
+| Meta sends a delivery receipt | messages.delivery_status = delivered, delivered_at set; dm_logs.delivered_at set. |
+| Meta sends a read receipt | messages.delivery_status = read, ead_at set; dm_logs.read_at set. |
+| Campaign analytics | Link clicks, unique clickers, delivery rate and read rate are shown. |
+| Overview analytics | Non-bot link clicks are counted in the funnel and KPI row. |
+
+## 89. Architecture / file map
+
+| File | Role |
+|---|---|
+| pp/go/[slug]/route.ts | Redirect + click recording (short codes and legacy signed tokens). |
+| lib/meta/link-resolver.ts | Short-code creation, rotation, click recording, Redis buffer + flush. |
+| lib/meta/dm-content.ts | Always tracks the campaign button CTA. |
+| lib/meta/webhook.ts | parseReadEvents + parseDeliveryEvents. |
+| lib/meta/webhook-processor.ts | pplyReceipt updates messages and delivery logs. |
+| lib/campaign-analytics.ts | Delivered/read counts and read rate. |
+| components/campaigns/campaign-analytics.tsx | Read-rate tile. |
+| components/campaigns/link-performance.tsx | Per-link clicks, people and last click. |
+| pp/api/cron/flush-link-clicks/route.ts | Replays buffered clicks every 5 minutes. |
+| supabase/migrations/20261127_tracking_v2.sql | delivered_at/ead_at, event_id, user_agent, indexes. |
+
+## 90. UI and accessibility
+
+- Click counters are plain numbers with text labels, never colour-only.
+- The read-rate tile explains when Meta has not sent receipts yet.
+- Per-link rows show clicks, unique people and last-click date in a readable grid.
+- The inbox shows delivered/ead status on outbound bubbles.
+
+## 91. Tests and verification
+
+- 	ests/webhook-parsers.test.ts - delivery and read receipt parsing.
+- 
+pm test, 
+pm run lint, 
+px tsc --noEmit - clean.
+
+## 92. Part 14 takeaway
+
+**Every tap is counted and every receipt is stored:** clicks survive transient database errors, button URLs are always tracked, and delivery/read status flows from Meta into the campaign analytics.

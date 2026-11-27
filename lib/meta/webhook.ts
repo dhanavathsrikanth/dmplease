@@ -102,6 +102,7 @@ export interface WebhookEntry {
     recipient?: { id?: string };
     postback?: { mid?: string; title?: string; payload?: string };
     read?: { watermark?: number; seq?: number };
+    delivery?: { mids?: string[]; watermark?: number; seq?: number };
     message_reactions?: {
       mid?: string;
       action?: string;
@@ -153,6 +154,13 @@ export interface WebhookPostbackEvent {
 export interface WebhookReadEvent {
   instagramAccountId: string;
   userId: string;
+  watermark?: number;
+}
+
+export interface WebhookDeliveryEvent {
+  instagramAccountId: string;
+  userId: string;
+  mids: string[];
   watermark?: number;
 }
 
@@ -393,6 +401,35 @@ export function parseReadEvents(payload: WebhookPayload): WebhookReadEvent[] {
         instagramAccountId: accountId,
         userId,
         watermark: messaging.read.watermark,
+      });
+    }
+  }
+
+  return events;
+}
+
+export function parseDeliveryEvents(payload: WebhookPayload): WebhookDeliveryEvent[] {
+  const events: WebhookDeliveryEvent[] = [];
+
+  if (payload.object !== "instagram") return events;
+
+  for (const entry of payload.entry ?? []) {
+    for (const messaging of entry.messaging ?? []) {
+      if (!messaging.delivery) continue;
+
+      const userId = messaging.sender?.id;
+      const accountId = entry.id ?? messaging.recipient?.id;
+
+      if (!userId || !accountId) continue;
+      if (userId === accountId) continue;
+
+      events.push({
+        instagramAccountId: accountId,
+        userId,
+        mids: Array.isArray(messaging.delivery.mids)
+          ? messaging.delivery.mids.filter(Boolean)
+          : [],
+        watermark: messaging.delivery.watermark,
       });
     }
   }

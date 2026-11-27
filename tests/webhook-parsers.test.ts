@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   parseCommentEvents,
+  parseDeliveryEvents,
   parseMessageEvents,
   parsePostbackEvents,
   parseReadEvents,
@@ -101,6 +102,32 @@ describe("webhook parsers", () => {
     };
     expect(parsePostbackEvents(payload)[0]).toMatchObject({ payload: "GET_GUIDE" });
     expect(parseReadEvents(payload)[0]).toMatchObject({ userId: "user-2", watermark: 123 });
+  });
+
+  it("parses delivery receipts with message ids", () => {
+    const payload: WebhookPayload = {
+      object: "instagram",
+      entry: [
+        {
+          id: "ig-123",
+          time: 1,
+          messaging: [
+            {
+              sender: { id: "user-1" },
+              delivery: { mids: ["m1", "m2"], watermark: 456 },
+            },
+          ],
+        },
+      ],
+    };
+    const events = parseDeliveryEvents(payload);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      instagramAccountId: "ig-123",
+      userId: "user-1",
+      mids: ["m1", "m2"],
+      watermark: 456,
+    });
   });
 
   it("parses story reactions from messaging attachments", () => {

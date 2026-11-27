@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 
 import { parseTrackedLink } from "@/lib/tracking";
@@ -47,6 +48,7 @@ export async function GET(
       link: tracked,
       referrer: request.headers.get("referer") ?? null,
       userAgent,
+      eventId: randomUUID(),
     });
     return NextResponse.redirect(
       withAttribution(tracked.destination_url, {
@@ -71,6 +73,13 @@ export async function GET(
   });
 
   if (hasAdminDb()) {
+    const userAgent = request.headers.get("user-agent") ?? "";
+    let destinationHost: string | null = null;
+    try {
+      destinationHost = new URL(payload.url).hostname;
+    } catch {
+      destinationHost = null;
+    }
     try {
       await getAdminDb().from("link_clicks").insert({
         workspace_id: payload.workspaceId,
@@ -81,11 +90,11 @@ export async function GET(
         post_id: payload.postId ?? null,
         keyword: payload.keyword ?? null,
         sequence_step: payload.sequenceStep ?? null,
-        destination_host: new URL(payload.url).hostname,
+        destination_host: destinationHost,
         clicked_at: new Date().toISOString(),
-        is_bot: /bot|crawler|spider|facebookexternalhit|preview/i.test(
-          request.headers.get("user-agent") ?? ""
-        ),
+        is_bot: /bot|crawler|spider|facebookexternalhit|preview/i.test(userAgent),
+        event_id: randomUUID(),
+        user_agent: userAgent.slice(0, 500) || null,
       });
     } catch (error) {
       console.warn("[tracking] Could not record click:", error);

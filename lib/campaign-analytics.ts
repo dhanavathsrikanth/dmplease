@@ -12,6 +12,9 @@ export interface CampaignAnalytics {
   dmSent: number;
   dmFailed: number;
   deliveryRate: number | null;
+  dmDelivered: number;
+  dmRead: number;
+  readRate: number | null;
   linkClicks: number;
   uniqueClickers: number;
   conversions: number;
@@ -31,6 +34,9 @@ const EMPTY: CampaignAnalytics = {
   dmSent: 0,
   dmFailed: 0,
   deliveryRate: null,
+  dmDelivered: 0,
+  dmRead: 0,
+  readRate: null,
   linkClicks: 0,
   uniqueClickers: 0,
   conversions: 0,
@@ -65,7 +71,9 @@ export async function loadCampaignAnalytics(
   ] = await Promise.all([
     db
       .from("dm_logs")
-      .select("status, variant, message_format, recipient_id, trigger_keyword, keyword")
+      .select(
+        "status, variant, message_format, recipient_id, trigger_keyword, keyword, delivered_at, read_at"
+      )
       .eq("workspace_id", workspaceId)
       .eq("automation_id", automationId)
       .gte("sent_at", since)
@@ -106,6 +114,9 @@ export async function loadCampaignAnalytics(
   const dmFailed = dmLogs.filter((r) => r.status === "FAILED").length;
   const deliveryRate =
     dmSent + dmFailed > 0 ? Math.round((dmSent / (dmSent + dmFailed)) * 100) : null;
+  const dmDelivered = dmLogs.filter((r) => Boolean(r.delivered_at)).length;
+  const dmRead = dmLogs.filter((r) => Boolean(r.read_at)).length;
+  const readRate = dmSent > 0 ? Math.round((dmRead / dmSent) * 100) : null;
 
   // Variant performance
   const variantMap = new Map<string, number>();
@@ -165,6 +176,9 @@ export async function loadCampaignAnalytics(
     dmSent,
     dmFailed,
     deliveryRate,
+    dmDelivered,
+    dmRead,
+    readRate,
     linkClicks: clicks.length,
     uniqueClickers,
     conversions: conversions.length,

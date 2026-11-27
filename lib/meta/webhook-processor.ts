@@ -90,6 +90,7 @@ import {
 import { recordMetricEvent } from "@/lib/metrics";
 import {
   parseCommentEvents,
+  parseDeliveryEvents,
   parseMessageEvents,
   parsePostbackEvents,
   parseReactionEvents,
@@ -617,6 +618,72 @@ async function recordMessage(input: {
   } catch (error) {
     console.warn("[webhook] recordMessage failed:", error);
     return false;
+  }
+}
+
+/**
+ * Applies a Meta read/delivery receipt to the conversation history and the
+ * delivery log. Best-effort: a receipt must never break webhook processing.
+ */
+async function applyReceipt(input: {
+  workspaceId: string;
+  instagramAccountId: string;
+  recipientId: string;
+  kind: "delivered" | "read";
+  at: string;
+  mids?: string[];
+}): Promise<void> {
+  if (!hasAdminDb()) return;
+  const db = getAdminDb();
+  try {
+    const { data: contact } = await db
+      .from("contacts")
+      .select("id")
+      .eq("workspace_id", input.workspaceId)
+      .eq("instagram_id", input.recipientId)
+      .maybeSingle();
+
+    if (contact?.id) {
+      const { data: conversation } = await db
+        .from("conversations")
+        .select("id")
+        .eq("contact_id", contact.id)
+        .eq("instagram_account_id", input.instagramAccountId)
+        .maybeSingle();
+
+      if (conversation?.id) {
+        const patch: Record<string, unknown> =
+          input.kind === "read"
+            ? { delivery_status: "read", read_at: input.at }
+            : { delivery_status: "delivered", delivered_at: input.at };
+        let query = db
+          .from("messages")
+          .update(patch)
+          .eq("conversation_id", conversation.id)
+          .eq("direction", "outbound");
+        if (input.kind === "read") query = query.is("read_at", null);
+        else query = query.is("delivered_at", null);
+        if (input.mids && input.mids.length > 0) {
+          query = query.in("external_id", input.mids);
+        }
+        await query;
+      }
+    }
+
+    const logPatch: Record<string, unknown> =
+      input.kind === "read" ? { read_at: input.at } : { delivered_at: input.at };
+    let logQuery = db
+      .from("dm_logs")
+      .update(logPatch)
+      .eq("workspace_id", input.workspaceId)
+      .eq("instagram_account_id", input.instagramAccountId)
+      .eq("recipient_id", input.recipientId)
+      .eq("status", "SENT");
+    if (input.kind === "read") logQuery = logQuery.is("read_at", null);
+    else logQuery = logQuery.is("delivered_at", null);
+    await logQuery;
+  } catch (error) {
+    console.warn(`[webhook] Could not apply ${input.kind} receipt:`, error);
   }
 }
 
@@ -3514,7 +3581,62 @@ export async function processWebhookPayload(
     }
   }
 
-  parseReadEvents(payload);
+  // Delivery + read receipts. Meta only provides these for some accounts, so
+  // they are applied best-effort and never block the rest of the batch.
+  for (const event of parseDeliveryEvents(payload)) {
+    try {
+      const account = await getAccount(event.instagramAccountId);
+      if (!account) continue;
+      const at = event.watermark
+        ? new Date(event.watermark).toISOString()
+        : nowIso();
+      await applyReceipt({
+        workspaceId: account.workspace_id,
+        instagramAccountId: account.id,
+        recipientId: event.userId,
+        kind: "delivered",
+        at,
+        mids: event.mids,
+      });
+      result.events.push({
+        kind: "message",
+        accountId: event.instagramAccountId,
+        outcome: "sent",
+        detail: "Delivery receipt recorded",
+      });
+    } catch (error) {
+      result.errors.push(
+        `Delivery receipt failed: ${error instanceof Error ? error.message : "unknown"}`
+      );
+    }
+  }
+
+  for (const event of parseReadEvents(payload)) {
+    try {
+      const account = await getAccount(event.instagramAccountId);
+      if (!account) continue;
+      const at = event.watermark
+        ? new Date(event.watermark).toISOString()
+        : nowIso();
+      await applyReceipt({
+        workspaceId: account.workspace_id,
+        instagramAccountId: account.id,
+        recipientId: event.userId,
+        kind: "read",
+        at,
+      });
+      result.events.push({
+        kind: "read",
+        accountId: event.instagramAccountId,
+        outcome: "sent",
+        detail: "Read receipt recorded",
+      });
+    } catch (error) {
+      result.errors.push(
+        `Read receipt failed: ${error instanceof Error ? error.message : "unknown"}`
+      );
+    }
+  }
 
   result.avgLatencyMs = latencies.length
     ? Math.round(latencies.reduce((sum, value) => sum + value, 0) / latencies.length)

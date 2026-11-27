@@ -102,6 +102,7 @@ export async function buildAutomationContent(
       };
 
   let outboundUrl = trackedBaseUrl;
+  let buttonUrl = trackedBaseUrl;
   if (input.workspaceId && input.recipientId && trackedBaseUrl) {
     const resolved = await resolveCampaignLink({
       workspaceId: input.workspaceId,
@@ -116,6 +117,27 @@ export async function buildAutomationContent(
       sequenceStep: input.sequenceStep ?? 1,
     });
     outboundUrl = resolved.url;
+
+    // The campaign button is a distinct CTA: always track it so a tap is
+    // counted even when Smart Links is off for the message body.
+    if (!input.shortLinksEnabled) {
+      const trackedButton = await resolveCampaignLink({
+        workspaceId: input.workspaceId,
+        automationId: input.auto.id,
+        recipientId: input.recipientId,
+        contactId: input.contactId,
+        destination: trackedBaseUrl,
+        shortLinksEnabled: false,
+        forceTrack: true,
+        linkRotatorId: input.linkRotatorId,
+        postId: input.mediaId,
+        keyword: input.keyword,
+        sequenceStep: input.sequenceStep ?? 1,
+      });
+      buttonUrl = trackedButton.url;
+    } else {
+      buttonUrl = outboundUrl;
+    }
   }
 
   const varsWithLink: DmVars = { ...vars, link: outboundUrl };
@@ -131,7 +153,7 @@ export async function buildAutomationContent(
   return {
     text: formatDmText(input.auto.dmMessage, varsWithLink),
     vars: varsWithLink,
-    buttonUrl: outboundUrl,
+    buttonUrl,
     linkSource,
     formatted,
   };

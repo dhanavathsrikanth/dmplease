@@ -47,7 +47,7 @@ export function CampaignAnalyticsCard({ data }: CampaignAnalyticsCardProps) {
       </CardHeader>
       <CardContent className="pt-5 space-y-5">
         {/* Headline tiles */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           <Tile
             label="DMs sent"
             value={data.dmSent}
@@ -57,6 +57,15 @@ export function CampaignAnalyticsCard({ data }: CampaignAnalyticsCardProps) {
             label="Delivery rate"
             value={data.deliveryRate === null ? "—" : `${data.deliveryRate}%`}
             hint={data.dmSent + data.dmFailed > 0 ? `${data.dmSent + data.dmFailed} total` : "No sends yet"}
+          />
+          <Tile
+            label="Read rate"
+            value={data.readRate === null ? "—" : `${data.readRate}%`}
+            hint={
+              data.dmRead > 0
+                ? `${data.dmRead} read${data.dmDelivered > 0 ? ` · ${data.dmDelivered} delivered` : ""}`
+                : "Meta has not sent receipts yet"
+            }
           />
           <Tile
             label="Link clicks"

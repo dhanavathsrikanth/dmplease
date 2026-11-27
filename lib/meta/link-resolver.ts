@@ -189,8 +189,10 @@ export async function resolveCampaignLink(input: {
   postId?: string | null;
   keyword?: string | null;
   sequenceStep?: number | null;
+  /** Always create a tracked link (used for the campaign button CTA). */
+  forceTrack?: boolean;
 }): Promise<ResolvedLink> {
-  if (!input.shortLinksEnabled || !hasAdminDb()) {
+  if ((!input.shortLinksEnabled && !input.forceTrack) || !hasAdminDb()) {
     return {
       url: input.destination,
       destination: input.destination,
@@ -258,29 +260,111 @@ export async function findTrackedLink(
   return loadTrackedLink(code);
 }
 
+function safeHostname(url: string): string | null {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+}
+
+export interface ClickRecord {
+  workspace_id: string;
+  automation_id: string | null;
+  contact_id: string | null;
+  token: string;
+  referrer: string | null;
+  post_id: string | null;
+  keyword: string | null;
+  sequence_step: number | null;
+  destination_host: string | null;
+  clicked_at: string;
+  is_bot: boolean;
+  event_id: string;
+  user_agent: string | null;
+}
+
+const CLICK_BUFFER_KEY = "link_clicks:buffer";
+
+/**
+ * Records a click. Returns true when it is durably stored. If the database
+ * write fails, the event is pushed to a Redis buffer so the cron flusher can
+ * replay it — a click is never silently lost.
+ */
 export async function recordTrackedLinkClick(input: {
   link: TrackedLinkRow;
   referrer: string | null;
   userAgent: string;
-}): Promise<void> {
-  if (!hasAdminDb()) return;
-  try {
-    await getAdminDb().from("link_clicks").insert({
-      workspace_id: input.link.workspace_id,
-      automation_id: input.link.automation_id,
-      contact_id: input.link.contact_id,
-      token: input.link.short_code,
-      referrer: input.referrer,
-      post_id: input.link.post_id,
-      keyword: input.link.keyword,
-      sequence_step: input.link.sequence_step,
-      destination_host: new URL(input.link.destination_url).hostname,
-      clicked_at: new Date().toISOString(),
-      is_bot: /bot|crawler|spider|facebookexternalhit|preview/i.test(
-        input.userAgent
-      ),
-    });
-  } catch (error) {
-    console.warn("[tracking] Could not record click:", error);
+  eventId: string;
+}): Promise<boolean> {
+  const row: ClickRecord = {
+    workspace_id: input.link.workspace_id,
+    automation_id: input.link.automation_id,
+    contact_id: input.link.contact_id,
+    token: input.link.short_code,
+    referrer: input.referrer,
+    post_id: input.link.post_id,
+    keyword: input.link.keyword,
+    sequence_step: input.link.sequence_step,
+    destination_host: safeHostname(input.link.destination_url),
+    clicked_at: new Date().toISOString(),
+    is_bot: /bot|crawler|spider|facebookexternalhit|preview/i.test(
+      input.userAgent
+    ),
+    event_id: input.eventId,
+    user_agent: input.userAgent.slice(0, 500) || null,
+  };
+
+  if (hasAdminDb()) {
+    try {
+      const { error } = await getAdminDb()
+        .from("link_clicks")
+        .upsert(row, { onConflict: "event_id", ignoreDuplicates: true });
+      if (!error) return true;
+      console.warn("[tracking] Click insert failed, buffering:", error.message);
+    } catch (error) {
+      console.warn("[tracking] Click insert threw, buffering:", error);
+    }
   }
+
+  if (hasUpstashRedis()) {
+    try {
+      await getRedis().lpush(CLICK_BUFFER_KEY, JSON.stringify(row));
+      return true;
+    } catch (error) {
+      console.warn("[tracking] Could not buffer click:", error);
+    }
+  }
+  return false;
+}
+
+/** Drains the Redis click buffer into `link_clicks`. Returns the flushed count. */
+export async function flushBufferedClicks(limit = 500): Promise<number> {
+  if (!hasAdminDb() || !hasUpstashRedis()) return 0;
+  const db = getAdminDb();
+  let flushed = 0;
+  for (let i = 0; i < limit; i++) {
+    let raw: string | null = null;
+    try {
+      raw = await getRedis().rpop<string>(CLICK_BUFFER_KEY);
+    } catch {
+      break;
+    }
+    if (!raw) break;
+    try {
+      const row = (typeof raw === "string" ? JSON.parse(raw) : raw) as ClickRecord;
+      const { error } = await db
+        .from("link_clicks")
+        .upsert(row, { onConflict: "event_id", ignoreDuplicates: true });
+      if (error) {
+        // Put it back and stop; the next run will retry.
+        await getRedis().rpush(CLICK_BUFFER_KEY, raw);
+        break;
+      }
+      flushed++;
+    } catch (error) {
+      console.warn("[tracking] Could not flush buffered click:", error);
+    }
+  }
+  return flushed;
 }
