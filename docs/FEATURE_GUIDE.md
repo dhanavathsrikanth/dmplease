@@ -828,3 +828,55 @@ application path.
 ## 80. Part 12 takeaway
 
 **Safety is now both honest and legible:** machine codes never reach a creator, a weekly digest arrives by email, and the Meta badge application is a documented, repeatable process.
+
+---
+
+# Part 13 - Meta Insights integration
+
+## 81. What problem it solves
+
+Creators could see DMs sent but not the reach and impressions those DMs were competing against, so "conversion rate" was a guess. T1.5 pulls Meta's own Insights so every campaign can be measured against the audience it actually reached.
+
+## 82. Behavior
+
+| Situation | Result |
+|---|---|
+| Account has instagram_manage_insights | Daily snapshots of reach, impressions, profile views and website clicks are stored. |
+| Recent posts/reels/stories | Per-media snapshots (reach, views, saved, shares, likes, comments, story views) are stored with the media id. |
+| Scope missing | No Insights call is made. The account is marked 
+eeds_access and the Overview shows a "Reconnect Instagram" state. |
+| Meta rejects a metric | The fetcher retries the legacy metric set (impressions instead of iews) before giving up. |
+| Conversion rate | utomated DMs / post impressions per campaign, plus an aggregate figure. |
+| Daily refresh | /api/cron/insights runs at 03:15 UTC; the Overview button triggers an on-demand refresh. |
+
+## 83. Architecture / file map
+
+| File | Role |
+|---|---|
+| lib/meta/insights.ts | Account/media fetchers, scope reader, error classifier, legacy-metric fallback. |
+| lib/meta/insights-sync.ts | Scope gate, account + per-media persistence, sync status. |
+| lib/insights-analytics.ts | Pure aggregation: totals, daily series, per-media, per-campaign conversion. |
+| supabase/migrations/20261127_insights_v2.sql | media_id/scope/product_type/permalink/caption, scope + sync-status columns. |
+| pp/api/cron/insights/route.ts | Daily refresh (cron-locked). |
+| pp/api/insights/refresh/route.ts | On-demand refresh for the signed-in creator. |
+| pp/dashboard/overview/page.tsx | Metric cards, 30-day reach trend, per-campaign conversion table, access-needed state. |
+
+## 84. UI and accessibility
+
+- Five metric cards (reach, impressions, profile views, story views, conversion) with text labels and icons, never colour alone.
+- Reach trend is a ole="img" chart with an ria-label and per-bar 	itle.
+- Per-campaign table uses real <table>, <th scope="col"> and right-aligned numeric columns.
+- Missing access is a ole="alert" with two clear actions: reconnect or run diagnostics.
+- Last-sync timestamp is shown so stale data is obvious.
+
+## 85. Tests and verification
+
+- 	ests/insights-analytics.test.ts - aggregation, per-media grouping, conversion math, scope detection, error classification.
+- 
+pm test, 
+pm run lint, 
+px tsc --noEmit - clean.
+
+## 86. Part 13 takeaway
+
+**Insights are now first-class:** real Meta reach and impressions, per-post and per-campaign conversion, a graceful permission state, and a daily refresh that never calls Meta without the scope.

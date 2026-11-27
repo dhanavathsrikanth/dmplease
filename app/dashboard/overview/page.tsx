@@ -36,6 +36,12 @@ import {
   summarizeFollowPrompts,
   type FollowPromptRow,
 } from "@/lib/follow-analytics";
+import {
+  buildCampaignInsights,
+  computeConversionRate,
+  summarizeInsights,
+  type InsightRow,
+} from "@/lib/insights-analytics";
 
 export const metadata = {
   title: "Analytics & Performance - dmplease",
@@ -167,7 +173,7 @@ async function OverviewContent({ searchParams }: PageProps) {
   const deliveryRate =
     totalDms > 0 ? Math.round((deliveredDms / totalDms) * 100) : null;
 
-  // ── Phase A funnel signals ──────────────────────────────────────────────
+  // â”€â”€ Phase A funnel signals â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const scopedInPeriod = <T,>(q: T) =>
     periodCutoff ? (q as { gte: (c: string, v: string) => T }).gte("created_at", periodCutoff) : q;
 
@@ -347,8 +353,8 @@ async function OverviewContent({ searchParams }: PageProps) {
   for (const row of conversionRows) {
     if (!row.post_id && !row.keyword) continue;
     const key = row.keyword
-      ? `${row.keyword}${row.post_id ? ` · ${row.post_id.slice(-6)}` : ""}`
-      : `Post · ${String(row.post_id).slice(-6)}`;
+      ? `${row.keyword}${row.post_id ? ` Â· ${row.post_id.slice(-6)}` : ""}`
+      : `Post Â· ${String(row.post_id).slice(-6)}`;
     const current = revenueByCreative.get(key) ?? { revenue: 0, count: 0 };
     current.revenue += Number(row.revenue_minor ?? 0);
     current.count += 1;
@@ -489,47 +495,80 @@ async function OverviewContent({ searchParams }: PageProps) {
     new Set(allAutomations.flatMap((a) => a.triggerKeywords || []))
   );
 
-  // ── Meta insights snapshots (last 30 days) ──────────────────────────────
-  interface SnapshotRow {
-    metric: string;
-    value: number | string | null;
-    day: string;
-  }
-
-  const insightTotals = { reach: 0, impressions: 0, profileViews: 0 };
-  let snapshotCount = 0;
+  // â”€â”€ Meta insights snapshots (last 30 days) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  let insightRows: InsightRow[] = [];
+  let insightsStatus: "unknown" | "ok" | "needs_access" | "error" = "unknown";
+  let insightsLastSyncedAt: string | null = null;
+  let insightsError: string | null = null;
 
   if (workspaceIds.length > 0) {
     const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000)
       .toISOString()
       .slice(0, 10);
 
-    const { data: snapshots, error: insightError } = await supabase
-      .from("insight_snapshots")
-      .select("metric, value, day")
-      .in("workspace_id", workspaceIds)
-      .gte("day", thirtyDaysAgo);
+    const [snapshotsRes, accountRes] = await Promise.all([
+      supabase
+        .from("insight_snapshots")
+        .select("metric, value, day, media_id, scope, product_type, permalink, caption")
+        .in("workspace_id", workspaceIds)
+        .gte("day", thirtyDaysAgo),
+      supabase
+        .from("instagram_accounts")
+        .select("insights_status, insights_last_synced_at, insights_error")
+        .in("workspace_id", workspaceIds)
+        .limit(1)
+        .maybeSingle(),
+    ]);
 
-    if (insightError) {
-      console.warn("[overview] Could not load insights:", insightError.message);
-    } else if (snapshots) {
-      for (const row of snapshots as SnapshotRow[]) {
-        snapshotCount++;
-        const value = Number(row.value) || 0;
-        const metric = (row.metric || "").toLowerCase().replace(/[\s-]/g, "_");
-        if (metric === "reach") insightTotals.reach += value;
-        else if (metric === "impressions") insightTotals.impressions += value;
-        else if (metric === "profile_views" || metric === "profileviews") {
-          insightTotals.profileViews += value;
-        }
-      }
+    if (snapshotsRes.error) {
+      console.warn("[overview] Could not load insights:", snapshotsRes.error.message);
+    } else {
+      insightRows = (snapshotsRes.data as InsightRow[] | null) ?? [];
+    }
+
+    if (accountRes.data) {
+      const status = String(accountRes.data.insights_status ?? "unknown");
+      insightsStatus =
+        status === "ok" || status === "needs_access" || status === "error"
+          ? status
+          : "unknown";
+      insightsLastSyncedAt = accountRes.data.insights_last_synced_at
+        ? String(accountRes.data.insights_last_synced_at)
+        : null;
+      insightsError = accountRes.data.insights_error
+        ? String(accountRes.data.insights_error)
+        : null;
     }
   }
 
+  const insightsSummary = summarizeInsights(insightRows);
+  const insightTotals = insightsSummary.totals;
+  const snapshotCount = insightsSummary.hasData ? 1 : 0;
+  const conversionRateValue = computeConversionRate(
+    totalDms,
+    insightTotals.impressions
+  );
   const conversionRate =
-    insightTotals.impressions > 0
-      ? ((totalDms / insightTotals.impressions) * 100).toFixed(1)
-      : null;
+    conversionRateValue === null ? null : conversionRateValue.toFixed(1);
+
+  // Per-campaign conversion: join each automation's post to its media insights.
+  const dmCountsByAutomation = new Map<string, number>();
+  for (const log of logs) {
+    if (!log.automation_id) continue;
+    dmCountsByAutomation.set(
+      log.automation_id,
+      (dmCountsByAutomation.get(log.automation_id) ?? 0) + 1
+    );
+  }
+  const campaignInsights = buildCampaignInsights(
+    allAutomations.map((automation) => ({
+      id: automation.id,
+      name: automation.name,
+      postId: automation.postId ?? null,
+    })),
+    insightsSummary.media,
+    dmCountsByAutomation
+  ).slice(0, 5);
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300 antialiased selection:bg-[#ffd02f] selection:text-[#1c1c1e]">
@@ -578,7 +617,7 @@ async function OverviewContent({ searchParams }: PageProps) {
         </div>
       </div>
 
-      {/* ── Wins & Fixes: the three things a busy creator needs today ── */}
+      {/* â”€â”€ Wins & Fixes: the three things a busy creator needs today â”€â”€ */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card className="rounded-2xl border border-[#ffd02f]/40 bg-[#fff8e0]/40 dark:bg-[#746019]/10 shadow-subtle p-5 space-y-3">
           <div className="flex items-center gap-2 text-xs font-semibold text-[#746019] dark:text-[#ffd02f]">
@@ -589,7 +628,7 @@ async function OverviewContent({ searchParams }: PageProps) {
           </p>
           <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground">
             {topAutomation
-              ? `${topAutomation.count} DMs delivered in this period · Edit the winner`
+              ? `${topAutomation.count} DMs delivered in this period Â· Edit the winner`
               : "Publish a campaign and comment your keyword to see results here."}
           </p>
           {topAutomation && (
@@ -621,12 +660,12 @@ async function OverviewContent({ searchParams }: PageProps) {
             <Sparkles className="size-4" /> This week
           </div>
           <p className="text-lg font-semibold tracking-tight text-foreground">
-            {revenueLabel ?? `${weeklySent} DMs · ${leadsCaptured} leads`}
+            {revenueLabel ?? `${weeklySent} DMs Â· ${leadsCaptured} leads`}
           </p>
           <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground">
             {revenueLabel
-              ? `${purchases} tracked purchases · ${repeatBuyers} repeat buyers`
-              : `${confirmedOptins} opt-ins · ${linkClicks} tracked clicks — add your conversion token in Settings to see revenue`}
+              ? `${purchases} tracked purchases Â· ${repeatBuyers} repeat buyers`
+              : `${confirmedOptins} opt-ins Â· ${linkClicks} tracked clicks â€” add your conversion token in Settings to see revenue`}
           </p>
           <Button asChild variant="outline" size="sm" className="rounded-full text-[11px] h-8">
             <Link href="/dashboard/campaigns">View campaigns</Link>
@@ -634,7 +673,7 @@ async function OverviewContent({ searchParams }: PageProps) {
         </Card>
       </div>
 
-      {/* ── Conversion funnel v1 ── */}
+      {/* â”€â”€ Conversion funnel v1 â”€â”€ */}
       <Card className="rounded-2xl glass-card border border-[#e0e2e8] dark:border-border shadow-subtle">
         <CardHeader className="pb-4 border-b border-[#e0e2e8] dark:border-border/60">
           <CardTitle className="text-base font-semibold tracking-tight">
@@ -691,7 +730,7 @@ async function OverviewContent({ searchParams }: PageProps) {
         band={safetyResult.label}
       />
 
-      {/* ── Follower growth from in-chat prompts ── */}
+      {/* â”€â”€ Follower growth from in-chat prompts â”€â”€ */}
       <Card className="rounded-2xl glass-card border border-[#e0e2e8] dark:border-border shadow-subtle">
         <CardHeader className="pb-4 border-b border-[#e0e2e8] dark:border-border/60">
           <CardTitle className="text-base font-semibold tracking-tight flex items-center gap-2">
@@ -709,7 +748,7 @@ async function OverviewContent({ searchParams }: PageProps) {
               { label: "Prompts sent", value: followStats.sent },
               {
                 label: "Tap rate",
-                value: followStats.tapRate === null ? "—" : `${followStats.tapRate}%`,
+                value: followStats.tapRate === null ? "â€”" : `${followStats.tapRate}%`,
               },
               { label: "Content delivered", value: followStats.delivered },
             ].map((item) => (
@@ -729,7 +768,7 @@ async function OverviewContent({ searchParams }: PageProps) {
         </CardContent>
       </Card>
 
-      {/* ── Revenue by creative ── */}
+      {/* â”€â”€ Revenue by creative â”€â”€ */}
       <Card className="rounded-2xl glass-card border border-[#e0e2e8] dark:border-border shadow-subtle">
         <CardHeader className="pb-4 border-b border-[#e0e2e8] dark:border-border/60">
           <CardTitle className="text-base font-semibold tracking-tight">
@@ -773,7 +812,7 @@ async function OverviewContent({ searchParams }: PageProps) {
         </CardContent>
       </Card>
 
-      {/* ── Key Conversion Stats in Miro Pastel Tints + Liquid Glass ── */}
+      {/* â”€â”€ Key Conversion Stats in Miro Pastel Tints + Liquid Glass â”€â”€ */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <Card className="rounded-2xl glass-card liquid-sheen border border-[#0fbcb0]/30 bg-[#c3faf5]/30 dark:bg-[#187574]/10 shadow-subtle p-5">
           <div className="flex items-center justify-between">
@@ -784,7 +823,7 @@ async function OverviewContent({ searchParams }: PageProps) {
           </div>
           <div className="mt-4">
             <div className="text-3xl font-bold tracking-tight text-foreground">
-              {deliveryRate === null ? "—" : `${deliveryRate}%`}
+              {deliveryRate === null ? "â€”" : `${deliveryRate}%`}
             </div>
             <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground mt-1 flex items-center gap-1 font-medium">
               <CheckCircle2 className="size-3.5 text-[#00b473] inline" aria-hidden="true" />
@@ -823,18 +862,18 @@ async function OverviewContent({ searchParams }: PageProps) {
             <div className="text-3xl font-bold tracking-tight text-foreground">
               {health.available && health.avgDurationMs !== null
                 ? `${health.avgDurationMs} ms`
-                : "—"}
+                : "â€”"}
             </div>
             <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground mt-1 font-medium">
               {health.available && health.total > 0
-                ? `From webhook to DM · ${health.successRate ?? 0}% success over ${health.total} jobs`
+                ? `From webhook to DM Â· ${health.successRate ?? 0}% success over ${health.total} jobs`
                 : "No deliveries measured in the last 7 days"}
             </p>
           </div>
         </Card>
       </div>
 
-      {/* ── Top Keywords Performance (Miro Leaderboard with Progress) ── */}
+      {/* â”€â”€ Top Keywords Performance (Miro Leaderboard with Progress) â”€â”€ */}
       <Card className="rounded-2xl glass-card border border-[#e0e2e8] dark:border-border shadow-subtle">
         <CardHeader className="pb-4 border-b border-[#e0e2e8] dark:border-border/60">
           <div className="flex items-center justify-between">
@@ -896,7 +935,7 @@ async function OverviewContent({ searchParams }: PageProps) {
         </CardContent>
       </Card>
 
-      {/* ── Instagram Insights (daily snapshots) ── */}
+      {/* â”€â”€ Instagram Insights (daily snapshots) â”€â”€ */}
       <Card className="rounded-2xl glass-card border border-[#e0e2e8] dark:border-border shadow-subtle">
         <CardHeader className="pb-4 border-b border-[#e0e2e8] dark:border-border/60">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -905,7 +944,7 @@ async function OverviewContent({ searchParams }: PageProps) {
                 Instagram Insights
               </CardTitle>
               <CardDescription className="text-xs mt-0.5 text-[#555a6a] dark:text-muted-foreground">
-                Reach, impressions and profile views recorded over the last 30 days.
+                Reach, impressions, profile views and story views from Meta, with per-campaign conversion.
               </CardDescription>
             </div>
             <form action={refreshInsightsAction}>
@@ -922,7 +961,32 @@ async function OverviewContent({ searchParams }: PageProps) {
           </div>
         </CardHeader>
         <CardContent className="pt-5">
-          {snapshotCount === 0 ? (
+          {insightsStatus === "needs_access" ? (
+            <div role="alert" className="rounded-2xl border border-amber-400/50 bg-amber-50/70 dark:bg-amber-950/20 p-5 space-y-3">
+              <div className="flex items-start gap-3">
+                <div className="size-10 rounded-xl bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 flex items-center justify-center shrink-0">
+                  <BarChart3 className="size-5" aria-hidden="true" />
+                </div>
+                <div className="space-y-1">
+                  <p className="font-semibold text-sm text-foreground">
+                    Insights access needed
+                  </p>
+                  <p className="text-xs text-[#555a6a] dark:text-muted-foreground max-w-lg">
+                    {insightsError ??
+                      "Meta did not grant instagram_manage_insights. Reconnect your Instagram account and approve Insights access to see reach, impressions and conversion rates."}
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button asChild size="sm" className="rounded-full h-8 text-xs font-semibold">
+                  <Link href="/dashboard/settings">Reconnect Instagram</Link>
+                </Button>
+                <Button asChild size="sm" variant="outline" className="rounded-full h-8 text-xs font-semibold">
+                  <Link href="/dashboard/diagnostics">Run diagnostics</Link>
+                </Button>
+              </div>
+            </div>
+          ) : snapshotCount === 0 ? (
             <div role="status" className="py-10 text-center space-y-3">
               <div className="size-11 rounded-2xl bg-[#fff8e0] text-[#746019] dark:bg-[#746019]/30 dark:text-[#ffd02f] flex items-center justify-center mx-auto shadow-xs">
                 <BarChart3 className="size-5" aria-hidden="true" />
@@ -937,6 +1001,7 @@ async function OverviewContent({ searchParams }: PageProps) {
               </div>
             </div>
           ) : (
+            <>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
               <div className="rounded-2xl border border-[#4262ff]/25 bg-[#f5f3ff]/60 dark:bg-[#4262ff]/10 p-4 space-y-1.5">
                 <div className="flex items-center justify-between">
@@ -971,6 +1036,17 @@ async function OverviewContent({ searchParams }: PageProps) {
                 <p className="text-[10px] text-[#6b6f7e]">Visits to your profile</p>
               </div>
 
+              <div className="rounded-2xl border border-[#8b5cf6]/30 bg-[#f5f3ff]/40 dark:bg-[#8b5cf6]/10 p-4 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-[#6d28d9] dark:text-[#c4b5fd]">Story views</span>
+                  <Eye className="size-3.5 text-[#8b5cf6]" aria-hidden="true" />
+                </div>
+                <p className="text-2xl font-bold text-foreground">
+                  {insightTotals.storyViews.toLocaleString()}
+                </p>
+                <p className="text-[10px] text-[#6b6f7e]">Views on your stories</p>
+              </div>
+
               <div className="rounded-2xl border border-[#ffd02f]/40 bg-[#fff8e0]/50 dark:bg-[#746019]/10 p-4 space-y-1.5">
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-semibold text-[#746019] dark:text-[#ffd02f]">Conversion rate</span>
@@ -981,11 +1057,91 @@ async function OverviewContent({ searchParams }: PageProps) {
                 </p>
                 <p className="text-[10px] text-[#6b6f7e]">
                   {insightTotals.impressions > 0
-                    ? `${totalDms} DMs ÷ ${insightTotals.impressions.toLocaleString()} impressions`
+                    ? `${totalDms} DMs Ã· ${insightTotals.impressions.toLocaleString()} impressions`
                     : "No impressions recorded yet"}
                 </p>
               </div>
             </div>
+
+            {insightsSummary.daily.length > 0 && (
+              <div className="mt-4 rounded-2xl border border-[#e0e2e8] dark:border-border p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-xs font-semibold text-foreground">Reach trend (last 30 days)</p>
+                  {insightsLastSyncedAt && (
+                    <p className="text-[10px] text-[#6b6f7e]">
+                      Synced{" "}
+                      {new Date(insightsLastSyncedAt).toLocaleString("en-IN", {
+                        day: "numeric",
+                        month: "short",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </p>
+                  )}
+                </div>
+                <div
+                  className="flex items-end gap-1 h-20"
+                  role="img"
+                  aria-label={`Daily reach for the last ${insightsSummary.daily.length} days`}
+                >
+                  {insightsSummary.daily.map((point) => {
+                    const max = Math.max(
+                      ...insightsSummary.daily.map((p) => p.reach),
+                      1
+                    );
+                    const height = Math.max(4, Math.round((point.reach / max) * 100));
+                    return (
+                      <div
+                        key={point.day}
+                        className="flex-1 rounded-t bg-[#4262ff]/70 dark:bg-[#8b9eff]/70 min-w-[3px]"
+                        style={{ height: `${height}%` }}
+                        title={`${point.day}: ${point.reach.toLocaleString()} reach`}
+                      />
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {campaignInsights.length > 0 && (
+              <div className="mt-4 rounded-2xl border border-[#e0e2e8] dark:border-border overflow-hidden">
+                <div className="px-4 py-3 border-b border-[#e0e2e8] dark:border-border/60">
+                  <p className="text-xs font-semibold text-foreground">Conversion by campaign</p>
+                  <p className="text-[10px] text-[#6b6f7e] mt-0.5">
+                    Automated DMs Ã· impressions for each campaign&apos;s post.
+                  </p>
+                </div>
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-left text-[10px] uppercase tracking-wide text-[#6b6f7e]">
+                      <th scope="col" className="px-4 py-2 font-semibold">Campaign</th>
+                      <th scope="col" className="px-4 py-2 font-semibold text-right">DMs</th>
+                      <th scope="col" className="px-4 py-2 font-semibold text-right">Impressions</th>
+                      <th scope="col" className="px-4 py-2 font-semibold text-right">Conversion</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {campaignInsights.map((row) => (
+                      <tr key={row.automationId} className="border-t border-[#e0e2e8]/60 dark:border-border/40">
+                        <td className="px-4 py-2 font-medium text-foreground truncate max-w-[220px]">
+                          {row.name}
+                        </td>
+                        <td className="px-4 py-2 text-right font-mono">{row.dms.toLocaleString()}</td>
+                        <td className="px-4 py-2 text-right font-mono">
+                          {row.impressions.toLocaleString()}
+                        </td>
+                        <td className="px-4 py-2 text-right font-mono font-semibold">
+                          {row.conversionRate === null
+                            ? "â€”"
+                            : `${row.conversionRate.toFixed(1)}%`}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            </>
           )}
         </CardContent>
       </Card>
@@ -994,7 +1150,7 @@ async function OverviewContent({ searchParams }: PageProps) {
         <CardHeader className="pb-3 border-b border-[#e0e2e8] dark:border-border/60">
           <CardTitle className="text-base font-semibold tracking-tight">Conversion funnel</CardTitle>
           <CardDescription className="text-xs mt-0.5 text-[#555a6a] dark:text-muted-foreground">
-            Daily rollups plus today&apos;s live counters from Redis — last {analyticsDays} days.
+            Daily rollups plus today&apos;s live counters from Redis â€” last {analyticsDays} days.
           </CardDescription>
         </CardHeader>
         <CardContent className="pt-5">

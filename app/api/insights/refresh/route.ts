@@ -17,6 +17,8 @@ export async function POST() {
     success: summary.errors.length === 0,
     synced: summary.points,
     accounts: summary.accounts,
+    media: summary.media,
+    needsAccess: summary.needsAccess,
     errors: summary.errors,
   });
 }
