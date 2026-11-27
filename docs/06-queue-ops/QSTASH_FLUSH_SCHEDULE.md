@@ -156,3 +156,27 @@ export async function POST(req: Request) {
 * **Up to 60s Initial Activation:** After creating a schedule, allow up to 60 seconds for QStash to load it onto an active node and fire the first execution.
 * **Keep /api/cron/flush-metrics Fast and Bounded:** Because the schedule fires every minute, keep batch sizes bounded (`BATCH_SIZE = 250`) and set a sensible timeout (such as `"30s"`) so a slow database call doesn't overlap with the next minute's trigger.
 * **Deleting vs. Pausing:** Pausing stops new scheduled dispatches while keeping the schedule configuration intact; deleting removes the schedule from future triggers without cancelling messages that were already published."
+
+---
+
+## Production schedule map (Vercel Hobby)
+
+Vercel Hobby only allows cron expressions that run at most once per day, so
+sub-daily jobs live in QStash. `vercel.json` keeps only daily/weekly crons.
+
+| Job | Trigger | Schedule | Destination |
+|---|---|---|---|
+| Token refresh | Vercel cron | `0 3 * * *` | `/api/cron/refresh-tokens` |
+| Insights sync | Vercel cron | `15 3 * * *` | `/api/cron/insights` |
+| Admin alerts | Vercel cron | `0 6 * * *` | `/api/admin/alerts/check` |
+| Safety retention | Vercel cron | `0 4 * * *` | `/api/cron/safety-retention` |
+| Safety digest | Vercel cron | `0 9 * * 1` | `/api/cron/safety-digest` |
+| Follow-ups | QStash | `0 * * * *` | `/api/cron/followups` |
+| DM queue drain | QStash | `17 * * * *` | `/api/cron/drain-dm-queue` |
+| Link-click flush | QStash | `*/5 * * * *` | `/api/cron/flush-link-clicks` |
+| Metrics flush | QStash | `* * * * *` | `/api/cron/flush-metrics` |
+
+QStash schedules that call a cron-secret-protected endpoint must forward
+`Authorization: Bearer <CRON_SECRET>` (the `Upstash-Forward-Authorization`
+header when creating the schedule). `flush-link-clicks` is a `GET` endpoint, so
+its schedule sets `Upstash-Method: GET`.
