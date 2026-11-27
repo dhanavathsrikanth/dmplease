@@ -5,6 +5,8 @@ import Image from "next/image";
 import Link from "next/link";
 import { ArrowLeft, ArrowRight, Mail } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { Turnstile } from "@/components/auth/turnstile";
+import { checkAuthRateLimit } from "@/lib/auth-guard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,11 +16,32 @@ export function ForgotPasswordForm() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [errorInfo, setErrorInfo] = useState<{ title: string; description: string } | null>(null);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaResetKey, setCaptchaResetKey] = useState(0);
 
   const handleResetPassword = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setIsLoading(true);
     setErrorInfo(null);
+
+    const guard = await checkAuthRateLimit("reset");
+    if (!guard.allowed) {
+      setErrorInfo({
+        title: "Too many attempts",
+        description: guard.error || "Please wait a few minutes and try again.",
+      });
+      setIsLoading(false);
+      return;
+    }
+
+    if (process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY && !captchaToken) {
+      setErrorInfo({
+        title: "Complete the verification",
+        description: "Please complete the CAPTCHA challenge before requesting a reset link.",
+      });
+      setIsLoading(false);
+      return;
+    }
 
     try {
       const supabase = createClient();
@@ -30,6 +53,7 @@ export function ForgotPasswordForm() {
 
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
         redirectTo,
+        captchaToken: captchaToken ?? undefined,
       });
 
       if (error) {
@@ -38,6 +62,7 @@ export function ForgotPasswordForm() {
 
       setIsSuccess(true);
     } catch (err: unknown) {
+      setCaptchaResetKey((key) => key + 1);
       const message = err instanceof Error ? err.message : "Failed to send reset link";
       setErrorInfo({
         title: "Reset failed",
@@ -108,6 +133,12 @@ export function ForgotPasswordForm() {
               className="h-10"
             />
           </div>
+
+          <Turnstile
+            onToken={setCaptchaToken}
+            resetKey={captchaResetKey}
+            action="reset"
+          />
 
           <Button type="submit" size="lg" className="w-full h-10 font-medium" disabled={isLoading}>
             {isLoading ? "Sending link..." : "Send Reset Link"}

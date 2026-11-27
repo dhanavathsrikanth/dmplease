@@ -11,6 +11,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { OAuthButtons } from "@/components/auth/oauth-buttons";
+import { Turnstile } from "@/components/auth/turnstile";
+import { checkAuthRateLimit } from "@/lib/auth-guard";
+import { passwordPolicyHint, validatePassword } from "@/lib/password-policy";
 import posthog from "posthog-js";
 
 export function SignUpForm() {
@@ -27,6 +30,8 @@ export function SignUpForm() {
   const [repeatPassword, setRepeatPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [errorInfo, setErrorInfo] = useState<{ title: string; description: string } | null>(null);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaResetKey, setCaptchaResetKey] = useState(0);
 
   const handleSignUp = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -42,10 +47,30 @@ export function SignUpForm() {
       return;
     }
 
-    if (password.length < 6) {
+    const policy = validatePassword(password);
+    if (!policy.valid) {
       setErrorInfo({
-        title: "Password too short",
-        description: "Password must be at least 6 characters long.",
+        title: "Password too weak",
+        description: `Use a stronger password: ${policy.errors.join(", ")}.`,
+      });
+      setIsLoading(false);
+      return;
+    }
+
+    const guard = await checkAuthRateLimit("signup");
+    if (!guard.allowed) {
+      setErrorInfo({
+        title: "Too many attempts",
+        description: guard.error || "Please wait a few minutes and try again.",
+      });
+      setIsLoading(false);
+      return;
+    }
+
+    if (process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY && !captchaToken) {
+      setErrorInfo({
+        title: "Complete the verification",
+        description: "Please complete the CAPTCHA challenge before creating your account.",
       });
       setIsLoading(false);
       return;
@@ -64,6 +89,7 @@ export function SignUpForm() {
         password,
         options: {
           emailRedirectTo,
+          captchaToken: captchaToken ?? undefined,
         },
       });
 
@@ -99,29 +125,13 @@ export function SignUpForm() {
         return;
       }
 
-      // Try signing in immediately (in case user was auto-confirmed by database trigger)
-      try {
-        const { data: signInData } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
-
-        if (signInData?.session) {
-          if (typeof window !== "undefined") {
-            window.location.href = callbackUrl;
-          } else {
-            router.push(callbackUrl);
-            router.refresh();
-          }
-          return;
-        }
-      } catch {
-        // Fall through to confirmation screen
-      }
+      // Email confirmation is enforced by Supabase Auth, so there is no
+      // session until the user clicks the link in their inbox.
 
       // Confirmation email required
       router.push(`/auth/sign-up-success?email=${encodeURIComponent(email)}`);
     } catch (err: unknown) {
+      setCaptchaResetKey((key) => key + 1);
       const rawMessage = err instanceof Error ? err.message : "Failed to create account";
       let title = "Sign-up failed";
       let description = rawMessage;
@@ -130,7 +140,7 @@ export function SignUpForm() {
       if (lower.includes("rate limit") || lower.includes("over_email_send_rate_limit")) {
         title = "Email rate limit reached";
         description =
-          "Supabase's built-in email quota was reached (max 3 emails/hour on free tier). In your Supabase Dashboard under Authentication -> Providers -> Email, disable 'Confirm email' to enable instant signups without rate limits.";
+          "Supabase's built-in email quota was reached (max 3 emails/hour on the free tier). Wait an hour, or configure custom SMTP in Supabase Auth for production.";
       } else if (lower.includes("invalid") || lower.includes("email_address_invalid")) {
         title = "Invalid email address";
         description = "Please provide a valid, deliverable email address (e.g. Gmail or your personal email).";
@@ -224,11 +234,14 @@ export function SignUpForm() {
               type="password"
               required
               autoComplete="new-password"
-              placeholder="At least 6 characters"
+              placeholder="At least 8 characters"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className="h-10"
             />
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              {passwordPolicyHint()}
+            </p>
           </div>
 
           <div className="space-y-2">
@@ -244,6 +257,12 @@ export function SignUpForm() {
               className="h-10"
             />
           </div>
+
+          <Turnstile
+            onToken={setCaptchaToken}
+            resetKey={captchaResetKey}
+            action="signup"
+          />
 
           <Button type="submit" size="lg" className="w-full h-10 font-medium" disabled={isLoading}>
             {isLoading ? "Creating account..." : "Create Account"}

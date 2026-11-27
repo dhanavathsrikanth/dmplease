@@ -11,6 +11,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { OAuthButtons } from "@/components/auth/oauth-buttons";
+import { Turnstile } from "@/components/auth/turnstile";
+import { checkAuthRateLimit } from "@/lib/auth-guard";
 import posthog from "posthog-js";
 
 export function LoginForm() {
@@ -36,17 +38,39 @@ export function LoginForm() {
       : null
   );
   const [magicLinkSent, setMagicLinkSent] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaResetKey, setCaptchaResetKey] = useState(0);
 
   const handlePasswordLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setIsLoading(true);
     setErrorInfo(null);
 
+    const guard = await checkAuthRateLimit("login");
+    if (!guard.allowed) {
+      setErrorInfo({
+        title: "Too many attempts",
+        description: guard.error || "Please wait a few minutes and try again.",
+      });
+      setIsLoading(false);
+      return;
+    }
+
+    if (process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY && !captchaToken) {
+      setErrorInfo({
+        title: "Complete the verification",
+        description: "Please complete the CAPTCHA challenge before signing in.",
+      });
+      setIsLoading(false);
+      return;
+    }
+
     try {
       const supabase = createClient();
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
+        options: { captchaToken: captchaToken ?? undefined },
       });
 
       if (error) {
@@ -67,6 +91,7 @@ export function LoginForm() {
         router.refresh();
       }
     } catch (err: unknown) {
+      setCaptchaResetKey((key) => key + 1);
       const rawMessage = err instanceof Error ? err.message : "Failed to sign in";
       let title = "Sign-in failed";
       let description = rawMessage;
@@ -75,7 +100,7 @@ export function LoginForm() {
       if (lower.includes("email not confirmed")) {
         title = "Email not confirmed";
         description =
-          "Your email has not been confirmed yet. Check your inbox (including Spam/Junk) for the confirmation link, or disable 'Confirm email' in Supabase Dashboard (under Authentication -> Providers -> Email) to sign in immediately.";
+          "Your email has not been confirmed yet. Check your inbox (including Spam/Junk) for the confirmation link, then try again.";
       } else if (lower.includes("invalid login credentials")) {
         title = "Invalid credentials";
         description = "Incorrect email or password. Please try again or click 'Forgot password?' below.";
@@ -95,6 +120,25 @@ export function LoginForm() {
     setIsLoading(true);
     setErrorInfo(null);
 
+    const guard = await checkAuthRateLimit("magic-link");
+    if (!guard.allowed) {
+      setErrorInfo({
+        title: "Too many attempts",
+        description: guard.error || "Please wait a few minutes and try again.",
+      });
+      setIsLoading(false);
+      return;
+    }
+
+    if (process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY && !captchaToken) {
+      setErrorInfo({
+        title: "Complete the verification",
+        description: "Please complete the CAPTCHA challenge before requesting a link.",
+      });
+      setIsLoading(false);
+      return;
+    }
+
     try {
       const supabase = createClient();
       const origin =
@@ -107,6 +151,7 @@ export function LoginForm() {
         email,
         options: {
           emailRedirectTo,
+          captchaToken: captchaToken ?? undefined,
         },
       });
 
@@ -116,6 +161,7 @@ export function LoginForm() {
 
       setMagicLinkSent(true);
     } catch (err: unknown) {
+      setCaptchaResetKey((key) => key + 1);
       const message = err instanceof Error ? err.message : "Failed to send magic link";
       setErrorInfo({
         title: "Magic link failed",
@@ -243,6 +289,12 @@ export function LoginForm() {
                 </div>
               </div>
 
+              <Turnstile
+                onToken={setCaptchaToken}
+                resetKey={captchaResetKey}
+                action="login"
+              />
+
               <Button type="submit" size="lg" className="w-full h-10 font-medium" disabled={isLoading}>
                 {isLoading ? "Signing in..." : "Sign in with Password"}
                 {!isLoading && <ArrowRight className="ml-2 h-4 w-4" />}
@@ -251,7 +303,11 @@ export function LoginForm() {
               <div className="text-center pt-1">
                 <button
                   type="button"
-                  onClick={() => setAuthMode("magic-link")}
+                  onClick={() => {
+                    setAuthMode("magic-link");
+                    setCaptchaToken(null);
+                    setCaptchaResetKey((key) => key + 1);
+                  }}
                   className="text-xs text-muted-foreground hover:text-foreground transition-colors underline underline-offset-2"
                 >
                   Or sign in with passwordless magic link
@@ -274,6 +330,12 @@ export function LoginForm() {
                 />
               </div>
 
+              <Turnstile
+                onToken={setCaptchaToken}
+                resetKey={captchaResetKey}
+                action="magic-link"
+              />
+
               <Button type="submit" size="lg" className="w-full h-10 font-medium" disabled={isLoading}>
                 {isLoading ? "Sending link..." : "Send Magic Link"}
                 {!isLoading && <ArrowRight className="ml-2 h-4 w-4" />}
@@ -282,7 +344,11 @@ export function LoginForm() {
               <div className="text-center pt-1">
                 <button
                   type="button"
-                  onClick={() => setAuthMode("password")}
+                  onClick={() => {
+                    setAuthMode("password");
+                    setCaptchaToken(null);
+                    setCaptchaResetKey((key) => key + 1);
+                  }}
                   className="text-xs text-muted-foreground hover:text-foreground transition-colors underline underline-offset-2"
                 >
                   Or sign in with email and password

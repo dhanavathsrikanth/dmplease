@@ -60,14 +60,27 @@
 
 ### 2.1 Auth settings (human action)
 
-- [ ] **Enable Leaked Password Protection:** Supabase Dashboard → **Authentication → Policies → Password security** → enable "Check against HaveIBeenPwned.org".
-  - This is the only remaining security advisor warning that cannot be changed with SQL.
-  - Verify afterwards in **Advisors → Security** that `auth_leaked_password_protection` is gone.
+- [x] **Email confirmation is enabled** in Supabase Auth.
+  - The `handle_new_user` trigger no longer auto-confirms users (`20261127_remove_auto_confirm.sql`), so the setting is now actually enforced.
+- [ ] **Password policy:** Supabase Dashboard → **Authentication → Providers → Email**:
+  - Minimum password length: **8** (12 recommended).
+  - Require **lowercase**, **uppercase**, **digits** and **symbols**.
+  - The app forms enforce the same policy in `lib/password-policy.ts`.
+- [ ] **CAPTCHA (Cloudflare Turnstile) — DEFERRED until a domain is available.**
+  - Cloudflare Turnstile requires a domain name when creating the widget. Until you have one, **keep CAPTCHA disabled** in Supabase (Authentication → Attack Protection → CAPTCHA). The forms render no widget when `NEXT_PUBLIC_TURNSTILE_SITE_KEY` is unset, so sign-up/login continue to work.
+  - When the domain is ready, follow the ordered steps in **§10**.
+- [ ] **Auth rate limits:** Supabase Dashboard → **Authentication → Rate Limits**. Keep the defaults or tighten them. The app also has a per-IP Upstash guard at `/api/auth/guard` (signup 10/h, login 30/h, reset 5/h, magic-link 10/h, password-change 10/h) as defense-in-depth.
+- [ ] **Require current password when changing password:** Supabase Dashboard → **Authentication → Policies**. The Settings page now has a **Password** card that sends `current_password` with the update.
+  - **Test the password-reset flow after enabling this.** If Supabase also requires the current password on recovery sessions, keep the setting off and rely on the Settings card instead.
+- [ ] **OTP expiry:** set to **3600 seconds (1 hour) or lower**.
+- [ ] **Custom SMTP (recommended):** configure your own sender so confirmation and reset emails come from your domain and are not limited by the Free-tier shared email quota.
+- [ ] **Leaked Password Protection:** available on **Pro and above** only. On Free, the app-level policy + CAPTCHA + rate limits are the compensating controls. If you upgrade, enable it and verify `auth_leaked_password_protection` disappears from **Advisors → Security**.
 
 ### 2.2 Migrations
 
-- [x] Production migrations applied (45 migrations, latest `workspace_timezone_20261127`).
+- [x] Production migrations applied (48 migrations, latest `remove_auto_confirm_20261127`).
 - [x] Security hardening applied: `20261127_security_hardening.sql`.
+- [x] Auto-confirm bypass removed: `20261127_remove_auto_confirm.sql`.
 - [ ] Re-run **all** migrations against any staging/secondary Supabase project before promoting it.
 - [ ] Confirm `dm_rules.trigger_type` accepts `MESSAGE_REACTION` and RLS policies exist for `follow_checks` / `follow_prompts`.
 - [ ] Apply RLS to any new table added after this checklist was written.
@@ -116,6 +129,10 @@ curl -i -X POST "https://<project>.supabase.co/rest/v1/rpc/increment_daily_metri
   - `POSTHOG_API_KEY` (personal API key, sensitive)
   - `POSTHOG_PROJECT_ID` (`152538`)
   - `POSTHOG_HOST` (EU host)
+- [ ] **CAPTCHA site key — DEFERRED until a domain is available.**
+  - Add `NEXT_PUBLIC_TURNSTILE_SITE_KEY` to **Vercel → Project Settings → Environment Variables** (Production, and Preview if desired) once Cloudflare issues the site key for your domain.
+  - Without it the forms render no widget. Do **not** enable CAPTCHA in Supabase before this variable is set and redeployed, or auth requests will be rejected.
+  - Full ordered steps are in **§10**.
 - [ ] **Optional:** `SHORT_LINK_DOMAIN` for branded tracked links, `OAUTH_STATE_SECRET` to separate OAuth state signing from the token vault.
 
 ### 3.3 Health and deployment
@@ -198,7 +215,36 @@ Run these against the live deployment, in order:
 | `increment_daily_metrics(jsonb)` executable by `anon` (metric poisoning) | Critical | **Fixed** | anon RPC now returns `401 permission denied`; only `service_role` has `EXECUTE` |
 | `handle_new_user()` executable by `anon` / `authenticated` | Medium | **Fixed** | `EXECUTE` limited to `service_role` + `supabase_auth_admin`; `search_path` pinned |
 | `is_workspace_member(uuid)` executable by `anon` | Low | **Fixed** | `EXECUTE` limited to `authenticated` + `service_role` |
-| Leaked password protection disabled | Medium | **Human action** | Enable in Supabase Dashboard → Authentication → Policies |
+| `handle_new_user` auto-confirmed every user, bypassing "Confirm email" | High | **Fixed** | `20261127_remove_auto_confirm.sql`; live function no longer references `email_confirmed_at` |
+| Password minimum was 6 characters | Medium | **Fixed** | `lib/password-policy.ts` enforces 8+ with upper/lower/digit/symbol in all forms |
+| No CAPTCHA on auth forms | Medium | **Code ready; setup deferred until a domain exists** | Turnstile widget wired into sign-up, login, magic-link and reset; follow §10 when the domain is available |
+| No app-level auth rate limiting | Medium | **Fixed (code)** | `/api/auth/guard` with Upstash sliding windows; Supabase Auth limits remain authoritative |
+| No current-password check on password change | Medium | **Fixed (code)** | Settings → Password card sends `current_password`; enable the Supabase setting and test the reset flow |
+| Leaked password protection disabled | Medium | **Human action / plan-gated** | Pro+ only. On Free, use the password policy + CAPTCHA + rate limits; upgrade to enable the native check |
 | `admin_alerts` / `webhook_events` RLS with no policy | Info | **Accepted** | Deny-all for `anon`/`authenticated`; only the service role writes |
 
-Migration: `supabase/migrations/20261127_security_hardening.sql`.
+Migrations: `supabase/migrations/20261127_security_hardening.sql`, `supabase/migrations/20261127_remove_auto_confirm.sql`.
+
+---
+
+## 10. Deferred: Cloudflare Turnstile CAPTCHA (needs a domain)
+
+Cloudflare Turnstile asks for a **domain name** when you create the widget. Until you have one, CAPTCHA stays **off** and the app works normally: the forms render no widget when `NEXT_PUBLIC_TURNSTILE_SITE_KEY` is unset, and Supabase does not require a token.
+
+When the domain is ready, do these **in order**:
+
+1. [ ] **Cloudflare Dashboard → Turnstile → Add widget**
+   - Add your production domain (for example `dmplease.com` and `www.dmplease.com`).
+   - Copy the **Site Key** (public) and **Secret Key** (private).
+2. [ ] **Vercel → Project Settings → Environment Variables**
+   - Add `NEXT_PUBLIC_TURNSTILE_SITE_KEY=<site key>` for **Production** (and Preview if desired).
+   - **Redeploy** so the public key is baked into the client bundle.
+3. [ ] **Supabase → Authentication → Attack Protection → CAPTCHA**
+   - Enable **Turnstile** and paste the **Secret Key**.
+   - Save.
+4. [ ] **Verify**
+   - Open `/auth/sign-up` and `/auth/login`; the Turnstile widget should render.
+   - Submit a test sign-up and login; Supabase should accept the `captchaToken`.
+   - If auth fails with a CAPTCHA error, confirm the site key is in the deployed bundle and that the secret belongs to the same Turnstile widget.
+
+> **Order matters:** set the Vercel site key and redeploy **before** enabling CAPTCHA in Supabase. Enabling it first rejects every auth request until the client can send a token.

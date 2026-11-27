@@ -51,6 +51,25 @@ export function getRateLimiter(hourlyCap: number): Ratelimit {
   return limiter;
 }
 
+const namedLimiters = new Map<string, Ratelimit>();
+
+/** A named sliding-window limiter, so different actions never share a bucket. */
+export function getRateLimiterFor(prefix: string, hourlyCap: number): Ratelimit {
+  const cap = Math.max(1, hourlyCap);
+  const key = `${prefix}:${cap}`;
+  let limiter = namedLimiters.get(key);
+  if (!limiter) {
+    limiter = new Ratelimit({
+      redis: getRedis(),
+      limiter: Ratelimit.slidingWindow(cap, "1 h"),
+      prefix: `dmplease:rl:${prefix}:${cap}`,
+      analytics: false,
+    });
+    namedLimiters.set(key, limiter);
+  }
+  return limiter;
+}
+
 export function getQstashWorkerUrl(): string {
   return cleanEnv("QSTASH_WORKER_URL");
 }

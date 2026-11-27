@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   AlertCircle,
   BadgeCheck,
+  KeyRound,
 } from "lucide-react";
 import { getCurrentProfile, getCurrentUser } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
@@ -22,6 +23,7 @@ import { getReportLink } from "@/app/dashboard/settings/report-actions";
 import { createWorkspaceToken } from "@/lib/conversions";
 import { normalizeFallbackReply } from "@/lib/dm-rules";
 import { FallbackReplySettings } from "@/components/settings/fallback-reply-settings";
+import { ChangePasswordForm } from "@/components/settings/change-password-form";
 import type { FallbackAccountOption } from "@/components/settings/fallback-reply-settings";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -396,6 +398,24 @@ async function SettingsContent({
                 Completed
               </Badge>
             </div>
+          </CardContent>
+        </Card>
+
+        {/* ── Password Card ── */}
+        <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 shadow-subtle bg-card">
+          <CardHeader className="pb-3 border-b border-[#e0e2e8] dark:border-border/60">
+            <div className="flex items-center gap-2.5">
+              <KeyRound className="size-4 text-foreground" />
+              <div>
+                <CardTitle className="text-sm font-semibold">Password</CardTitle>
+                <CardDescription className="text-xs text-[#555a6a] dark:text-muted-foreground">
+                  Change the password for your signed-in account
+                </CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="pt-5">
+            <ChangePasswordForm />
           </CardContent>
         </Card>
       </div>

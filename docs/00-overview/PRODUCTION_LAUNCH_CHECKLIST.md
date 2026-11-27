@@ -38,4 +38,11 @@ Here is a concise production launch checklist for a LinkPlease / Zorcha alternat
 
 * **End-to-end DM flow:** Send a test comment/DM payload -> confirm signature check, deduplication, rate-limit queueing, QStash worker dispatch, and DB/Redis metric increments.
 * **Follow-up cancellation:** Trigger a scheduled follow-up -> click the tracked link (or simulate a reply) -> confirm the follow-up is cancelled/skipped.
-* **Failure & DLQ recovery:** Force a transient 500 in a test worker -> confirm QStash retries, hits failureCallback, lands in DLQ, and replays cleanly once fixed."
+* **Failure & DLQ recovery:** Force a transient 500 in a test worker -> confirm QStash retries, hits failureCallback, lands in DLQ, and replays cleanly once fixed.
+
+---
+
+### 5. Deferred until a domain is available
+
+* **Cloudflare Turnstile CAPTCHA:** the code is ready, but Turnstile requires a domain name when creating the widget. Until you have a domain, keep CAPTCHA **disabled** in Supabase (Authentication → Attack Protection → CAPTCHA); the forms render no widget when `NEXT_PUBLIC_TURNSTILE_SITE_KEY` is unset.
+* When the domain is ready, follow **§10 of [EXTERNAL_ACTIONS_BEFORE_LAUNCH.md](./EXTERNAL_ACTIONS_BEFORE_LAUNCH.md)** in order: create the Turnstile widget, add `NEXT_PUBLIC_TURNSTILE_SITE_KEY` to **Vercel → Environment Variables**, redeploy, then enable CAPTCHA in Supabase with the secret key."

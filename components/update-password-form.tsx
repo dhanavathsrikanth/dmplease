@@ -6,6 +6,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowRight, CheckCircle2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { checkAuthRateLimit } from "@/lib/auth-guard";
+import { passwordPolicyHint, validatePassword } from "@/lib/password-policy";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -32,10 +34,21 @@ export function UpdatePasswordForm() {
       return;
     }
 
-    if (password.length < 6) {
+    const policy = validatePassword(password);
+    if (!policy.valid) {
       setErrorInfo({
-        title: "Password too short",
-        description: "Password must be at least 6 characters long.",
+        title: "Password too weak",
+        description: `Use a stronger password: ${policy.errors.join(", ")}.`,
+      });
+      setIsLoading(false);
+      return;
+    }
+
+    const guard = await checkAuthRateLimit("password-change");
+    if (!guard.allowed) {
+      setErrorInfo({
+        title: "Too many attempts",
+        description: guard.error || "Please wait a few minutes and try again.",
       });
       setIsLoading(false);
       return;
@@ -118,11 +131,14 @@ export function UpdatePasswordForm() {
               type="password"
               required
               autoComplete="new-password"
-              placeholder="At least 6 characters"
+              placeholder="At least 8 characters"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className="h-10"
             />
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              {passwordPolicyHint()}
+            </p>
           </div>
 
           <div className="space-y-2">
