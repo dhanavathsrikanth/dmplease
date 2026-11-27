@@ -13,24 +13,12 @@
       "schedule": "0 6 * * *"
     },
     {
-      "path": "/api/cron/followups",
-      "schedule": "7 * * * *"
-    },
-    {
-      "path": "/api/cron/drain-dm-queue",
-      "schedule": "17 * * * *"
-    },
-    {
       "path": "/api/cron/safety-retention",
       "schedule": "0 4 * * *"
     },
     {
       "path": "/api/cron/safety-digest",
       "schedule": "0 9 * * 1"
-    },
-    {
-      "path": "/api/cron/flush-link-clicks",
-      "schedule": "*/5 * * * *"
     }
   ]
 }
