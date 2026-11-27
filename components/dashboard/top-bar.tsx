@@ -40,6 +40,7 @@ const pageTitles: Record<string, { title: string; category: string }> = {
   "/dashboard/logs": { title: "Activity Log", category: "Automations" },
   "/dashboard/settings": { title: "Settings", category: "Platform" },
   "/dashboard/diagnostics": { title: "System Health", category: "Platform" },
+  "/dashboard/safety": { title: "Safety", category: "Platform" },
 };
 
 export function TopBar({

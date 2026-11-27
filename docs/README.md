@@ -96,6 +96,12 @@ The folders are numbered so they sort in a sensible reading order, like a deskto
 | --- | --- |
 | [Beyond Auto-DM — ROI Analytics Roadmap](13-product/ROI_ANALYTICS_ROADMAP.md) | Four-layer analytics moat vs Zorcha/LinkPlease, required data model, product surfaces, packaging and phased delivery. |
 
+## Audits
+
+| Doc | What it covers |
+| --- | --- |
+| [Feature & Codebase Implementation Audit](FEATURE_IMPLEMENTATION_AUDIT.md) | Source-verified verdict on 16 capabilities (2 complete, 12 partial, 2 missing), per-file contribution map, and the blockers to feature parity. |
+
 ---
 
 ## Suggested Reading Order

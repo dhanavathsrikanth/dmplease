@@ -413,7 +413,7 @@ gantt
 - ✅ **T0.2** Fail-closed secrets: `lib/config.ts` centralises all secret reads; no hardcoded production fallbacks. Vault decrypts legacy keys for compatibility but always encrypts with the current key. OAuth state accepts legacy signatures for in-flight flows only.
 - ✅ **T0.3** `/api/cron/refresh-tokens` requires `Authorization: Bearer CRON_SECRET`; `vercel.json` schedules it daily at 03:00 UTC. Refresh results log account IDs, never tokens.
 - ✅ **T0.5** All fabricated dashboard metrics removed. Delivery rate, unique leads, and processing time are now computed from `dm_logs` and the webhook ledger. Landing-page copy no longer claims sub-280ms/99.8% as fact; sample dashboard data is labelled as such.
-- ✅ **T0.6** `NEXT_POST` now resolves the latest published media before matching; campaign creation validates input with zod and surfaces field-level errors in the builder. Follow-gate is now a real, visible toggle in the campaign builder.
+- ✅ **T0.6** `NEXT_POST` resolves the latest published media before matching and auto-attaches that reel's real permalink to the DM (`{link}` + action button) via the cached `lib/meta/reel-link-resolver.ts`. Campaign creation validates input with zod and surfaces field-level errors in the builder. Follow-gate is now a real, visible toggle in the campaign builder.
 - ✅ **T0.7** Vitest suite added: 25 passing tests across config, signature verification, webhook parsers, retry/personalisation/post-scope logic, and campaign validation (`npm test`). Lint is scoped to source files (`npm run lint` → clean). `npx tsc --noEmit` → clean.
 - ✅ **T0.8** All `[YOUR-PASSWORD]` string-sniffing replaced by `hasDatabaseUrl()` in `lib/config.ts`; the stale `/protected` redirect was removed.
 
@@ -422,6 +422,14 @@ gantt
 - ⚠️ **T0.3 — set `CRON_SECRET` in Vercel** to the same value used locally. It was generated in `.env` / `.env.local` for local development.
 - ⚠️ **Run `npx prisma generate` once the dev server is stopped** so the generated client includes the `WebhookEvent` model. The runtime code uses parameterised raw SQL, so it does not depend on this step.
 - ⚠️ **T0.7 — Playwright E2E smoke test** is not yet added; unit coverage is in place.
+- ✅ **Follow-ups — `supabase/migrations/20261126_followups_cancellation.sql` applied and verified via Supabase MCP** (2026-11-26): `followup_events_action_check` accepts `cancelled` and all seven due/engagement indexes exist. The hourly `/api/cron/followups` job is registered in `vercel.json` and needs `CRON_SECRET` (same as above).
+- ✅ **Public replies — `supabase/migrations/20261126_public_replies.sql` applied and verified via Supabase MCP** (2026-11-26): ledger table, status check and RLS are live, so public-reply failures are logged and countable.
+- ✅ **Re-runs — `supabase/migrations/20261126_rerun_jobs.sql` applied and verified via Supabase MCP** (2026-11-26): job/item tables, status constraints, indexes and RLS are live. `CRON_SECRET` is not needed for re-runs, but QStash must be configured for the durable queue (a capped local fallback exists for dev).
+- ✅ **Personalised DMs — `supabase/migrations/20261126_dm_vouchers.sql` applied and verified via Supabase MCP** (2026-11-26): voucher ledger with unique scope/recipient key and RLS is live.
+- ✅ **Six DM formats — `supabase/migrations/20261126_message_formats.sql` applied and verified via Supabase MCP** (2026-11-26): `message_format`/`message_assets` columns and the six-value constraint are live. Rich assets additionally require Cloudflare R2 credentials (`R2_*` in `.env.example`) and a public CDN domain.
+- ✅ **Short links — `supabase/migrations/20261126_short_links.sql` applied and verified via Supabase MCP** (2026-11-26): rotator/target/tracked-link tables, missing click columns and RLS are live. Set `SHORT_LINK_DOMAIN` for the shortest possible links.
+- ✅ **DM queue — `supabase/migrations/20261126_dm_queue.sql` applied and verified via Supabase MCP** (2026-11-26): status, attempts, backoff and error columns plus drain indexes are live. `CRON_SECRET` is required for the hourly drain cron.
+- ✅ **Safety engine Phase 2 — `supabase/migrations/20261127_safety_phase2.sql` applied and verified via Supabase MCP** (2026-11-27): `opted_out_at`/`opted_out_keyword` on contacts and account-health columns on `instagram_accounts` are live. Retention cron registered in `vercel.json`.
 
 ### UI/UX improvements made in Tier 0
 - Diagnostics is now an honest, scannable health report: each check has a real measurement, a plain-language description, an actionable "Fix:" hint, and an `aria-live` summary banner. The fake compute-benchmark and fake rate-limit text were removed.

@@ -41,6 +41,7 @@ import {
 const STORY_TRIGGERS: DmRuleTrigger[] = [
   "STORY_REPLY",
   "STORY_MENTION",
+  "STORY_REACTION",
   "MESSAGE_REACTION",
 ];
 
@@ -48,6 +49,7 @@ const TRIGGER_LABELS: Record<DmRuleTrigger, string> = {
   DM_KEYWORD: "Inbox keyword",
   STORY_REPLY: "Story reply",
   STORY_MENTION: "Story mention",
+  STORY_REACTION: "Story reaction",
   SHARE_TO_DM: "Share to DM",
   MESSAGE_REACTION: "Reaction to your DM",
 };
@@ -56,6 +58,7 @@ const TRIGGER_HINTS: Record<DmRuleTrigger, string> = {
   DM_KEYWORD: "When a follower messages you a keyword",
   STORY_REPLY: "When someone answers one of your stories",
   STORY_MENTION: "When someone tags your account in their story",
+  STORY_REACTION: "When someone reacts to one of your stories with an emoji",
   SHARE_TO_DM: "When a follower shares your post to your DMs",
   MESSAGE_REACTION:
     "When a follower reacts to a DM you sent (Meta has no per-user story-tap reaction)",

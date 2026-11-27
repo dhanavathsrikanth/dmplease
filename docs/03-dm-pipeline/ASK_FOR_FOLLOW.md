@@ -32,6 +32,8 @@ Authorization: Bearer <PAGE_ACCESS_TOKEN>
 - Rules: the same four columns on `dm_rules`.
 - Migration: `supabase/migrations/20261126_follow_gate.sql` (additive, re-runnable). Prisma models are updated in `prisma/schema.prisma`.
 - UI: one reusable `FollowGateSettings` component is used by the campaign builder and the rule manager. The phone preview renders both steps of the gate; the campaign editor shows a `FollowGateReport` with verification counts and reasons.
+- Copy: `lib/meta/opening-dm.ts` normalises stored copy to shared defaults and renders `{username}` / `{keyword}` / `{link}` with the same link formatting as the guide DM. `lib/validation/follow-gate.ts` is the single source of truth for the 500-character copy and 20-character button limits across campaigns, rules and account fallback.
+- Delivery: `sendOpeningDm()` in the webhook processor is the only place an opener goes out. It records a `dm_logs` row (`trigger_keyword = OPENING`, `sequence_step = 0`), an outbound inbox message, a `dm_sent` metric, a `follow_gate_opening` safety event and the `follow_gate_opening_sent` PostHog event. The Overview "Opening messages sent" tile counts those sent rows, not outstanding `pending_dms`.
 
 ## Guardrails
 

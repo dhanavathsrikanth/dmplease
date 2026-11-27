@@ -12,19 +12,13 @@ import {
   Check,
   ExternalLink,
   Loader2,
+  Clock,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { PhonePreview } from "@/components/campaigns/phone-preview";
 import { FollowGateSettings } from "@/components/campaigns/follow-gate-settings";
 import {
@@ -35,6 +29,26 @@ import {
   createCampaign,
   updateCampaign,
 } from "@/app/dashboard/campaigns/actions";
+import { AUTO_REEL_LINK, isAutoReelLink } from "@/lib/reel-link";
+import {
+  normalizePublicReplies,
+  PUBLIC_REPLY_DEFAULT,
+} from "@/lib/public-replies";
+import { PublicReplySettings } from "@/components/campaigns/public-reply-settings";
+import {
+  CONTACT_TOKENS,
+  DmVariablePicker,
+} from "@/components/campaigns/dm-variable-picker";
+import { findDmVariables } from "@/lib/dm-variables";
+import { DmVariantsEditor } from "@/components/campaigns/dm-variants-editor";
+import { MessageFormatEditor } from "@/components/campaigns/message-format-editor";
+import type {
+  CardElement,
+  MessageFormat,
+  StoredAsset,
+} from "@/lib/message-formats";
+import { LinkRotationSettings } from "@/components/campaigns/link-rotation-settings";
+import type { LinkRotatorView } from "@/app/dashboard/campaigns/link-actions";
 
 interface InstagramMediaItem {
   id: string;
@@ -91,18 +105,29 @@ interface CampaignInitialData {
   openingMessage?: string | null;
   followGateButtonLabel?: string | null;
   followGateOnUnavailable?: string | null;
+  collectField?: string | null;
+  dmVariants?: string[] | null;
+  messageFormat?: string | null;
+  messageAssets?: {
+    asset?: StoredAsset | null;
+    cards?: CardElement[] | null;
+  } | null;
+  shortLinksEnabled?: boolean | null;
+  linkRotatorId?: string | null;
 }
 
 interface CampaignBuilderProps {
   initialHandle?: string;
   initialCampaign?: CampaignInitialData;
   mode?: "create" | "edit";
+  linkRotators?: LinkRotatorView[];
 }
 
 export function CampaignBuilder({
   initialHandle,
   initialCampaign,
   mode = "create",
+  linkRotators = [],
 }: CampaignBuilderProps = {}) {
   const isEdit = mode === "edit";
   const router = useRouter();
@@ -147,20 +172,56 @@ export function CampaignBuilder({
     initialCampaign?.dmMessage ??
       "Hey {username}! Thanks for your comment. Here is your free guide: {link}. Enjoy! 🙌"
   );
+  const [dmVariants, setDmVariants] = useState<string[]>(
+    () => initialCampaign?.dmVariants ?? []
+  );
+  const [messageFormat, setMessageFormat] = useState<MessageFormat>(
+    (initialCampaign?.messageFormat as MessageFormat) || "text"
+  );
+  const [messageAsset, setMessageAsset] = useState<StoredAsset | null>(
+    initialCampaign?.messageAssets?.asset ?? null
+  );
+  const [cards, setCards] = useState<CardElement[]>(
+    initialCampaign?.messageAssets?.cards ?? []
+  );
+  const [shortLinksEnabled, setShortLinksEnabled] = useState(
+    initialCampaign ? Boolean(initialCampaign.shortLinksEnabled) : true
+  );
+  const [linkRotatorId, setLinkRotatorId] = useState<string | null>(
+    initialCampaign?.linkRotatorId ?? null
+  );
   const [buttonText, setButtonText] = useState(
     initialCampaign?.buttonText ?? "Download Guide 📖"
   );
-  const [buttonUrl, setButtonUrl] = useState(
-    initialCampaign?.buttonUrl ?? "https://dmplease.vercel.app/guide"
-  );
+  const [collectField, setCollectField] = useState<
+    "none" | "email" | "phone" | "name"
+  >(() => {
+    const initial = initialCampaign?.collectField;
+    return initial === "email" || initial === "phone" || initial === "name"
+      ? initial
+      : "none";
+  });
+
+  const [buttonUrl, setButtonUrl] = useState(() => {
+    // A Next Post campaign created before this feature has no URL at all —
+    // treat that as "auto-attach" rather than leaving a dead button.
+    if (
+      initialCampaign?.postScope === "NEXT_POST" &&
+      !initialCampaign.buttonUrl?.trim()
+    ) {
+      return AUTO_REEL_LINK;
+    }
+    return initialCampaign?.buttonUrl ?? "https://dmplease.vercel.app/guide";
+  });
 
   // Public Reply
   const [publicReplyEnabled, setPublicReplyEnabled] = useState(
     initialCampaign?.publicReplyEnabled ?? true
   );
-  const [publicReplyMessage, setPublicReplyMessage] = useState(
-    initialCampaign?.publicReplyMessages?.[0] ?? "Sent you a DM! 📩"
-  );
+  const [publicReplyMessages, setPublicReplyMessages] = useState<string[]>(() => {
+    const existing = normalizePublicReplies(initialCampaign?.publicReplyMessages ?? []);
+    return existing.length > 0 ? existing : [PUBLIC_REPLY_DEFAULT];
+  });
 
   // Ask for Follow
   const [followGateEnabled, setFollowGateEnabled] = useState(
@@ -282,14 +343,25 @@ export function CampaignBuilder({
       postCaption: selectedPost?.caption,
       triggerKeywords: keywords,
       dmMessage,
+      dmVariants,
+      messageFormat,
+      messageAssets: {
+        format: messageFormat,
+        text: dmMessage,
+        asset: messageAsset,
+        cards,
+      },
+      shortLinksEnabled,
+      linkRotatorId,
       buttonText,
       buttonUrl,
       publicReplyEnabled,
-      publicReplyMessages: publicReplyEnabled ? [publicReplyMessage] : [],
+      publicReplyMessages: publicReplyEnabled ? publicReplyMessages : [],
       followGateEnabled,
       openingMessage: followGateEnabled ? openingMessage : null,
       followGateButtonLabel: followGateEnabled ? followGateButtonLabel : null,
       followGateOnUnavailable,
+      collectField,
     };
 
     try {
@@ -303,8 +375,14 @@ export function CampaignBuilder({
           post_scope: postScope,
           keyword_count: keywords.length,
           public_reply_enabled: publicReplyEnabled,
+          public_reply_variants: publicReplyEnabled ? publicReplyMessages.length : 0,
           follow_gate_enabled: followGateEnabled,
           follow_gate_on_unavailable: followGateOnUnavailable,
+          collect_field: collectField,
+          dm_variants: dmVariants.length,
+          message_format: messageFormat,
+          short_links_enabled: shortLinksEnabled,
+          link_rotator: linkRotatorId ? "rotation" : "single",
           has_action_button: Boolean(buttonText.trim() && buttonUrl.trim()),
         });
         setPublishStatus("success");
@@ -462,7 +540,10 @@ export function CampaignBuilder({
             <div className="grid grid-cols-3 gap-2">
               <button
                 type="button"
-                onClick={() => setPostScope("ANY_POST")}
+                onClick={() => {
+                  setPostScope("ANY_POST");
+                  if (isAutoReelLink(buttonUrl)) setButtonUrl("https://dmplease.vercel.app/guide");
+                }}
                 className={`p-3 rounded-2xl border text-xs font-medium transition-all text-center ${
                   postScope === "ANY_POST"
                     ? "border-[#4262ff] bg-[#f5f3ff] text-[#4262ff] dark:bg-[#4262ff]/10 dark:text-[#8b9eff]"
@@ -475,7 +556,10 @@ export function CampaignBuilder({
 
               <button
                 type="button"
-                onClick={() => setPostScope("SPECIFIC_POST")}
+                onClick={() => {
+                  setPostScope("SPECIFIC_POST");
+                  if (isAutoReelLink(buttonUrl)) setButtonUrl("https://dmplease.vercel.app/guide");
+                }}
                 className={`p-3 rounded-2xl border text-xs font-medium transition-all text-center ${
                   postScope === "SPECIFIC_POST"
                     ? "border-[#4262ff] bg-[#f5f3ff] text-[#4262ff] dark:bg-[#4262ff]/10 dark:text-[#8b9eff]"
@@ -488,7 +572,10 @@ export function CampaignBuilder({
 
               <button
                 type="button"
-                onClick={() => setPostScope("NEXT_POST")}
+                onClick={() => {
+                  setPostScope("NEXT_POST");
+                  if (!isAutoReelLink(buttonUrl)) setButtonUrl(AUTO_REEL_LINK);
+                }}
                 className={`p-3 rounded-2xl border text-xs font-medium transition-all text-center ${
                   postScope === "NEXT_POST"
                     ? "border-[#4262ff] bg-[#f5f3ff] text-[#4262ff] dark:bg-[#4262ff]/10 dark:text-[#8b9eff]"
@@ -499,6 +586,17 @@ export function CampaignBuilder({
                 <p className="text-[10px] text-[#555a6a] dark:text-muted-foreground mt-0.5">Auto-attaches</p>
               </button>
             </div>
+
+            {postScope === "NEXT_POST" && (
+              <div className="flex items-start gap-2 rounded-xl border border-[#4262ff]/30 bg-[#f5f3ff] dark:bg-[#4262ff]/10 px-3 py-2.5 text-[11px] leading-relaxed text-[#555a6a] dark:text-muted-foreground">
+                <Instagram className="size-3.5 mt-0.5 text-[#4262ff] shrink-0" aria-hidden="true" />
+                <p>
+                  <span className="font-semibold text-foreground">No URL needed.</span>{" "}
+                  When someone comments on your next upload, dmplease resolves that reel&apos;s
+                  real permalink and attaches it to the DM automatically.
+                </p>
+              </div>
+            )}
 
             {/* Real Instagram Media Picker */}
             {postScope === "SPECIFIC_POST" && (
@@ -658,43 +756,34 @@ export function CampaignBuilder({
               </span>
             </div>
 
-            {/* Variable Pills with Tooltips */}
-            <TooltipProvider delayDuration={200}>
-              <div className="flex items-center gap-2">
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      onClick={() => setDmMessage((prev) => `${prev} {username}`)}
-                      className="px-3 py-1 rounded-full border border-[#e0e2e8] dark:border-border/80 bg-[#f7f8fa] dark:bg-muted/30 hover:bg-[#eef0f3] text-xs font-mono text-foreground transition-colors"
-                    >
-                      + &#123;username&#125;
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent>Inserts recipient&apos;s Instagram username</TooltipContent>
-                </Tooltip>
+            <DmVariablePicker
+              textareaId="campaign-dm-message"
+              value={dmMessage}
+              onChange={setDmMessage}
+              uncollectedVariables={
+                collectField === "none"
+                  ? (findDmVariables(dmMessage).filter((token) =>
+                      (CONTACT_TOKENS as readonly string[]).includes(token)
+                    ) as (typeof CONTACT_TOKENS)[number][])
+                  : []
+              }
+              disabled={publishStatus === "publishing"}
+            />
 
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      onClick={() => setDmMessage((prev) => `${prev} {link}`)}
-                      className="px-3 py-1 rounded-full border border-[#e0e2e8] dark:border-border/80 bg-[#f7f8fa] dark:bg-muted/30 hover:bg-[#eef0f3] text-xs font-mono text-foreground transition-colors"
-                    >
-                      + &#123;link&#125;
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent>Inserts the destination action URL</TooltipContent>
-                </Tooltip>
-              </div>
-            </TooltipProvider>
-
+            <label htmlFor="campaign-dm-message" className="sr-only">
+              Direct message text
+            </label>
             <textarea
+              id="campaign-dm-message"
               rows={3}
               value={dmMessage}
               onChange={(e) => setDmMessage(e.target.value)}
+              aria-describedby="campaign-dm-help"
               className="w-full p-3.5 rounded-xl border border-[#c7cad5] dark:border-border bg-background text-xs sm:text-sm font-sans focus:border-[#4262ff] focus:ring-2 focus:ring-[#4262ff]/20 outline-none resize-none leading-relaxed transition-all"
             />
+            <p id="campaign-dm-help" className="sr-only">
+              Use the buttons above to insert personalisation variables at the cursor.
+            </p>
 
             {/* Interactive Link Button */}
             <div className="pt-2 border-t border-[#e0e2e8] dark:border-border/60 space-y-3">
@@ -714,43 +803,102 @@ export function CampaignBuilder({
                 </div>
                 <div className="space-y-1">
                   <span className="text-[11px] text-[#6b6f7e] font-medium">Destination URL</span>
-                  <Input
-                    placeholder="https://yourwebsite.com/guide"
-                    value={buttonUrl}
-                    onChange={(e) => setButtonUrl(e.target.value)}
-                    className="h-9 text-xs rounded-lg"
-                  />
+                  {postScope === "NEXT_POST" && isAutoReelLink(buttonUrl) ? (
+                    <div className="flex items-center justify-between gap-2 h-9 px-3 rounded-lg border border-[#4262ff]/30 bg-[#f5f3ff] dark:bg-[#4262ff]/10 text-xs text-foreground">
+                      <span className="truncate">Auto — new reel permalink</span>
+                      <button
+                        type="button"
+                        onClick={() => setButtonUrl("https://dmplease.vercel.app/guide")}
+                        className="text-[10px] font-semibold text-[#4262ff] hover:underline shrink-0"
+                      >
+                        Use custom URL
+                      </button>
+                    </div>
+                  ) : (
+                    <Input
+                      placeholder="https://yourwebsite.com/guide"
+                      value={buttonUrl}
+                      onChange={(e) => setButtonUrl(e.target.value)}
+                      className="h-9 text-xs rounded-lg"
+                    />
+                  )}
                 </div>
               </div>
             </div>
           </Card>
 
-          {/* STEP 4: Optional Public Comment Reply */}
-          <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 p-5 shadow-subtle space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <h4 className="font-semibold text-xs sm:text-sm text-foreground">
-                  Public Comment Reply
-                </h4>
-                <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground mt-0.5">
-                  Replies publicly to the commenter so other followers notice the automation
-                </p>
-              </div>
-              <Switch
-                checked={publicReplyEnabled}
-                onCheckedChange={setPublicReplyEnabled}
-              />
-            </div>
+          <LinkRotationSettings
+            enabled={shortLinksEnabled}
+            onEnabledChange={setShortLinksEnabled}
+            rotators={linkRotators}
+            rotatorId={linkRotatorId}
+            onRotatorIdChange={setLinkRotatorId}
+            disabled={publishStatus === "publishing"}
+          />
 
-            {publicReplyEnabled && (
-              <Input
-                value={publicReplyMessage}
-                onChange={(e) => setPublicReplyMessage(e.target.value)}
-                placeholder="Sent you a DM! 📩"
-                className="h-9 text-xs rounded-lg bg-[#f7f8fa] dark:bg-muted/40"
-              />
-            )}
+          <MessageFormatEditor
+            format={messageFormat}
+            onFormatChange={setMessageFormat}
+            asset={messageAsset}
+            onAssetChange={setMessageAsset}
+            cards={cards}
+            onCardsChange={setCards}
+            disabled={publishStatus === "publishing"}
+          />
+
+          <DmVariantsEditor
+            primaryMessage={dmMessage}
+            variants={dmVariants}
+            onVariantsChange={setDmVariants}
+            disabled={publishStatus === "publishing"}
+          />
+
+          {/* Lead capture — powers {name}, {email} and {phone} */}
+          <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 p-5 shadow-subtle space-y-3">
+            <div className="space-y-0.5">
+              <h3 className="font-semibold text-xs sm:text-sm text-foreground">
+                Collect details
+              </h3>
+              <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground">
+                Ask followers to reply with a detail, then use it in your messages with{" "}
+                <code className="font-mono">{"{name}"}</code>,{" "}
+                <code className="font-mono">{"{email}"}</code> or{" "}
+                <code className="font-mono">{"{phone}"}</code>. Optional — skip if you only
+                want to send a link.
+              </p>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="campaign-collect-field" className="text-[11px]">
+                What should we ask for?
+              </Label>
+              <select
+                id="campaign-collect-field"
+                value={collectField}
+                onChange={(event) =>
+                  setCollectField(
+                    event.target.value as "none" | "email" | "phone" | "name"
+                  )
+                }
+                disabled={publishStatus === "publishing"}
+                className="h-9 w-full rounded-lg border border-[#c7cad5] dark:border-border bg-background px-3 text-xs outline-none focus:border-[#4262ff] focus:ring-2 focus:ring-[#4262ff]/20"
+              >
+                <option value="none">Nothing — just send the DM</option>
+                <option value="name">Their name</option>
+                <option value="email">Their email address</option>
+                <option value="phone">Their phone number</option>
+              </select>
+            </div>
           </Card>
+
+          {/* STEP 4: Optional Public Comment Reply */}
+          <PublicReplySettings
+            enabled={publicReplyEnabled}
+            onEnabledChange={setPublicReplyEnabled}
+            messages={publicReplyMessages}
+            onMessagesChange={setPublicReplyMessages}
+            errors={fieldErrors.publicReplyMessages}
+            disabled={publishStatus === "publishing"}
+          />
 
           {/* STEP 5: Ask for Follow */}
           <FollowGateSettings
@@ -766,6 +914,30 @@ export function CampaignBuilder({
             fieldErrors={fieldErrors}
             disabled={publishStatus === "publishing"}
           />
+
+          {/* STEP 6: Follow-ups (configured after the campaign exists) */}
+          <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 p-4 shadow-subtle">
+            <div className="flex items-start gap-3">
+              <Clock className="size-4 mt-0.5 text-[#4262ff] shrink-0" aria-hidden="true" />
+              <div className="space-y-1">
+                <h3 className="font-semibold text-xs text-foreground">24h follow-ups</h3>
+                <p className="text-[11px] leading-relaxed text-[#555a6a] dark:text-muted-foreground">
+                  Send a friendly reminder after someone opts in. The sequence stops
+                  automatically if they click, reply or convert.{" "}
+                  {isEdit ? (
+                    <a
+                      href="#followups"
+                      className="font-semibold text-[#4262ff] hover:underline"
+                    >
+                      Manage follow-up steps →
+                    </a>
+                  ) : (
+                    "You can add steps right after publishing."
+                  )}
+                </p>
+              </div>
+            </div>
+          </Card>
         </div>
 
         {/* Right Column: Phone Simulator */}
@@ -776,10 +948,19 @@ export function CampaignBuilder({
             postCaption={selectedPost?.caption}
             triggerKeyword={keywords[0] || "GUIDE"}
             dmMessage={dmMessage}
+            dmVariantCount={dmVariants.length}
+            messageFormat={messageFormat}
+            messageAsset={messageAsset}
+            cards={cards}
+            shortLinksEnabled={shortLinksEnabled}
             buttonText={buttonText}
-            buttonUrl={buttonUrl}
+            buttonUrl={
+              isAutoReelLink(buttonUrl)
+                ? "https://instagram.com/reel/your-next-reel"
+                : buttonUrl
+            }
             publicReplyEnabled={publicReplyEnabled}
-            publicReplyMessage={publicReplyMessage}
+            publicReplyMessages={publicReplyMessages}
             followGateEnabled={followGateEnabled}
             followGateOpeningMessage={openingMessage}
             followGateButtonLabel={followGateButtonLabel}

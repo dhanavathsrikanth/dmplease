@@ -111,6 +111,8 @@ export interface WebhookEntry {
       is_echo?: boolean;
       is_deleted?: boolean;
       is_unsupported?: boolean;
+      reaction?: string;
+      emoji?: string;
       /** Legacy shape used by some Facebook Login apps. */
       reply_to_story?: { media_id?: string; user_id?: string };
       /** Current Meta shape: message.reply_to.story. */
@@ -123,7 +125,9 @@ export interface WebhookEntry {
         title?: string;
         url?: string;
         media_id?: string;
-        payload?: { url?: string; id?: string };
+        payload?: { url?: string; id?: string; reaction?: string; emoji?: string };
+        reaction?: string;
+        emoji?: string;
       }>;
     };
   }>;
@@ -156,7 +160,9 @@ export interface WebhookStoryEvent {
   senderName?: string;
   mediaId?: string;
   text?: string;
-  kind: "MENTION" | "REPLY";
+  kind: "MENTION" | "REPLY" | "REACTION";
+  /** The emoji/reaction name, when the event is a reaction. */
+  reaction?: string;
 }
 
 /**
@@ -461,6 +467,24 @@ export function parseStoryEvents(payload: WebhookPayload): WebhookStoryEvent[] {
           continue;
         }
         const mediaId = attachment.media_id ?? attachment.payload?.id;
+        // A reaction emoji on a story mention attachment counts as a
+        // STORY_REACTION, not a plain mention.
+        const reaction =
+          attachment.payload?.reaction ?? attachment.payload?.emoji;
+        if (reaction) {
+          events.push({
+            instagramAccountId: accountId,
+            externalId:
+              message.mid ?? `story-reaction:${senderId}:${mediaId ?? ""}:${reaction}`,
+            senderId,
+            senderName: messaging.sender?.username,
+            mediaId,
+            text: message.text ?? attachment.title,
+            kind: "REACTION",
+            reaction,
+          });
+          continue;
+        }
         events.push({
           instagramAccountId: accountId,
           externalId:
@@ -470,6 +494,25 @@ export function parseStoryEvents(payload: WebhookPayload): WebhookStoryEvent[] {
           mediaId,
           text: message.text ?? attachment.title,
           kind: "MENTION",
+        });
+      }
+
+      // Story reactions delivered as a top-level reaction on a story reply.
+      if (message.reaction && (message.reply_to?.story || message.reply_to_story)) {
+        const story = message.reply_to_story ?? message.reply_to?.story;
+        const mediaId =
+          (story as { media_id?: string })?.media_id ??
+          (story as { id?: string })?.id;
+        events.push({
+          instagramAccountId: accountId,
+          externalId:
+            message.mid ?? `story-reaction:${senderId}:${mediaId ?? ""}:${message.reaction}`,
+          senderId,
+          senderName: messaging.sender?.username,
+          mediaId,
+          text: message.reaction,
+          kind: "REACTION",
+          reaction: message.reaction,
         });
       }
     }

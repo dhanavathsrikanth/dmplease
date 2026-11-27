@@ -215,7 +215,8 @@ async function verifyUncached(
 export async function verifyFollowership(
   accessToken: string,
   accountId: string,
-  userIgsid: string
+  userIgsid: string,
+  expectedUsername?: string | null
 ): Promise<FollowVerification> {
   if (!accessToken || !userIgsid) {
     return unavailable("missing_identity");
@@ -223,20 +224,43 @@ export async function verifyFollowership(
 
   const key = cacheKey(accountId, userIgsid);
   const cached = await readCache(key);
-  if (cached) return cached;
+  if (cached) {
+    // If an expected username was supplied, verify the cached identity still
+    // matches — a spoofed or stale cache entry must not grant access.
+    if (
+      expectedUsername &&
+      cached.username &&
+      cached.username.toLowerCase() !== expectedUsername.toLowerCase().trim()
+    ) {
+      await clearFollowCache(accountId, userIgsid);
+      // Fall through to a fresh verification.
+    } else {
+      return cached;
+    }
+  }
 
   const existing = inFlight.get(key);
   if (existing) return existing;
 
   const task = (async () => {
     const verification = await verifyUncached(accessToken, userIgsid);
+    // Identity check: if the caller supplied an expected username, the
+    // returned username must match. A mismatch means the IGSID was spoofed
+    // or the Meta response is stale — treat as unavailable, never as follower.
+    if (
+      expectedUsername &&
+      verification.status !== "unavailable" &&
+      verification.username &&
+      verification.username.toLowerCase() !== expectedUsername.toLowerCase().trim()
+    ) {
+      return unavailable("identity_mismatch", verification.username);
+    }
     // Only cache definitive answers. "Unavailable" must be retried.
     if (verification.status !== "unavailable") {
       await writeCache(key, verification);
     }
     return verification;
   })();
-
   inFlight.set(key, task);
   try {
     return await task;
@@ -276,13 +300,6 @@ export function decideFollowGateAction(
   return config.onUnavailable === "deliver" ? "deliver" : "ask";
 }
 
-export function buildOpeningText(
-  config: FollowGateConfig,
-  vars: { username?: string | null; keyword?: string | null; link?: string | null }
-): string {
-  return config.openingMessage
-    .replace(/\{username\}/gi, vars.username?.trim() || "there")
-    .replace(/\{keyword\}/gi, vars.keyword?.trim() || "this")
-    .replace(/\{link\}/gi, vars.link?.trim() || "")
-    .trim();
-}
+// Kept exported for existing callers/tests. Copy rendering now lives in the
+// dedicated opening-dm module so it can be reused and tested in isolation.
+export { buildOpeningText } from "@/lib/meta/opening-dm";

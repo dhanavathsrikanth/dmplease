@@ -20,6 +20,7 @@ export const metadata = {
 const STORY_TRIGGERS: DmRuleTrigger[] = [
   "STORY_REPLY",
   "STORY_MENTION",
+  "STORY_REACTION",
   "MESSAGE_REACTION",
 ];
 

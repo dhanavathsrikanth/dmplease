@@ -20,8 +20,12 @@ import {
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { getQueueStats } from "@/lib/dm-queue";
+import { computeSafetyScore } from "@/lib/meta/safety-score";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { DmQueueCard } from "@/components/dashboard/dm-queue-card";
+import { SafetyCard } from "@/components/dashboard/safety-card";
 import { Progress } from "@/components/ui/progress";
 import { getCurrentProfile } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
@@ -184,20 +188,29 @@ async function OverviewContent({ searchParams }: PageProps) {
   let conversionRows: ConversionRow[] = [];
 
   if (workspaceIds.length > 0) {
-    const [commentsRes, pendingRes, clicksRes, contactsRes, conversionsRes] = await Promise.all([
+    const [commentsRes, openingLogRes, clicksRes, contactsRes, conversionsRes] = await Promise.all([
       scopedInPeriod(
         supabase
           .from("comment_events")
           .select("id", { count: "exact", head: true })
           .in("workspace_id", workspaceIds)
       ),
-      scopedInPeriod(
-        supabase
-          .from("pending_dms")
-          .select("id", { count: "exact", head: true })
-          .in("workspace_id", workspaceIds)
-          .eq("kind", "optin")
-      ),
+      // Count *sent* openers, not outstanding opt-in records (a pending row is
+      // created before the Meta call and is deleted again when that call fails).
+      periodCutoff
+        ? supabase
+            .from("dm_logs")
+            .select("id", { count: "exact", head: true })
+            .in("workspace_id", workspaceIds)
+            .eq("trigger_keyword", "OPENING")
+            .eq("status", "SENT")
+            .gte("sent_at", periodCutoff)
+        : supabase
+            .from("dm_logs")
+            .select("id", { count: "exact", head: true })
+            .in("workspace_id", workspaceIds)
+            .eq("trigger_keyword", "OPENING")
+            .eq("status", "SENT"),
       periodCutoff
         ? supabase
             .from("link_clicks")
@@ -228,11 +241,94 @@ async function OverviewContent({ searchParams }: PageProps) {
             .in("workspace_id", workspaceIds),
     ]);
     triggerComments = commentsRes.count ?? 0;
-    openingMessages = pendingRes.count ?? 0;
+    openingMessages = openingLogRes.count ?? 0;
     linkClicks = clicksRes.count ?? 0;
     leadsCaptured = contactsRes.count ?? 0;
     conversionRows = (conversionsRes.data as ConversionRow[] | null) ?? [];
   }
+
+  const queueStats = await getQueueStats(workspaceIds);
+
+  // Safety score inputs (24h window).
+  let sentLast24h = 0;
+  let failedLast24h = 0;
+  if (workspaceIds.length > 0) {
+    const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const [sentRes, failedRes] = await Promise.all([
+      supabase
+        .from("dm_logs")
+        .select("id", { count: "exact", head: true })
+        .in("workspace_id", workspaceIds)
+        .eq("status", "SENT")
+        .gte("sent_at", since24h),
+      supabase
+        .from("dm_logs")
+        .select("id", { count: "exact", head: true })
+        .in("workspace_id", workspaceIds)
+        .eq("status", "FAILED")
+        .gte("sent_at", since24h),
+    ]);
+    sentLast24h = sentRes.count ?? 0;
+    failedLast24h = failedRes.count ?? 0;
+  }
+
+  interface AccountHealthView {
+    id: string;
+    username: string | null;
+    tokenStatus: string | null;
+    consecutiveFailures: number;
+    safetyPaused: boolean;
+    lastError: string | null;
+    lastSendAt: string | null;
+  }
+  const safetyStats = { breaches: 0, throttles: 0, viralSpikes: 0, optOuts: 0, exceptions: 0 };
+  let accountHealth: AccountHealthView[] = [];
+  if (workspaceIds.length > 0) {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data: safetyRows } = await supabase
+      .from("safety_events")
+      .select("kind")
+      .in("workspace_id", workspaceIds)
+      .gte("created_at", since)
+      .limit(5000);
+    for (const row of safetyRows ?? []) {
+      const kind = String(row.kind);
+      if (kind === "rate_limit_breach") safetyStats.breaches++;
+      else if (kind === "viral_throttle") safetyStats.throttles++;
+      else if (kind === "viral_spike") safetyStats.viralSpikes++;
+      else if (kind === "opt_out") safetyStats.optOuts++;
+      else if (kind === "follow_gate_exception") safetyStats.exceptions++;
+    }
+    const { data: accounts } = await supabase
+      .from("instagram_accounts")
+      .select("id, username, token_status, consecutive_failures, safety_paused, last_error, last_send_at")
+      .in("workspace_id", workspaceIds);
+    accountHealth = (accounts ?? []).map((account) => ({
+      id: String(account.id),
+      username: account.username ? String(account.username) : null,
+      tokenStatus: account.token_status ? String(account.token_status) : null,
+      consecutiveFailures: Number(account.consecutive_failures ?? 0),
+      safetyPaused: Boolean(account.safety_paused),
+      lastError: account.last_error ? String(account.last_error) : null,
+      lastSendAt: account.last_send_at ? String(account.last_send_at) : null,
+    }));
+  }
+
+  const safetyResult = computeSafetyScore({
+    sent24h: sentLast24h,
+    failed24h: failedLast24h,
+    breaches24h: safetyStats.breaches,
+    throttles24h: safetyStats.throttles,
+    spikes24h: safetyStats.viralSpikes,
+    optOuts24h: safetyStats.optOuts,
+    gateExceptions24h: safetyStats.exceptions,
+    consecutiveFailures: accountHealth[0]?.consecutiveFailures ?? 0,
+    tokenInvalid: accountHealth[0]?.tokenStatus === "invalid",
+    safetyPaused: accountHealth[0]?.safetyPaused ?? false,
+    staleQueue: queueStats.oldestPendingAt
+      ? Date.now() - new Date(queueStats.oldestPendingAt).getTime() > 60 * 60 * 1000
+      : false,
+  });
 
   const revenueMinor = conversionRows.reduce(
     (sum, row) => sum + Number(row.revenue_minor ?? 0),
@@ -581,6 +677,19 @@ async function OverviewContent({ searchParams }: PageProps) {
           </div>
         </CardContent>
       </Card>
+
+      <DmQueueCard
+        pending={queueStats.pending}
+        failed={queueStats.failed}
+        oldestPendingAt={queueStats.oldestPendingAt}
+      />
+
+      <SafetyCard
+        stats={safetyStats}
+        accounts={accountHealth}
+        score={safetyResult.score}
+        band={safetyResult.label}
+      />
 
       {/* ── Follower growth from in-chat prompts ── */}
       <Card className="rounded-2xl glass-card border border-[#e0e2e8] dark:border-border shadow-subtle">

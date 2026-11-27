@@ -1,82 +1,34 @@
-import { after, NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+
 import { createClient } from "@/lib/supabase/server";
-import type { WebhookCommentEvent } from "@/lib/meta/webhook";
+import { getAdminDb } from "@/lib/db-admin";
+import { toAutomationLike } from "@/lib/meta/webhook-processor";
+import { decryptToken } from "@/lib/meta/vault";
+import { findRerunCandidates } from "@/lib/rerun-candidates";
+import {
+  cleanEnv,
+  getQstash,
+  hasQstash,
+} from "@/lib/upstash";
+import { captureServerEvent } from "@/lib/posthog-server";
 
-export const maxDuration = 60;
+export const maxDuration = 30;
 
-const rerunSchema = z.object({
+export const rerunSchema = z.object({
   campaignId: z.string().uuid("Invalid campaign."),
   days: z.coerce.number().int().min(1).max(90).default(7),
   dryRun: z.boolean().default(false),
 });
 
-interface AutomationRow {
-  id: string;
-  workspace_id: string;
-  name: string;
-  goal: string | null;
-  post_scope: string | null;
-  post_id: string | null;
-  trigger_keywords: string[] | null;
-  dm_message: string;
-  button_text: string | null;
-  button_url: string | null;
-  follow_gate_enabled: boolean | null;
-  dm_variants: string[] | null;
-  collect_field: string | null;
-  opening_message: string | null;
-  hourly_cap: number | null;
-  active: boolean | null;
-}
-
-interface AccountRow {
-  id: string;
-  instagram_id: string;
-  username: string | null;
-}
-
-interface CommentEventRow {
-  instagram_account_id: string | null;
-  external_id: string;
-  media_id: string | null;
-  commenter_id: string;
-  commenter_username: string | null;
-  text: string | null;
-}
-
-interface AutomationForProcessor {
-  id: string;
-  workspaceId: string;
-  name?: string;
-  goal?: string | null;
-  postScope?: string | null;
-  postId?: string | null;
-  triggerKeywords?: string[] | null;
-  dmMessage?: string;
-  buttonText?: string | null;
-  buttonUrl?: string | null;
-  followGateEnabled?: boolean | null;
-  dmVariants?: string[] | null;
-  collectField?: string | null;
-  openingMessage?: string | null;
-  hourlyCap?: number | null;
-  active?: boolean;
-}
-
-function matchesKeywords(text: string, keywords: string[]): boolean {
-  if (keywords.length === 0) return true;
-  const normalized = text.toLowerCase();
-  return keywords.some((keyword) => normalized.includes(keyword.toLowerCase().trim()));
-}
+const MAX_CANDIDATES = 500;
 
 /**
  * POST /api/campaigns/rerun
- * Body: { campaignId: string; days?: number; dryRun?: boolean }
  *
- * Finds recent comment events that match the campaign keywords and have not
- * been contacted in the last 24 hours. Dry runs only count; real runs queue
- * the deliveries after the response is sent.
+ * Dry run → exact eligible count. Real run → creates a durable job and returns
+ * its ID immediately. Delivery happens in small QStash-chained batches via
+ * /api/workers/rerun, so nothing is reported as sent before it actually is.
  */
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
@@ -84,7 +36,6 @@ export async function POST(request: NextRequest) {
     data: { user },
     error: authError,
   } = await supabase.auth.getUser();
-
   if (authError || !user) {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   }
@@ -95,40 +46,29 @@ export async function POST(request: NextRequest) {
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
-
   const parsed = rerunSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
-      { error: parsed.error.issues[0]?.message || "Invalid request" },
+      { error: parsed.error.issues[0]?.message ?? "Invalid request" },
       { status: 400 }
     );
   }
   const { campaignId, days, dryRun } = parsed.data;
 
-  const { data: automationRow, error: automationError } = await supabase
+  const { data: owned } = await supabase
     .from("automations")
-    .select(
-      "id, workspace_id, name, goal, post_scope, post_id, trigger_keywords, dm_message, button_text, button_url, follow_gate_enabled, dm_variants, collect_field, opening_message, hourly_cap, active"
-    )
+    .select("id, workspace_id")
     .eq("id", campaignId)
     .maybeSingle();
-
-  if (automationError) {
-    console.error("[rerun] Automation lookup failed:", automationError.message);
-    return NextResponse.json({ error: "Could not load the campaign." }, { status: 500 });
-  }
-  const automation = automationRow as AutomationRow | null;
-  if (!automation) {
+  if (!owned) {
     return NextResponse.json({ error: "Campaign not found" }, { status: 404 });
   }
-
   const { data: workspace } = await supabase
     .from("workspaces")
     .select("id")
-    .eq("id", automation.workspace_id)
+    .eq("id", owned.workspace_id)
     .eq("owner_id", user.id)
     .maybeSingle();
-
   if (!workspace) {
     return NextResponse.json(
       { error: "Campaign not found or access denied" },
@@ -136,129 +76,187 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const cutoff = new Date(Date.now() - days * 86400000).toISOString();
-  const twentyFourHoursAgo = new Date(Date.now() - 86400000).toISOString();
-  const keywords = automation.trigger_keywords || [];
+  const db = getAdminDb();
+  const { data: automationRow } = await db
+    .from("automations")
+    .select("*")
+    .eq("id", campaignId)
+    .maybeSingle();
+  if (!automationRow) {
+    return NextResponse.json({ error: "Campaign not found" }, { status: 404 });
+  }
+  if (!(automationRow as { active?: boolean }).active) {
+    return NextResponse.json(
+      {
+        error:
+          "This campaign is paused. Resume it before re-running so no paused automation sends DMs.",
+      },
+      { status: 409 }
+    );
+  }
+  const auto = toAutomationLike(automationRow as Parameters<typeof toAutomationLike>[0]);
 
-  const { data: accountRows } = await supabase
+  const { data: accountRow } = await db
     .from("instagram_accounts")
-    .select("id, instagram_id, username")
-    .eq("workspace_id", automation.workspace_id);
-
-  const accounts = (accountRows || []) as AccountRow[];
-  const graphIdByDbId = new Map<string, string>();
-  for (const account of accounts) {
-    graphIdByDbId.set(account.id, account.instagram_id);
-  }
-
-  const { data: eventRows, error: eventError } = await supabase
-    .from("comment_events")
-    .select("instagram_account_id, external_id, media_id, commenter_id, commenter_username, text")
-    .eq("workspace_id", automation.workspace_id)
-    .gte("received_at", cutoff)
-    .order("received_at", { ascending: false })
-    .limit(2000);
-
-  if (eventError) {
-    console.error("[rerun] Comment event lookup failed:", eventError.message);
-    return NextResponse.json({ error: "Could not load recent comments." }, { status: 500 });
-  }
-
-  const events = (eventRows || []) as CommentEventRow[];
-  const seenRecipients = new Set<string>();
-  const eligible: CommentEventRow[] = [];
-
-  for (const event of events) {
-    if (!event.commenter_id || seenRecipients.has(event.commenter_id)) continue;
-    if (!event.instagram_account_id || !graphIdByDbId.has(event.instagram_account_id)) continue;
-    if (!matchesKeywords(event.text || "", keywords)) continue;
-    seenRecipients.add(event.commenter_id);
-    eligible.push(event);
-  }
-
-  const candidates = eligible.slice(0, 200);
-  const recipientIds = candidates.map((event) => event.commenter_id);
-  const alreadyContacted = new Set<string>();
-
-  if (recipientIds.length > 0) {
-    const { data: priorLogs } = await supabase
-      .from("dm_logs")
-      .select("recipient_id")
-      .eq("automation_id", campaignId)
-      .gte("sent_at", twentyFourHoursAgo)
-      .in("recipient_id", recipientIds);
-
-    for (const log of priorLogs || []) {
-      if (log.recipient_id) alreadyContacted.add(log.recipient_id);
+    .select("access_token")
+    .eq("workspace_id", owned.workspace_id)
+    .limit(1)
+    .maybeSingle();
+  let accessToken: string | null = null;
+  if (accountRow?.access_token) {
+    try {
+      accessToken = decryptToken(String(accountRow.access_token));
+    } catch {
+      accessToken = null;
     }
   }
 
-  const toSend = candidates.filter((event) => !alreadyContacted.has(event.commenter_id));
-  const sample = toSend
-    .slice(0, 5)
-    .map((event) => event.commenter_username || event.commenter_id);
+  let found;
+  try {
+    found = await findRerunCandidates(db, {
+      workspaceId: owned.workspace_id,
+      automation: auto,
+      days,
+      limit: MAX_CANDIDATES,
+      accessToken,
+    });
+  } catch (error) {
+    console.error("[rerun] Candidate lookup failed:", error);
+    return NextResponse.json(
+      { error: "Could not load recent comments." },
+      { status: 500 }
+    );
+  }
 
   if (dryRun) {
-    return NextResponse.json({ count: toSend.length, sample });
+    return NextResponse.json({
+      count: found.candidates.length,
+      sample: found.sample,
+      days,
+    });
   }
 
-  const automationForProcessor: AutomationForProcessor = {
-    id: automation.id,
-    workspaceId: automation.workspace_id,
-    name: automation.name,
-    goal: automation.goal,
-    postScope: automation.post_scope,
-    postId: automation.post_id,
-    triggerKeywords: automation.trigger_keywords || [],
-    dmMessage: automation.dm_message,
-    buttonText: automation.button_text,
-    buttonUrl: automation.button_url,
-    followGateEnabled: automation.follow_gate_enabled,
-    dmVariants: automation.dm_variants || [],
-    collectField: automation.collect_field,
-    openingMessage: automation.opening_message,
-    hourlyCap: automation.hourly_cap,
-    active: Boolean(automation.active),
-  };
+  if (found.candidates.length === 0) {
+    return NextResponse.json({
+      success: true,
+      jobId: null,
+      count: 0,
+      message: "No eligible comments found for this window.",
+    });
+  }
 
-  after(async () => {
-    try {
-      // Loaded lazily so the response is never blocked by processor startup.
-      const processor = (await import("@/lib/meta/webhook-processor")) as unknown as {
-        processCommentEventForAutomation?: (
-          event: WebhookCommentEvent,
-          auto: AutomationForProcessor
-        ) => Promise<{ sent: boolean; skipped?: string }>;
-      };
+  const { data: job, error: jobError } = await db
+    .from("rerun_jobs")
+    .insert({
+      workspace_id: owned.workspace_id,
+      automation_id: campaignId,
+      created_by: user.id,
+      status: "queued",
+      days,
+      total: found.candidates.length,
+    })
+    .select("id")
+    .single();
+  if (jobError || !job) {
+    console.error("[rerun] Could not create job:", jobError?.message);
+    return NextResponse.json(
+      { error: "Could not start the re-run. Please try again." },
+      { status: 500 }
+    );
+  }
+  const jobId = String(job.id);
 
-      if (!processor.processCommentEventForAutomation) {
-        console.warn("[rerun] processCommentEventForAutomation is not available yet.");
-        return;
-      }
-
-      for (const event of toSend) {
-        const graphId = graphIdByDbId.get(event.instagram_account_id || "");
-        if (!graphId) continue;
-
-        const webhookEvent: WebhookCommentEvent = {
-          instagramAccountId: graphId,
-          commentId: event.external_id,
-          commentText: event.text || "",
-          commenterId: event.commenter_id,
-          commenterName: event.commenter_username || undefined,
-          mediaId: event.media_id || "",
-        };
-
-        try {
-          await processor.processCommentEventForAutomation(webhookEvent, automationForProcessor);
-        } catch (error) {
-          console.error("[rerun] Failed to process a comment event:", error);
-        }
-      }
-    } catch (error) {
-      console.error("[rerun] Background processing failed:", error);
+  for (let index = 0; index < found.candidates.length; index += 100) {
+    const chunk = found.candidates.slice(index, index + 100).map((candidate) => ({
+      job_id: jobId,
+      workspace_id: owned.workspace_id,
+      automation_id: campaignId,
+      account_graph_id: candidate.accountGraphId,
+      comment_id: candidate.commentId,
+      media_id: candidate.mediaId || null,
+      comment_text: candidate.commentText || null,
+      commenter_id: candidate.commenterId,
+      commenter_username: candidate.commenterUsername,
+      status: "pending",
+    }));
+    const { error: itemError } = await db.from("rerun_job_items").upsert(chunk, {
+      onConflict: "job_id,comment_id",
+      ignoreDuplicates: true,
+    });
+    if (itemError) {
+      await db
+        .from("rerun_jobs")
+        .update({ status: "failed", error_message: "Could not queue work items" })
+        .eq("id", jobId);
+      console.error("[rerun] Could not insert job items:", itemError.message);
+      return NextResponse.json(
+        { error: "Could not start the re-run. Please try again." },
+        { status: 500 }
+      );
     }
+  }
+
+  const origin = (
+    cleanEnv("NEXT_PUBLIC_SITE_URL") ||
+    cleanEnv("APP_URL") ||
+    request.nextUrl.origin
+  ).replace(/\/$/, "");
+
+  if (hasQstash()) {
+    try {
+      await getQstash().publishJSON({
+        url: `${origin}/api/workers/rerun`,
+        body: { jobId },
+        label: ["rerun"],
+        retries: 3,
+        failureCallback: `${origin}/api/workers/qstash-failed`,
+        deduplicationId: `rerun-start-${jobId}`,
+      });
+    } catch (error) {
+      console.error("[rerun] Queue publish failed:", error);
+      await db
+        .from("rerun_jobs")
+        .update({
+          status: "failed",
+          error_message: "Delivery queue unavailable; no DMs were sent.",
+        })
+        .eq("id", jobId);
+      return NextResponse.json(
+        { error: "Delivery queue is unavailable. Nothing was sent." },
+        { status: 503 }
+      );
+    }
+  } else {
+    // Local/dev fallback: process one small batch without a durable queue.
+    const { runRerunBatch } = await import("@/lib/rerun-runner");
+    const batch = await runRerunBatch(db, jobId, origin);
+    if (batch.remaining > 0) {
+      await db
+        .from("rerun_jobs")
+        .update({
+          status: "completed",
+          error_message: `Processed ${batch.processed} of ${found.candidates.length} locally (no queue configured). Start another re-run for the rest.`,
+          finished_at: new Date().toISOString(),
+        })
+        .eq("id", jobId);
+    }
+  }
+
+  captureServerEvent({
+    event: "campaign_rerun_started",
+    properties: {
+      automation_id: campaignId,
+      job_id: jobId,
+      total: found.candidates.length,
+      days,
+    },
+    anonymous: true,
   });
 
-  return NextResponse.json({ success: true, queued: toSend.length });
+  return NextResponse.json({
+    success: true,
+    jobId,
+    status: "queued",
+    count: found.candidates.length,
+  });
 }

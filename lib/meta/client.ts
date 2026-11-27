@@ -1,5 +1,6 @@
 import { createHmac, randomUUID, timingSafeEqual } from "crypto";
 import { getOAuthStateSecret, getOAuthStateSecrets } from "@/lib/config";
+import type { FormattedMessage } from "@/lib/meta/message-attachments";
 
 const META_API_VERSION = process.env.META_API_VERSION || "v21.0";
 const META_BASE_URL = `https://graph.facebook.com/${META_API_VERSION}`;
@@ -761,6 +762,32 @@ export async function getUserMedia(
 }
 
 /**
+ * Fetches the permanent link of a single media item. Used by the Next-Reel
+ * resolver to auto-attach the real reel URL at send time, rather than reading
+ * it from the setup-time media picker (which can be days out of date).
+ */
+export async function getMediaPermalink(
+  accessToken: string,
+  mediaId: string
+): Promise<string | null> {
+  const url = new URL(`${instagramApiBase(accessToken)}/${encodeURIComponent(mediaId)}`);
+  url.searchParams.set("fields", "permalink");
+  url.searchParams.set("access_token", accessToken);
+
+  try {
+    const res = await fetch(url.toString(), { next: { revalidate: 60 } });
+    if (!res.ok) return null;
+    const json = (await res.json()) as { permalink?: unknown };
+    return typeof json.permalink === "string" && json.permalink
+      ? json.permalink
+      : null;
+  } catch (error) {
+    console.warn("[Meta Client] Failed fetching media permalink:", error);
+    return null;
+  }
+}
+
+/**
  * Sends a plain-text private reply to an Instagram comment
  */
 export async function sendPrivateReply(
@@ -947,6 +974,123 @@ export async function sendDirectMessageWithButton(
   }
 }
 
+type MessageSendResult = {
+  recipient_id?: string;
+  message_id?: string;
+  error?: MetaApiError;
+};
+
+async function postMessage(
+  accessToken: string,
+  instagramAccountId: string,
+  recipient: Record<string, string>,
+  body: Record<string, unknown>
+): Promise<MessageSendResult> {
+  try {
+    const res = await fetch(
+      `${instagramApiBase(accessToken)}/${instagramAccountId}/messages`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ recipient, message: body }),
+      }
+    );
+    const data = (await res.json().catch(() => ({}))) as MessageSendResult;
+    if (!res.ok) return { error: data.error ?? data };
+    return data;
+  } catch (err) {
+    return { error: toMetaApiError(err) };
+  }
+}
+
+/**
+ * Sends a rich-format DM (audio, PDF, image/video, card or carousel).
+ * Assets are Cloudflare R2 public URLs; no binary passes through this server.
+ */
+export async function sendDirectMessageWithAttachment(
+  accessToken: string,
+  instagramAccountId: string,
+  recipientUserId: string,
+  formatted: FormattedMessage
+): Promise<MessageSendResult> {
+  if (!formatted.attachment) {
+    return sendDirectMessage(
+      accessToken,
+      instagramAccountId,
+      recipientUserId,
+      formatted.text ?? ""
+    );
+  }
+
+  if (formatted.requiresSeparateText && formatted.text) {
+    const intro = await sendDirectMessage(
+      accessToken,
+      instagramAccountId,
+      recipientUserId,
+      formatted.text
+    );
+    if (intro.error) return intro;
+  }
+
+  const result = await postMessage(
+    accessToken,
+    instagramAccountId,
+    { id: recipientUserId },
+    { attachment: formatted.attachment }
+  );
+  if (result.error && formatted.text) {
+    // Never lose the message content if Meta rejects the attachment format.
+    return sendDirectMessage(
+      accessToken,
+      instagramAccountId,
+      recipientUserId,
+      formatted.text
+    );
+  }
+  return result;
+}
+
+/** Rich-format variant of sendPrivateReply for comment-triggered automations. */
+export async function sendPrivateReplyWithAttachment(
+  accessToken: string,
+  instagramAccountId: string,
+  commentId: string,
+  formatted: FormattedMessage
+): Promise<MessageSendResult> {
+  if (!formatted.attachment) {
+    return sendPrivateReply(
+      accessToken,
+      instagramAccountId,
+      commentId,
+      formatted.text ?? ""
+    );
+  }
+
+  const result = await postMessage(
+    accessToken,
+    instagramAccountId,
+    { comment_id: commentId },
+    {
+      ...(formatted.text && !formatted.requiresSeparateText
+        ? { text: formatted.text }
+        : {}),
+      attachment: formatted.attachment,
+    }
+  );
+  if (result.error && formatted.text) {
+    return sendPrivateReply(
+      accessToken,
+      instagramAccountId,
+      commentId,
+      formatted.text
+    );
+  }
+  return result;
+}
+
 /**
  * Posts a public reply under an Instagram comment.
  * Uses POST /{comment-id}/replies so it appears threaded under the original comment.
@@ -993,13 +1137,15 @@ export async function postPublicCommentReply(
 export async function checkIsFollower(
   accessToken: string,
   instagramAccountId: string,
-  commenterIgsid: string
+  commenterIgsid: string,
+  expectedUsername?: string | null
 ): Promise<boolean> {
   const { verifyFollowership } = await import("@/lib/meta/follow-gate");
   const verification = await verifyFollowership(
     accessToken,
     instagramAccountId,
-    commenterIgsid
+    commenterIgsid,
+    expectedUsername
   );
   return verification.status === "follower";
 }

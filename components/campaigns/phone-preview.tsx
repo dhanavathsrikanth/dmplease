@@ -16,6 +16,9 @@ import {
   Check,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { formatDmText } from "@/lib/meta/dm-template";
+import { buildDmVars, type DmVars } from "@/lib/dm-variables";
+import { shortLinkPreview } from "@/lib/link-preview";
 
 interface PhonePreviewProps {
   postScope: "ANY_POST" | "SPECIFIC_POST" | "NEXT_POST";
@@ -23,10 +26,19 @@ interface PhonePreviewProps {
   postCaption?: string | null;
   triggerKeyword: string;
   dmMessage: string;
+  dmVariantCount?: number;
+  messageFormat?: string;
+  messageAsset?: {
+    url: string;
+    mimeType?: string;
+    filename?: string;
+  } | null;
+  cards?: Array<{ title: string; subtitle?: string; imageUrl?: string }>;
+  shortLinksEnabled?: boolean;
   buttonText?: string | null;
   buttonUrl?: string | null;
   publicReplyEnabled?: boolean;
-  publicReplyMessage?: string | null;
+  publicReplyMessages?: string[] | null;
   followGateEnabled?: boolean;
   followGateOpeningMessage?: string | null;
   followGateButtonLabel?: string | null;
@@ -36,18 +48,12 @@ interface PhonePreviewProps {
   followersCount?: number | null;
 }
 
-/** Mirrors the production formatter so the preview shows the exact DM text. */
-function previewText(message: string, link: string, keyword?: string) {
-  const text = (message || "Hey! Thanks for your comment. Here is your link: {link}")
-    .replace(/{username}/gi, "there")
-    .replace(/{keyword}/gi, keyword || "GUIDE")
-    .replace(/{link}/gi, link || "https://dmplease.vercel.app/guide");
-  return text
-    .replace(/https?:\/\/[^\s<]+/g, (url) => `\n\n${url.replace(/[.,;:!?)\]}]+$/g, "")}\n`)
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .replace(/\n[ \t]+/g, "\n")
-    .trim();
+/** Uses the production formatter so the preview shows exactly what will be sent. */
+function previewText(message: string, vars: DmVars) {
+  return formatDmText(
+    message || "Hey! Thanks for your comment. Here is your link: {link}",
+    vars
+  );
 }
 
 function VerifiedMark({ verified }: { verified: boolean }) {
@@ -104,10 +110,15 @@ export function PhonePreview({
   postCaption,
   triggerKeyword,
   dmMessage,
+  dmVariantCount = 0,
+  messageFormat = "text",
+  messageAsset,
+  cards = [],
+  shortLinksEnabled = false,
   buttonText,
   buttonUrl,
   publicReplyEnabled,
-  publicReplyMessage,
+  publicReplyMessages,
   followGateEnabled = false,
   followGateOpeningMessage,
   followGateButtonLabel,
@@ -117,11 +128,21 @@ export function PhonePreview({
   followersCount = null,
 }: PhonePreviewProps) {
   const [activeTab, setActiveTab] = useState<"dm" | "post">("dm");
-  const formattedDm = previewText(dmMessage, buttonUrl || "", triggerKeyword);
+  const sampleLink = buttonUrl || "https://dmplease.vercel.app/guide";
+  const sampleVars = buildDmVars({
+    username: "alex",
+    name: "Alex",
+    email: "alex@example.com",
+    phone: "+91 98765 43210",
+    keyword: triggerKeyword || "GUIDE",
+    link: shortLinksEnabled ? `https://${shortLinkPreview()}` : sampleLink,
+    voucher: "ALEX-7K2M9Q",
+    voucher_url: `${sampleLink}${sampleLink.includes("?") ? "&" : "?"}voucher=ALEX-7K2M9Q`,
+  });
+  const formattedDm = previewText(dmMessage, sampleVars);
   const formattedOpening = previewText(
     followGateOpeningMessage || "Follow the account, then tap below to get your {keyword}. 👇",
-    "",
-    triggerKeyword
+    sampleVars
   );
   const linkMatch = formattedDm.match(/https?:\/\/[^\s]+/);
   const linkUrl = linkMatch?.[0] || buttonUrl || "";
@@ -248,6 +269,46 @@ export function PhonePreview({
                 <div className="flex flex-col items-end gap-1">
                   <div className="max-w-[248px] rounded-[20px] rounded-br-sm px-3 py-2.5 text-[12px] leading-[1.45] text-white bg-gradient-to-br from-[#515bd4] via-[#d62976] to-[#f58529] break-words whitespace-pre-wrap shadow-sm">
                     <p>{formattedDm}</p>
+                    {dmVariantCount > 0 && (
+                      <p className="mt-1.5 text-[9px] text-white/70">
+                        +{dmVariantCount} more variation{dmVariantCount === 1 ? "" : "s"} · rotated automatically
+                      </p>
+                    )}
+
+                    {messageAsset && !["card", "carousel"].includes(messageFormat) && (
+                      <div className="mt-2 rounded-xl bg-black/25 border border-white/25 px-2.5 py-2 text-[10px]">
+                        {messageAsset.mimeType?.startsWith("image/")
+                          ? "📷 Image attachment"
+                          : messageAsset.mimeType?.startsWith("video/")
+                            ? "🎬 Video attachment"
+                            : messageAsset.mimeType?.startsWith("audio/")
+                              ? "🎙️ Audio attachment"
+                              : "📄 PDF attachment"}
+                        <span className="block text-white/70 truncate">
+                          {messageAsset.filename || "Attached file"}
+                        </span>
+                      </div>
+                    )}
+
+                    {(messageFormat === "card" || messageFormat === "carousel") &&
+                      cards.length > 0 && (
+                        <div className="mt-2 space-y-1.5">
+                          {cards.slice(0, messageFormat === "card" ? 1 : 3).map((card, index) => (
+                            <div
+                              key={index}
+                              className="rounded-xl bg-black/25 border border-white/25 px-2.5 py-2 text-[10px]"
+                            >
+                              <p className="font-semibold">{card.title || `Card ${index + 1}`}</p>
+                              {card.subtitle && (
+                                <p className="text-white/70">{card.subtitle}</p>
+                              )}
+                              {messageFormat === "carousel" && index === 2 && cards.length > 3 && (
+                                <p className="text-white/60">+{cards.length - 3} more cards</p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
 
                     {linkUrl && (
                       <div className="mt-2.5 rounded-xl bg-black/25 border border-white/25 overflow-hidden">
@@ -280,7 +341,12 @@ export function PhonePreview({
 
                 {publicReplyEnabled && (
                   <p className="text-center text-[10px] text-[#8e8e8e]">
-                    Public reply: {publicReplyMessage || "Sent you a DM! 📩"}
+                    Public reply: {publicReplyMessages?.[0] || "Sent you a DM! 📩"}
+                    {(publicReplyMessages?.length ?? 0) > 1 && (
+                      <span className="block text-[9px]">
+                        +{(publicReplyMessages?.length ?? 0) - 1} more variants, rotated automatically
+                      </span>
+                    )}
                   </p>
                 )}
               </div>
@@ -322,7 +388,7 @@ export function PhonePreview({
                       {postScope === "ANY_POST"
                         ? "Responds to every post and reel"
                         : postScope === "NEXT_POST"
-                          ? "Starts with your next upload"
+                          ? "Starts with your next upload — its link is attached automatically"
                           : "Attached to the selected post"}
                     </p>
                   </div>
@@ -361,7 +427,7 @@ export function PhonePreview({
                     <Avatar src={profilePictureUrl} handle={instagramHandle} size="sm" />
                     <p className="text-[11px]">
                       <span className="font-semibold mr-1">{instagramHandle}</span>
-                      {publicReplyMessage || "Sent you a DM! 📩"}
+                      {publicReplyMessages?.[0] || "Sent you a DM! 📩"}
                       <span className="block text-[9px] text-[#8e8e8e] mt-0.5">Now · Reply</span>
                     </p>
                   </div>

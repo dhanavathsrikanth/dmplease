@@ -22,6 +22,8 @@ export interface DispatchRule {
   follow_gate_on_unavailable: string | null;
   once_per_days: number;
   priority: number;
+  short_links_enabled?: boolean | null;
+  link_rotator_id?: string | null;
 }
 
 export interface RuleSelection<T extends DispatchRule> {
@@ -100,6 +102,8 @@ export interface FallbackRow {
   fallback_follow_gate_on_unavailable?: string | null;
   fallback_button_text?: string | null;
   fallback_button_url?: string | null;
+  fallback_short_links_enabled?: boolean | null;
+  fallback_link_rotator_id?: string | null;
 }
 
 export interface FallbackReplyConfig {
@@ -113,6 +117,8 @@ export interface FallbackReplyConfig {
   onUnavailable: "hold" | "deliver";
   buttonText: string | null;
   buttonUrl: string | null;
+  shortLinksEnabled: boolean;
+  linkRotatorId: string | null;
 }
 
 export function normalizeFallbackReply(row?: FallbackRow | null): FallbackReplyConfig {
@@ -127,6 +133,8 @@ export function normalizeFallbackReply(row?: FallbackRow | null): FallbackReplyC
     onUnavailable: row?.fallback_follow_gate_on_unavailable === "deliver" ? "deliver" : "hold",
     buttonText: row?.fallback_button_text ?? null,
     buttonUrl: row?.fallback_button_url ?? null,
+  shortLinksEnabled: Boolean(row?.fallback_short_links_enabled),
+  linkRotatorId: row?.fallback_link_rotator_id ?? null,
   };
 }
 
@@ -154,6 +162,8 @@ export function fallbackAsRule(
     follow_gate_button_label: config.buttonLabel,
     follow_gate_on_unavailable: config.onUnavailable,
     once_per_days: config.oncePerDays,
+    short_links_enabled: config.shortLinksEnabled,
+    link_rotator_id: config.linkRotatorId,
     // Always last: it is only reached when no keyword or catch-all rule matched.
     priority: -1,
   };

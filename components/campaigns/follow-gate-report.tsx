@@ -1,10 +1,87 @@
 "use client";
 
-import React from "react";
-import { UserCheck, UserX, CloudOff, Activity } from "lucide-react";
+import React, { useState } from "react";
+import { UserCheck, UserX, CloudOff, Activity, Search, Loader2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { describeFollowGateReason } from "@/lib/follow-gate-constants";
+
+function TestVerification({ workspaceId }: { workspaceId: string }) {
+  const [igsid, setIgsid] = useState("");
+  const [result, setResult] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const test = async () => {
+    if (!igsid.trim()) return;
+    setLoading(true);
+    setResult(null);
+    try {
+      const res = await fetch("/api/instagram/verify-follow", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workspaceId,
+          userIgsid: igsid.trim(),
+        }),
+      });
+      const data = (await res.json()) as {
+        status?: string;
+        explanation?: string;
+        username?: string | null;
+        error?: string;
+      };
+      if (!res.ok) {
+        setResult(data.error ?? "Verification failed.");
+      } else {
+        setResult(
+          `${data.status ?? "unknown"} — ${data.explanation ?? ""}${
+            data.username ? ` (@${data.username})` : ""
+          }`
+        );
+      }
+    } catch {
+      setResult("Network error.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2 border-t border-[#e0e2e8] dark:border-border/60 pt-3">
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-[#6b6f7e]">
+        Test a verification
+      </p>
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          value={igsid}
+          onChange={(e) => setIgsid(e.target.value)}
+          placeholder="Paste a follower's IGSID"
+          aria-label="IGSID to test"
+          className="flex-1 h-8 rounded-lg border border-[#c7cad5] dark:border-border bg-background px-3 text-xs outline-none focus:border-[#4262ff] focus:ring-2 focus:ring-[#4262ff]/20"
+        />
+        <button
+          type="button"
+          onClick={() => void test()}
+          disabled={loading || !igsid.trim()}
+          className="inline-flex items-center gap-1 rounded-full bg-[#1c1c1e] text-white dark:bg-[#ffd02f] dark:text-[#1c1c1e] px-3 py-1.5 text-[11px] font-semibold disabled:opacity-50"
+        >
+          {loading ? (
+            <Loader2 className="size-3 animate-spin" aria-hidden="true" />
+          ) : (
+            <Search className="size-3" aria-hidden="true" />
+          )}
+          Verify
+        </button>
+      </div>
+      {result && (
+        <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground rounded-lg bg-[#f7f8fa] dark:bg-muted/30 px-3 py-2">
+          {result}
+        </p>
+      )}
+    </div>
+  );
+}
 
 export interface FollowGateReportData {
   total: number;
@@ -12,6 +89,10 @@ export interface FollowGateReportData {
   notFollower: number;
   unavailable: number;
   topReasons: Array<{ reason: string; count: number }>;
+  /** Campaign ID used for the test-verification endpoint. */
+  campaignId?: string;
+  /** Workspace ID used for the test-verification endpoint. */
+  workspaceId?: string;
 }
 
 /** Read-only quality panel for the Ask-for-Follow gate on a campaign. */
@@ -116,6 +197,10 @@ export function FollowGateReport({
           No checks yet. They appear as soon as someone interacts with a gated
           automation.
         </p>
+      )}
+
+      {enabled && data.workspaceId && (
+        <TestVerification workspaceId={data.workspaceId} />
       )}
     </Card>
   );

@@ -17,6 +17,7 @@ import {
   IconAddressBook,
   IconGauge,
   IconSparkles,
+  IconShieldCheck,
 } from "@tabler/icons-react";
 import { cn } from "@/lib/utils";
 import { useWorkspace } from "@/lib/workspace-context";
@@ -45,6 +46,7 @@ function getNavSections(isAdmin: boolean) {
     items: [
       { label: "Dashboard", href: "/dashboard", icon: IconLayoutDashboard },
       { label: "Analytics", href: "/dashboard/overview", icon: IconDeviceAnalytics },
+      { label: "Safety", href: "/dashboard/safety", icon: IconShieldCheck },
       { label: "Inbox", href: "/dashboard/inbox", icon: IconMessages },
       { label: "Contacts", href: "/dashboard/contacts", icon: IconAddressBook },
     ],

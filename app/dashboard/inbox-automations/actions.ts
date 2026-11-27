@@ -4,11 +4,17 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentProfile } from "@/lib/profile";
+import {
+  followGateButtonLabelSchema,
+  openingMessageSchema,
+} from "@/lib/validation/follow-gate";
+import { dmVariantsSchema } from "@/lib/validation/dm-variants";
 
 const TRIGGER_TYPES = [
   "DM_KEYWORD",
   "STORY_REPLY",
   "STORY_MENTION",
+  "STORY_REACTION",
   "SHARE_TO_DM",
   "MESSAGE_REACTION",
 ] as const;
@@ -31,7 +37,7 @@ const ruleSchema = z.object({
     .min(1, "Write the reply message.")
     .max(2000, "Keep the message under 2000 characters."),
   /** Rotated automatically so repeated senders never get identical copy. */
-  variants: z.array(z.string().trim().min(1).max(500)).max(10).default([]),
+  variants: dmVariantsSchema,
   /** Higher priority rules win; catch-all rules are always considered last. */
   priority: z.coerce.number().int().min(-100).max(100).default(0),
   buttonText: z.string().trim().max(80).default(""),
@@ -41,8 +47,8 @@ const ruleSchema = z.object({
   collectField: z.enum(COLLECT_FIELDS).default("none"),
   /** Ask for Follow — applies to DM, story and share rules. */
   followGateEnabled: z.boolean().default(false),
-  openingMessage: z.string().trim().max(500).default(""),
-  followGateButtonLabel: z.string().trim().max(20).default(""),
+  openingMessage: openingMessageSchema.default(""),
+  followGateButtonLabel: followGateButtonLabelSchema.default(""),
   followGateOnUnavailable: z.enum(["hold", "deliver"]).default("hold"),
   oncePerDays: z.coerce.number().int().min(0).max(365).default(45),
   active: z.boolean().default(true),

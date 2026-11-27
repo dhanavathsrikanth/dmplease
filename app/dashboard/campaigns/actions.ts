@@ -3,6 +3,14 @@
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { validateCampaign } from "@/lib/validation/campaign";
+import { validateAutomationInput } from "@/lib/meta/safety";
+import { runDmQueueDrain } from "@/lib/dm-queue";
+import { getAdminDb } from "@/lib/db-admin";
+import { setSafetyPaused } from "@/lib/meta/account-health";
+import {
+  followupStepsSchema,
+  type FollowupStepInput,
+} from "@/lib/validation/followup";
 
 export interface CreateCampaignPayload {
   name: string;
@@ -13,6 +21,7 @@ export interface CreateCampaignPayload {
   postCaption?: string | null;
   triggerKeywords: string[];
   dmMessage: string;
+  dmVariants?: string[];
   buttonText?: string | null;
   buttonUrl?: string | null;
   publicReplyEnabled?: boolean;
@@ -21,6 +30,11 @@ export interface CreateCampaignPayload {
   openingMessage?: string | null;
   followGateButtonLabel?: string | null;
   followGateOnUnavailable?: "hold" | "deliver";
+  collectField?: "none" | "email" | "phone" | "name";
+  messageFormat?: string;
+  messageAssets?: Record<string, unknown> | null;
+  shortLinksEnabled?: boolean;
+  linkRotatorId?: string | null;
 }
 
 export async function createCampaign(payload: CreateCampaignPayload) {
@@ -43,6 +57,25 @@ export async function createCampaign(payload: CreateCampaignPayload) {
     };
   }
   const values = validation.data;
+
+  // Pre-launch safety screening: loops, duplicate keywords, too many links.
+  const safetyIssues = validateAutomationInput({
+    name: values.name,
+    message: values.dmMessage,
+    keywords: values.triggerKeywords,
+    buttonUrl: values.buttonUrl,
+  });
+  if (safetyIssues.length > 0) {
+    const fieldErrors: Record<string, string[]> = {};
+    for (const issue of safetyIssues) {
+      (fieldErrors[issue.field] ??= []).push(issue.message);
+    }
+    return {
+      success: false,
+      error: safetyIssues[0].message,
+      fieldErrors,
+    };
+  }
 
   try {
     // 1. Get or create workspace
@@ -87,6 +120,7 @@ export async function createCampaign(payload: CreateCampaignPayload) {
         post_caption: values.postCaption || null,
         trigger_keywords: cleanKeywords.length > 0 ? cleanKeywords : ["START"],
         dm_message: values.dmMessage,
+        dm_variants: values.dmVariants,
         button_text: values.buttonText || null,
         button_url: values.buttonUrl || null,
         public_reply_enabled: values.publicReplyEnabled,
@@ -95,6 +129,11 @@ export async function createCampaign(payload: CreateCampaignPayload) {
         opening_message: values.openingMessage || null,
         follow_gate_button_label: values.followGateButtonLabel || null,
         follow_gate_on_unavailable: values.followGateOnUnavailable,
+        collect_field: values.collectField === "none" ? null : values.collectField,
+        message_format: values.messageFormat || "text",
+        message_assets: values.messageAssets ?? {},
+        short_links_enabled: values.shortLinksEnabled,
+        link_rotator_id: values.linkRotatorId || null,
         active: true,
       })
       .select("id")
@@ -143,6 +182,24 @@ export async function updateCampaign(
   }
   const values = validation.data;
 
+  const safetyIssues = validateAutomationInput({
+    name: values.name,
+    message: values.dmMessage,
+    keywords: values.triggerKeywords,
+    buttonUrl: values.buttonUrl,
+  });
+  if (safetyIssues.length > 0) {
+    const fieldErrors: Record<string, string[]> = {};
+    for (const issue of safetyIssues) {
+      (fieldErrors[issue.field] ??= []).push(issue.message);
+    }
+    return {
+      success: false,
+      error: safetyIssues[0].message,
+      fieldErrors,
+    };
+  }
+
   try {
     const { data: campaign } = await supabase
       .from("automations")
@@ -181,6 +238,7 @@ export async function updateCampaign(
         trigger_keywords:
           cleanKeywords.length > 0 ? cleanKeywords : ["START"],
         dm_message: values.dmMessage,
+        dm_variants: values.dmVariants,
         button_text: values.buttonText || null,
         button_url: values.buttonUrl || null,
         public_reply_enabled: values.publicReplyEnabled,
@@ -189,6 +247,11 @@ export async function updateCampaign(
         opening_message: values.openingMessage || null,
         follow_gate_button_label: values.followGateButtonLabel || null,
         follow_gate_on_unavailable: values.followGateOnUnavailable,
+        collect_field: values.collectField === "none" ? null : values.collectField,
+        message_format: values.messageFormat || "text",
+        message_assets: values.messageAssets ?? {},
+        short_links_enabled: values.shortLinksEnabled,
+        link_rotator_id: values.linkRotatorId || null,
         updated_at: new Date().toISOString(),
       })
       .eq("id", id);
@@ -223,6 +286,63 @@ export async function toggleCampaignActive(id: string, active: boolean) {
   return { success: true };
 }
 
+export async function drainDmQueueAction() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+  if (authError || !user) {
+    return { success: false, error: "Not authenticated" };
+  }
+
+  const { data: workspaces } = await supabase
+    .from("workspaces")
+    .select("id")
+    .eq("owner_id", user.id);
+  if (!workspaces?.length) {
+    return { success: false, error: "No workspace found" };
+  }
+
+  try {
+    const result = await runDmQueueDrain(getAdminDb());
+    revalidatePath("/dashboard/overview");
+    return { success: true, ...result };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Could not drain the queue",
+    };
+  }
+}
+
+export async function setSafetyPausedAction(accountId: string, paused: boolean) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+  if (authError || !user) return { success: false, error: "Not authenticated" };
+
+  const { data: account } = await supabase
+    .from("instagram_accounts")
+    .select("id, workspace_id")
+    .eq("id", accountId)
+    .maybeSingle();
+  if (!account) return { success: false, error: "Account not found" };
+  const { data: workspace } = await supabase
+    .from("workspaces")
+    .select("id")
+    .eq("id", account.workspace_id)
+    .eq("owner_id", user.id)
+    .maybeSingle();
+  if (!workspace) return { success: false, error: "Not authorized" };
+
+  await setSafetyPaused(accountId, paused);
+  revalidatePath("/dashboard/overview");
+  return { success: true };
+}
+
 export async function deleteCampaign(id: string) {
   const supabase = await createClient();
   const { error } = await supabase.from("automations").delete().eq("id", id);
@@ -234,4 +354,95 @@ export async function deleteCampaign(id: string) {
   revalidatePath("/dashboard");
   revalidatePath("/dashboard/campaigns");
   return { success: true };
+}
+
+/**
+ * Replaces the follow-up steps for one campaign.
+ *
+ * Ownership is checked explicitly (RLS is a second line of defence) and every
+ * step is validated with the same schema the editor uses, so an invalid or
+ * out-of-range step can never reach the cron engine.
+ */
+export async function saveFollowupSteps(
+  campaignId: string,
+  steps: FollowupStepInput[]
+) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+  if (authError || !user) return { success: false, error: "Not authenticated" };
+
+  const validation = followupStepsSchema.safeParse(steps);
+  if (!validation.success) {
+    const fieldErrors: Record<string, string[]> = {};
+    for (const issue of validation.error.issues) {
+      const key = issue.path.join(".") || "form";
+      (fieldErrors[key] ??= []).push(issue.message);
+    }
+    return {
+      success: false,
+      error: validation.error.issues[0]?.message ?? "Invalid follow-up steps",
+      fieldErrors,
+    };
+  }
+
+  const { data: campaign } = await supabase
+    .from("automations")
+    .select("id, workspace_id")
+    .eq("id", campaignId)
+    .maybeSingle();
+  if (!campaign) return { success: false, error: "Campaign not found" };
+
+  const { data: ownedWorkspace } = await supabase
+    .from("workspaces")
+    .select("id")
+    .eq("id", campaign.workspace_id)
+    .eq("owner_id", user.id)
+    .maybeSingle();
+  if (!ownedWorkspace) {
+    return { success: false, error: "Not authorized to edit this campaign" };
+  }
+
+  try {
+    const desired = validation.data.map((step) => step.step);
+    const { data: existing } = await supabase
+      .from("followup_steps")
+      .select("step")
+      .eq("automation_id", campaignId);
+    const removed = (existing ?? [])
+      .map((row) => Number(row.step))
+      .filter((step) => !desired.includes(step));
+    if (removed.length > 0) {
+      await supabase
+        .from("followup_steps")
+        .delete()
+        .eq("automation_id", campaignId)
+        .in("step", removed);
+    }
+
+    const { error } = await supabase.from("followup_steps").upsert(
+      validation.data.map((step) => ({
+        workspace_id: campaign.workspace_id,
+        automation_id: campaignId,
+        step: step.step,
+        delay_minutes: step.delayMinutes,
+        message: step.message,
+        enabled: step.enabled,
+        holdout_percent: step.holdoutPercent,
+      })),
+      { onConflict: "automation_id,step" }
+    );
+    if (error) throw error;
+
+    revalidatePath("/dashboard");
+    revalidatePath(`/dashboard/campaigns/${campaignId}/edit`);
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Could not save follow-ups",
+    };
+  }
 }

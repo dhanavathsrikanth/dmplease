@@ -4,6 +4,7 @@ import {
   parseMessageEvents,
   parsePostbackEvents,
   parseReadEvents,
+  parseStoryEvents,
   type WebhookPayload,
 } from "@/lib/meta/webhook";
 
@@ -100,5 +101,40 @@ describe("webhook parsers", () => {
     };
     expect(parsePostbackEvents(payload)[0]).toMatchObject({ payload: "GET_GUIDE" });
     expect(parseReadEvents(payload)[0]).toMatchObject({ userId: "user-2", watermark: 123 });
+  });
+
+  it("parses story reactions from messaging attachments", () => {
+    const payload: WebhookPayload = {
+      object: "instagram",
+      entry: [
+        {
+          id: "ig-123",
+          time: 1,
+          messaging: [
+            {
+              sender: { id: "user-1", username: "alice" },
+              recipient: { id: "ig-123" },
+              message: {
+                mid: "m-1",
+                attachments: [
+                  {
+                    type: "story_mention",
+                    payload: { id: "story-1", reaction: "❤️" },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const events = parseStoryEvents(payload);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      kind: "REACTION",
+      senderId: "user-1",
+      mediaId: "story-1",
+      reaction: "❤️",
+    });
   });
 });

@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { connection } from "next/server";
 import { CampaignBuilder } from "@/components/campaigns/campaign-builder";
 import { Skeleton } from "@/components/ui/skeleton";
+import { listLinkRotators } from "@/app/dashboard/campaigns/link-actions";
 import { getCurrentProfile } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
 
@@ -56,5 +57,11 @@ async function NewCampaignContent() {
     }
   }
 
-  return <CampaignBuilder initialHandle={connectedHandle} />;
+  const linkRotators = await listLinkRotators();
+  return (
+    <CampaignBuilder
+      initialHandle={connectedHandle}
+      linkRotators={linkRotators}
+    />
+  );
 }

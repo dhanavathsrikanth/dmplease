@@ -3,6 +3,11 @@ import { connection } from "next/server";
 import { notFound } from "next/navigation";
 import { CampaignBuilder } from "@/components/campaigns/campaign-builder";
 import { FollowupReport } from "@/components/campaigns/followup-report";
+import { FollowupStepsEditor } from "@/components/campaigns/followup-steps-editor";
+import { listLinkRotators } from "@/app/dashboard/campaigns/link-actions";
+import { LinkPerformance } from "@/components/campaigns/link-performance";
+import { CampaignAnalyticsCard } from "@/components/campaigns/campaign-analytics";
+import { loadCampaignAnalytics } from "@/lib/campaign-analytics";
 import { FollowGateReport } from "@/components/campaigns/follow-gate-report";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getCurrentProfile } from "@/lib/profile";
@@ -77,27 +82,40 @@ async function EditCampaignContent({
     .limit(1);
   if (accounts?.[0]?.username) connectedHandle = accounts[0].username;
 
-  const [stepsRes, eventsRes, conversionsRes, gateChecksRes] = await Promise.all([
-    supabase
-      .from("followup_steps")
-      .select("step, delay_minutes, enabled, holdout_percent")
-      .eq("automation_id", id)
-      .order("step"),
-    supabase
-      .from("followup_events")
-      .select("step, action, contact_id")
-      .eq("automation_id", id),
-    supabase
-      .from("conversions")
-      .select("contact_id, revenue_minor")
-      .eq("workspace_id", campaign.workspace_id),
-    supabase
-      .from("follow_checks")
-      .select("status, reason")
-      .eq("automation_id", id)
-      .order("created_at", { ascending: false })
-      .limit(500),
-  ]);
+  const [stepsRes, eventsRes, conversionsRes, gateChecksRes, linkRotators, linkClicksRes, trackedLinksRes] =
+    await Promise.all([
+      supabase
+        .from("followup_steps")
+        .select("step, delay_minutes, message, enabled, holdout_percent")
+        .eq("automation_id", id)
+        .order("step"),
+      supabase
+        .from("followup_events")
+        .select("step, action, contact_id")
+        .eq("automation_id", id),
+      supabase
+        .from("conversions")
+        .select("contact_id, revenue_minor")
+        .eq("workspace_id", campaign.workspace_id),
+      supabase
+        .from("follow_checks")
+        .select("status, reason")
+        .eq("automation_id", id)
+        .order("created_at", { ascending: false })
+        .limit(500),
+      listLinkRotators(),
+      supabase
+        .from("link_clicks")
+        .select("token, contact_id, is_bot, clicked_at")
+        .eq("automation_id", id)
+        .order("clicked_at", { ascending: false })
+        .limit(2000),
+      supabase
+        .from("tracked_links")
+        .select("short_code, destination_url, label")
+        .eq("automation_id", id)
+        .limit(500),
+    ]);
 
   const gateRows = gateChecksRes.data ?? [];
   const reasonCounts = new Map<string, number>();
@@ -151,6 +169,43 @@ async function EditCampaignContent({
     }),
   };
 
+  const linkMeta = new Map(
+    (trackedLinksRes.data ?? []).map((link) => [
+      String(link.short_code),
+      {
+        destination: String(link.destination_url ?? ""),
+        label: link.label ? String(link.label) : null,
+      },
+    ])
+  );
+  const clickGroups = new Map<string, { clicks: number; people: Set<string>; last: string | null }>();
+  for (const click of linkClicksRes.data ?? []) {
+    if (click.is_bot) continue;
+    const code = String(click.token ?? "");
+    if (!code) continue;
+    const group = clickGroups.get(code) ?? { clicks: 0, people: new Set<string>(), last: null };
+    group.clicks++;
+    if (click.contact_id) group.people.add(String(click.contact_id));
+    if (!group.last && click.clicked_at) group.last = String(click.clicked_at);
+    clickGroups.set(code, group);
+  }
+  const linkPerformance = [...clickGroups.entries()]
+    .map(([code, group]) => ({
+      shortCode: code,
+      destination: linkMeta.get(code)?.destination ?? "",
+      label: linkMeta.get(code)?.label ?? null,
+      clicks: group.clicks,
+      uniqueClickers: group.people.size,
+      lastClickedAt: group.last,
+    }))
+    .sort((a, b) => b.clicks - a.clicks)
+    .slice(0, 20);
+
+  const campaignAnalytics = await loadCampaignAnalytics(
+    String(campaign.workspace_id),
+    String(campaign.id)
+  );
+
   return (
     <div className="space-y-6">
     <CampaignBuilder
@@ -165,6 +220,11 @@ async function EditCampaignContent({
         postCaption: campaign.post_caption as string | null,
         triggerKeywords: (campaign.trigger_keywords as string[]) ?? [],
         dmMessage: String(campaign.dm_message ?? ""),
+        dmVariants: (campaign.dm_variants as string[] | null) ?? [],
+        messageFormat: campaign.message_format as string | null,
+        messageAssets: campaign.message_assets as
+          | { asset?: { url: string; mimeType?: string; filename?: string } | null; cards?: Array<{ title: string; subtitle?: string; imageUrl?: string }> | null }
+          | null,
         buttonText: campaign.button_text as string | null,
         buttonUrl: campaign.button_url as string | null,
         publicReplyEnabled: campaign.public_reply_enabled as boolean | null,
@@ -173,11 +233,31 @@ async function EditCampaignContent({
         openingMessage: campaign.opening_message as string | null,
         followGateButtonLabel: campaign.follow_gate_button_label as string | null,
         followGateOnUnavailable: campaign.follow_gate_on_unavailable as string | null,
+        collectField: campaign.collect_field as string | null,
+        shortLinksEnabled: campaign.short_links_enabled as boolean | null,
+        linkRotatorId: campaign.link_rotator_id as string | null,
       }}
+      linkRotators={linkRotators}
     />
+    <CampaignAnalyticsCard data={campaignAnalytics} />
+    <FollowupStepsEditor
+      campaignId={String(id)}
+      initialSteps={(stepsRes.data ?? []).map((step) => ({
+        step: Number(step.step),
+        delayMinutes: Number(step.delay_minutes),
+        message: String(step.message ?? ""),
+        enabled: Boolean(step.enabled),
+        holdoutPercent: Number(step.holdout_percent),
+      }))}
+    />
+    <LinkPerformance rows={linkPerformance} />
     <FollowupReport data={followupReport} />
       <FollowGateReport
-        data={followGateReport}
+        data={{
+          ...followGateReport,
+          campaignId: String(campaign.id),
+          workspaceId: String(campaign.workspace_id),
+        }}
         enabled={Boolean(campaign.follow_gate_enabled)}
       />
     </div>

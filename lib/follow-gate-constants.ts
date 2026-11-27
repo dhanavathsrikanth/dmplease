@@ -45,6 +45,8 @@ export function normalizeFollowGatePolicy(
 export const FOLLOW_GATE_REASONS: Record<string, string> = {
   consent_required:
     "Meta requires the person to message or tap a button before follow status can be read.",
+  identity_mismatch:
+    "The verified username did not match the commenter. Treated as unverified for safety.",
   token_invalid: "The connected Instagram token needs to be reconnected.",
   network_error: "Meta could not be reached in time.",
   field_unavailable:

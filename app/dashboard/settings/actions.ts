@@ -4,17 +4,22 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentProfile } from "@/lib/profile";
+import {
+  followGateButtonLabelSchema,
+  openingMessageSchema,
+} from "@/lib/validation/follow-gate";
+import { dmVariantsSchema } from "@/lib/validation/dm-variants";
 
 const fallbackSchema = z.object({
   workspaceId: z.string().uuid("Invalid workspace."),
   accountId: z.string().uuid("Invalid account."),
   enabled: z.boolean(),
   message: z.string().trim().max(1000).default(""),
-  variants: z.array(z.string().trim().min(1).max(500)).max(10).default([]),
+  variants: dmVariantsSchema,
   oncePerDays: z.coerce.number().int().min(0).max(365).default(45),
   followGateEnabled: z.boolean().default(false),
-  openingMessage: z.string().trim().max(500).default(""),
-  buttonLabel: z.string().trim().max(20).default(""),
+  openingMessage: openingMessageSchema.default(""),
+  buttonLabel: followGateButtonLabelSchema.default(""),
   onUnavailable: z.enum(["hold", "deliver"]).default("hold"),
   buttonText: z.string().trim().max(20).default(""),
   buttonUrl: z.union([z.literal(""), z.url()]).default(""),

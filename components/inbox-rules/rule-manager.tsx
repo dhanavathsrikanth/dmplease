@@ -42,6 +42,7 @@ export type DmRuleTrigger =
   | "DM_KEYWORD"
   | "STORY_REPLY"
   | "STORY_MENTION"
+  | "STORY_REACTION"
   | "SHARE_TO_DM"
   | "MESSAGE_REACTION";
 
@@ -97,6 +98,7 @@ const TRIGGER_LABELS: Record<DmRuleTrigger, string> = {
   DM_KEYWORD: "Inbox keyword",
   STORY_REPLY: "Story reply",
   STORY_MENTION: "Story mention",
+  STORY_REACTION: "Story reaction",
   SHARE_TO_DM: "Share to DM",
   MESSAGE_REACTION: "Reaction to your DM",
 };
@@ -105,6 +107,7 @@ const TRIGGER_HINTS: Record<DmRuleTrigger, string> = {
   DM_KEYWORD: "When a follower messages you a keyword",
   STORY_REPLY: "When a follower replies to one of your stories",
   STORY_MENTION: "When a follower mentions you in their story",
+  STORY_REACTION: "When a follower reacts to one of your stories with an emoji",
   SHARE_TO_DM: "When a follower shares your post to your DMs",
   MESSAGE_REACTION:
     "When a follower reacts to one of your DMs (Meta does not expose individual story-tap reactions)",

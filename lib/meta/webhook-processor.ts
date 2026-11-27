@@ -2,12 +2,13 @@ import { getAdminDb, hasAdminDb } from "@/lib/db-admin";
 import { decryptToken } from "@/lib/meta/vault";
 import { captureServerEvent } from "@/lib/posthog-server";
 import {
-  getUserMedia,
   postPublicCommentReply,
   sendDirectMessage,
   sendDirectMessageWithButton,
+  sendDirectMessageWithAttachment,
   sendPrivateReply,
   sendPrivateReplyWithButton,
+  sendPrivateReplyWithAttachment,
   isTransientMetaError,
   type MetaApiError,
 } from "@/lib/meta/client";
@@ -15,18 +16,21 @@ import {
   acquireSendSlot,
   checkRecipientCooldown,
   isViralSpike,
-  pickVariant,
   randomizedDelay,
 } from "@/lib/meta/safety";
-import { getQstash, getQstashWorkerUrl, hasQstash } from "@/lib/upstash";
+import { getQstash, getQstashWorkerUrl, getRedis, hasQstash, hasUpstashRedis } from "@/lib/upstash";
 import {
-  buildOpeningText,
   decideFollowGateAction,
   normalizeFollowGateConfig,
   verifyFollowership,
   type FollowGateConfig,
   type FollowVerification,
 } from "@/lib/meta/follow-gate";
+import {
+  normalizeOpeningTemplate,
+  renderOpeningDm,
+  type OpeningDmTemplate,
+} from "@/lib/meta/opening-dm";
 import { FOLLOW_GATE_LIMITS } from "@/lib/follow-gate-constants";
 import {
   fallbackAsRule,
@@ -38,8 +42,48 @@ import {
 } from "@/lib/dm-rules";
 
 // Kept exported for existing callers/tests; the implementation now lives in
-// the pure dm-rules decision module.
+// the pure dm-rules decision modules.
 export { matchesRuleKeywords };
+export {
+  formatDmText,
+  linkForMessage,
+  personalizeMessage,
+} from "@/lib/meta/dm-template";
+import {
+  formatDmText,
+  personalizeMessage,
+} from "@/lib/meta/dm-template";
+import { buildAutomationContent } from "@/lib/meta/dm-content";
+import { resolveDmVars } from "@/lib/meta/dm-variable-resolver";
+import type { DmVars } from "@/lib/dm-variables";
+import type { MessageFormatConfig } from "@/lib/message-formats";
+import { normalizeDmVariants } from "@/lib/dm-variants";
+import {
+  chooseVariant,
+  variantFingerprint,
+  type VariantChoice,
+} from "@/lib/message-variants";
+import {
+  getRecentVariantFingerprints,
+  recordVariantFingerprint,
+} from "@/lib/meta/variant-history";
+import { isAutoReelLink } from "@/lib/reel-link";
+import { resolveLatestMedia } from "@/lib/meta/reel-link-resolver";
+import { recordSendOutcome } from "@/lib/meta/account-health";
+import {
+  acquireThrottleSlot,
+  recordCommentVelocity,
+} from "@/lib/meta/throttle";
+import { enqueueQueuedDm } from "@/lib/dm-queue";
+import {
+  choosePublicReply,
+  normalizePublicReplies,
+  renderPublicReply,
+} from "@/lib/public-replies";
+import {
+  getRecentPublicReplyFingerprints,
+  recordPublicReplyFingerprint,
+} from "@/lib/meta/public-reply-rotation";
 import { recordMetricEvent } from "@/lib/metrics";
 import {
   parseCommentEvents,
@@ -94,6 +138,10 @@ export interface AutomationLike {
   collectField?: string | null;
   openingMessage?: string | null;
   hourlyCap?: number;
+  messageFormat?: string | null;
+  messageAssets?: MessageFormatConfig | null;
+  shortLinksEnabled?: boolean | null;
+  linkRotatorId?: string | null;
 }
 
 /** Raw `automations` row as returned by Supabase (snake_case). */
@@ -116,6 +164,10 @@ type AutomationRow = {
   collect_field?: string | null;
   opening_message?: string | null;
   hourly_cap?: number | null;
+  message_format?: string | null;
+  message_assets?: unknown;
+  short_links_enabled?: boolean | null;
+  link_rotator_id?: string | null;
 };
 
 /**
@@ -144,6 +196,14 @@ export function toAutomationLike(row: AutomationRow): AutomationLike {
     collectField: row.collect_field,
     openingMessage: row.opening_message,
     hourlyCap: row.hourly_cap ?? 0,
+    messageFormat: row.message_format ?? "text",
+    messageAssets:
+      row.message_assets && typeof row.message_assets === "object" &&
+      !Array.isArray(row.message_assets) && "format" in row.message_assets
+        ? (row.message_assets as MessageFormatConfig)
+        : null,
+    shortLinksEnabled: row.short_links_enabled ?? false,
+    linkRotatorId: row.link_rotator_id ?? null,
   };
 }
 
@@ -174,77 +234,158 @@ export async function withRetry<T extends { error?: MetaApiError }>(
   }
 }
 
-/** Replaces {username}, {link} and {keyword} placeholders in DM templates. */
-export function personalizeMessage(
-  template: string | null | undefined,
-  vars: { username?: string; link?: string; keyword?: string }
-): string {
-  return (template ?? "")
-    .replace(/\{username\}/gi, vars.username || "there")
-    .replace(/\{link\}/gi, vars.link || "")
-    .replace(/\{keyword\}/gi, vars.keyword || "");
-}
-
-/**
- * Adds short attribution params to the real destination URL. We deliberately
- * do not replace it with a signed /go/ token: Instagram does not linkify those
- * long URLs in DM text, and the creator asked for the actual link to be sent.
- */
-export function linkForMessage(url: string, campaignId: string): string {
-  if (!url) return "";
-  try {
-    const parsed = new URL(url);
-    parsed.searchParams.set("utm_source", "dmplease");
-    parsed.searchParams.set("utm_medium", "instagram_dm");
-    parsed.searchParams.set("utm_campaign", campaignId.slice(0, 8));
-    return parsed.toString();
-  } catch {
-    return url;
-  }
-}
-
-/**
- * Instagram only linkifies a URL when it is a clean, whitespace-delimited
- * token. Bare URLs embedded mid-sentence often arrive as plain text, so pull
- * every URL onto its own line and strip attached punctuation.
- */
-export function formatDmText(
-  template: string,
-  vars: { username?: string; link?: string; keyword?: string }
-): string {
-  return personalizeMessage(template, vars)
-    .replace(/https?:\/\/[^\s<]+/g, (url) => {
-      const clean = url.replace(/[.,;:!?)\]}]+$/g, "");
-      return `\n\n${clean}\n`;
-    })
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .replace(/\n[ \t]+/g, "\n")
-    .trim();
-}
-
 /** Returns true when the automation should run for this media item. */
 export async function matchesPostScope(
   auto: { postScope?: string | null; postId?: string | null },
   event: { mediaId: string },
   token: string,
-  latestMediaCache: Map<string, Promise<string | null>>
+  _latestMediaCache?: Map<string, Promise<string | null>>
 ): Promise<boolean> {
   if (auto.postScope === "SPECIFIC_POST") {
     return Boolean(auto.postId && auto.postId === event.mediaId);
   }
   if (auto.postScope === "NEXT_POST") {
-    let pending = latestMediaCache.get(token);
-    if (!pending) {
-      pending = getUserMedia(token, 1)
-        .then((media) => media[0]?.id ?? null)
-        .catch(() => null);
-      latestMediaCache.set(token, pending);
+    // Caching and in-flight coalescing now live in the shared resolver. The
+    // old per-event Map argument is kept only for backwards compatibility.
+    const latest = await resolveLatestMedia(token, event.mediaId);
+    // Keep the legacy per-request cache populated for callers that still
+    // pass/inspect it; the real dedupe happens in the shared resolver.
+    if (_latestMediaCache && token) {
+      _latestMediaCache.set(token, Promise.resolve(latest.mediaId));
     }
-    const latestId = await pending;
-    return Boolean(latestId && latestId === event.mediaId);
+    return Boolean(latest.mediaId && latest.mediaId === event.mediaId);
   }
   return true;
+}
+
+/**
+ * Resolves every variable used in a template for one recipient.
+ * All send paths go through here, so `{name}` and `{voucher}` behave the same
+ * in a comment DM, an opt-in release, an inbox rule or an opening message.
+ */
+async function varsForTemplate(input: {
+  workspaceId: string;
+  template: string;
+  scopeKey: string;
+  recipientId: string;
+  contactId?: string | null;
+  username?: string | null;
+  keyword?: string;
+  link?: string | null;
+  prefix?: string | null;
+}): Promise<DmVars> {
+  const { vars } = await resolveDmVars(input);
+  return vars;
+}
+
+/**
+ * Chooses a DM variant with cross-instance history so two consecutive sends
+ * from the same automation never use the same copy. `previousIndex` is no
+ * longer threaded through callers — the fingerprint history replaces it and
+ * survives multiple serverless workers.
+ */
+async function chooseDmVariant(
+  scopeKey: string,
+  variants: string[] | null | undefined,
+  primaryMessage: string
+): Promise<{ choice: VariantChoice; recent: string[] }> {
+  const recent = await getRecentVariantFingerprints(`dm:${scopeKey}`);
+  const chosen =
+    chooseVariant(normalizeDmVariants(variants, primaryMessage), recent) ?? {
+      text: primaryMessage,
+      index: -1,
+      fingerprint: variantFingerprint(primaryMessage),
+    };
+  return { choice: chosen, recent };
+}
+
+async function recordDmVariant(
+  scopeKey: string,
+  choice: VariantChoice,
+  recent: string[]
+): Promise<void> {
+  await recordVariantFingerprint(`dm:${scopeKey}`, choice.fingerprint, recent);
+}
+
+/** Keywords that permanently opt a person out of automated DMs. */
+export const OPT_OUT_KEYWORDS = [
+  "stop",
+  "stop all",
+  "unsubscribe",
+  "cancel",
+  "end",
+  "opt out",
+  "optout",
+];
+
+export function isOptOutMessage(text: string | null | undefined): boolean {
+  const normalized = (text ?? "").toLowerCase().trim();
+  if (!normalized) return false;
+  return OPT_OUT_KEYWORDS.some((keyword) => {
+    const clean = keyword.toLowerCase().trim();
+    return normalized === clean || normalized.startsWith(`${clean} `) || normalized.endsWith(` ${clean}`);
+  });
+}
+
+export async function isOptedOut(
+  workspaceId: string,
+  recipientId: string
+): Promise<boolean> {
+  if (!hasAdminDb()) return false;
+  try {
+    const { data } = await getAdminDb()
+      .from("contacts")
+      .select("opted_out_at")
+      .eq("workspace_id", workspaceId)
+      .eq("instagram_id", recipientId)
+      .maybeSingle();
+    return Boolean(data?.opted_out_at);
+  } catch {
+    return false;
+  }
+}
+
+export async function recordOptOut(
+  workspaceId: string,
+  recipientId: string,
+  keyword: string
+): Promise<void> {
+  if (!hasAdminDb()) return;
+  try {
+    await getAdminDb()
+      .from("contacts")
+      .update({ opted_out_at: nowIso(), opted_out_keyword: keyword, updated_at: nowIso() })
+      .eq("workspace_id", workspaceId)
+      .eq("instagram_id", recipientId);
+    await recordSafety({
+      workspaceId,
+      recipientId,
+      kind: "opt_out",
+    });
+  } catch (error) {
+    console.warn("[opt-out] Could not record opt-out:", error);
+  }
+}
+
+/** Marks a sender as handled by a story trigger (5-min window). */
+async function markStoryHandled(accountId: string, senderId: string): Promise<void> {
+  if (!hasUpstashRedis()) return;
+  try {
+    await getRedis().set(`story:handled:${accountId}:${senderId}`, "1", { ex: 300 });
+  } catch {
+    // Dedupe is best-effort; never block a DM on Redis.
+  }
+}
+
+/** True if this sender was recently handled by a story trigger. */
+async function wasStoryHandled(accountId: string, senderId: string): Promise<boolean> {
+  if (!hasUpstashRedis()) return false;
+  try {
+    const value = await getRedis().get(`story:handled:${accountId}:${senderId}`);
+    return Boolean(value);
+  } catch {
+    return false;
+  }
 }
 
 /** Substring keyword match; empty keyword list means "any keyword". */
@@ -327,7 +468,7 @@ async function getAccount(instagramId: string) {
     const { data, error } = await getAdminDb()
       .from("instagram_accounts")
       .select(
-        "id, workspace_id, access_token, fallback_reply_enabled, fallback_reply_message, fallback_reply_variants, fallback_once_per_days, fallback_follow_gate_enabled, fallback_opening_message, fallback_follow_gate_button_label, fallback_follow_gate_on_unavailable, fallback_button_text, fallback_button_url"
+        "id, workspace_id, access_token, fallback_reply_enabled, fallback_reply_message, fallback_reply_variants, fallback_once_per_days, fallback_follow_gate_enabled, fallback_opening_message, fallback_follow_gate_button_label, fallback_follow_gate_on_unavailable, fallback_button_text, fallback_button_url, fallback_short_links_enabled, fallback_link_rotator_id"
       )
       .eq("instagram_id", instagramId)
       .limit(1)
@@ -357,7 +498,7 @@ async function getToken(instagramId: string, account: { access_token: string | n
   return process.env.INSTAGRAM_ACCESS_TOKEN ?? null;
 }
 
-async function ensureContact(
+export async function ensureContact(
   workspaceId: string,
   instagramId: string,
   username?: string | null,
@@ -521,7 +662,10 @@ async function recentlyMessaged(
     if (error) throw error;
     return Boolean(data);
   } catch {
-    return false;
+    // Fail closed: if we cannot confirm a recent send, treat the recipient as
+    // already contacted rather than risk a duplicate DM.
+    console.warn("[webhook] recentlyMessaged lookup failed; treating as recently contacted");
+    return true;
   }
 }
 
@@ -678,6 +822,8 @@ function toDmRule(row: Partial<DmRule> & Record<string, unknown>): DmRule {
     follow_gate_on_unavailable: (row.follow_gate_on_unavailable as string | null) ?? "hold",
     once_per_days: Number(row.once_per_days ?? 45),
     priority: Number(row.priority ?? 0),
+    short_links_enabled: Boolean(row.short_links_enabled),
+    link_rotator_id: (row.link_rotator_id as string | null) ?? null,
   };
 }
 
@@ -835,6 +981,145 @@ export interface FollowGateOutcome {
 }
 
 /**
+ * Sends and records the opening DM.
+ *
+ * Everything that must happen when an opener goes out lives here: dispatch
+ * (comment reply or direct message), token-error handling, safety ledger,
+ * metrics, analytics, the inbox conversation and the DM log. Callers only
+ * decide whether the gate should ask; they never re-implement these side
+ * effects. This is why the dashboard can count *sent* openers instead of
+ * outstanding opt-in records.
+ */
+async function sendOpeningDm(input: {
+  workspaceId: string;
+  accountDbId: string | null;
+  accountId: string;
+  token: string;
+  recipientId: string;
+  pendingId: string;
+  template: OpeningDmTemplate;
+  username?: string | null;
+  keyword?: string | null;
+  link?: string | null;
+  commentId?: string | null;
+  contactId?: string | null;
+  mediaId?: string | null;
+  automationId?: string | null;
+  ruleId?: string | null;
+  reason?: string | null;
+}): Promise<{ sent: boolean; error?: MetaApiError }> {
+  const vars = await varsForTemplate({
+    workspaceId: input.workspaceId,
+    template: input.template.openingMessage,
+    scopeKey: input.automationId
+      ? `auto:${input.automationId}`
+      : input.ruleId
+        ? `rule:${input.ruleId}`
+        : `pending:${input.pendingId}`,
+    recipientId: input.recipientId,
+    contactId: input.contactId,
+    username: input.username,
+    keyword: input.keyword ?? undefined,
+    link: input.link,
+    prefix: input.automationId ?? input.ruleId ?? null,
+  });
+  const text = renderOpeningDm(input.template, vars);
+
+  const dispatch = () =>
+    input.commentId
+      ? sendPrivateReplyWithButton(
+          input.token,
+          input.accountId,
+          input.commentId!,
+          text,
+          input.template.buttonLabel,
+          `OPTIN:${input.pendingId}`
+        )
+      : sendDirectMessageWithButton(
+          input.token,
+          input.accountId,
+          input.recipientId,
+          text,
+          input.template.buttonLabel,
+          `OPTIN:${input.pendingId}`
+        );
+
+  const result = await withRetry(dispatch, 2);
+  const code = metaErrorCode(result?.error);
+  if (code === 190) {
+    await markTokenInvalid(
+      input.accountDbId,
+      input.workspaceId,
+      "Meta error 190: invalid OAuth access token"
+    );
+    return { sent: false, error: result.error };
+  }
+  if (result?.error) return { sent: false, error: result.error };
+
+  await recordSafety({
+    workspaceId: input.workspaceId,
+    instagramAccountId: input.accountDbId,
+    recipientId: input.recipientId,
+    kind: "follow_gate_opening",
+  });
+  await recordMetricEvent({
+    kind: "dm_sent",
+    creatorId: input.workspaceId,
+    targetId: input.automationId ?? input.ruleId ?? input.pendingId,
+  });
+  captureServerEvent({
+    event: "follow_gate_opening_sent",
+    properties: {
+      automation_id: input.automationId ?? null,
+      rule_id: input.ruleId ?? null,
+      reason: input.reason ?? null,
+    },
+    anonymous: true,
+  });
+
+  if (hasAdminDb()) {
+    const contactId =
+      input.contactId ??
+      (await ensureContact(
+        input.workspaceId,
+        input.recipientId,
+        input.username,
+        "optin"
+      ));
+    const conversationId = contactId
+      ? await ensureConversation(input.workspaceId, input.accountDbId, contactId)
+      : null;
+    if (conversationId) {
+      await recordMessage({
+        workspaceId: input.workspaceId,
+        conversationId,
+        externalId: result.message_id ?? null,
+        direction: "outbound",
+        senderType: "bot",
+        text,
+        status: "sent",
+      });
+    }
+    await getAdminDb().from("dm_logs").insert({
+      workspace_id: input.workspaceId,
+      instagram_account_id: input.accountDbId,
+      automation_id: input.automationId ?? null,
+      recipient_id: input.recipientId,
+      recipient_username: input.username || "instagram_user",
+      trigger_keyword: "OPENING",
+      dm_message: text,
+      status: "SENT",
+      post_id: input.mediaId ?? null,
+      keyword: "OPENING",
+      sequence_step: 0,
+      variant: "opening",
+    });
+  }
+
+  return { sent: true };
+}
+
+/**
  * Shared gate used by comment automations and every rule trigger.
  *
  * Confirmed followers proceed immediately, confirmed non-followers receive an
@@ -855,6 +1140,9 @@ async function applyFollowGate(input: {
   keyword?: string | null;
   deliverMessage: string;
   buttonUrl?: string | null;
+  /** Passed through to the DM log / inbox record when the opener is sent. */
+  contactId?: string | null;
+  mediaId?: string | null;
 }): Promise<FollowGateOutcome> {
   if (!input.config.enabled) return { proceed: true };
 
@@ -880,7 +1168,8 @@ async function applyFollowGate(input: {
   const verification = await verifyFollowership(
     input.token,
     input.accountId,
-    input.recipientId
+    input.recipientId,
+    input.username
   );
   await recordFollowCheck({
     workspaceId: input.workspaceId,
@@ -948,60 +1237,38 @@ async function applyFollowGate(input: {
     return { proceed: false, skipped: "Could not create opt-in record", verification };
   }
 
-  const openingText = buildOpeningText(input.config, {
+  const outcome = await sendOpeningDm({
+    workspaceId: input.workspaceId,
+    accountDbId: input.accountDbId,
+    accountId: input.accountId,
+    token: input.token,
+    recipientId: input.recipientId,
+    pendingId,
+    template: normalizeOpeningTemplate({
+      openingMessage: input.config.openingMessage,
+      buttonLabel: input.config.buttonLabel,
+    }),
     username: input.username,
     keyword: input.keyword,
-    link: input.buttonUrl,
+    // The opening DM is a "follow me" CTA; a setup-time sentinel must never be
+    // shown as a link. The real permalink is attached when the opt-in is released.
+    link: isAutoReelLink(input.buttonUrl) ? "" : input.buttonUrl,
+    commentId: input.commentId ?? null,
+    contactId: input.contactId ?? null,
+    mediaId: input.mediaId ?? null,
+    automationId: input.automationId ?? null,
+    ruleId: input.ruleId ?? null,
+    reason: verification.reason ?? verification.status,
   });
-  const dispatch = () =>
-    input.commentId
-      ? sendPrivateReplyWithButton(
-          input.token,
-          input.accountId,
-          input.commentId!,
-          openingText,
-          input.config.buttonLabel,
-          `OPTIN:${pendingId}`
-        )
-      : sendDirectMessageWithButton(
-          input.token,
-          input.accountId,
-          input.recipientId,
-          openingText,
-          input.config.buttonLabel,
-          `OPTIN:${pendingId}`
-        );
 
-  const outcome = await withRetry(dispatch, 2);
-  const code = metaErrorCode(outcome?.error);
-  if (code === 190) {
-    await markTokenInvalid(
-      input.accountDbId,
-      input.workspaceId,
-      "Meta error 190: invalid OAuth access token"
-    );
-    return { proceed: false, skipped: "Token invalid — reconnect required", verification };
-  }
-  if (outcome?.error) {
+  if (!outcome.sent) {
     await deletePending(pendingId);
-    return { proceed: false, skipped: "Could not send the opening DM", verification };
+    const skipped =
+      metaErrorCode(outcome.error) === 190
+        ? "Token invalid — reconnect required"
+        : "Could not send the opening DM";
+    return { proceed: false, skipped, verification };
   }
-
-  await recordSafety({
-    workspaceId: input.workspaceId,
-    instagramAccountId: input.accountDbId,
-    recipientId: input.recipientId,
-    kind: "follow_gate_opening",
-  });
-  captureServerEvent({
-    event: "follow_gate_opening_sent",
-    properties: {
-      automation_id: input.automationId ?? null,
-      rule_id: input.ruleId ?? null,
-      reason: verification.reason ?? verification.status,
-    },
-    anonymous: true,
-  });
   return {
     proceed: false,
     skipped: "Opening DM sent; waiting for follow confirmation",
@@ -1019,24 +1286,39 @@ async function sendRuleOptinDm(input: {
   rule: DmRule;
   message: string;
 }): Promise<{ sent: boolean; error?: MetaApiError }> {
-  const variant = pickVariant(input.rule.variants ?? []);
-  const vars = {
-    username: (await contactUsername(input.workspaceId, input.recipientId)) ?? "there",
-    link: input.rule.button_url ?? "",
+  const { choice: variant, recent: variantRecent } = await chooseDmVariant(
+    `rule:${input.rule.id}`,
+    input.rule.variants,
+    input.message
+  );
+  const contactId = await ensureContact(input.workspaceId, input.recipientId, undefined, "optin");
+  const content = await buildAutomationContent({
+    auto: {
+      id: input.rule.id,
+      postScope: null,
+      buttonUrl: input.rule.button_url,
+      dmMessage: variant.text,
+      shortLinksEnabled: input.rule.short_links_enabled ?? false,
+      linkRotatorId: input.rule.link_rotator_id ?? null,
+    },
+    token: input.token,
+    accountId: input.accountId,
+    mediaId: null,
     keyword: input.rule.keywords?.[0] ?? "",
-  };
-  const text = formatDmText(variant.text ?? input.message, vars);
+    username: (await contactUsername(input.workspaceId, input.recipientId)) ?? undefined,
+    workspaceId: input.workspaceId,
+    contactId,
+    recipientId: input.recipientId,
+  });
+  const text = content.text;
   const result = await withRetry(
     () =>
-      input.rule.button_text && input.rule.button_url
+      input.rule.button_text && content.buttonUrl
         ? sendDirectMessage(
             input.token,
             input.accountId,
             input.recipientId,
-            `${text}\n\n${input.rule.button_text}: ${linkForMessage(
-              personalizeMessage(input.rule.button_url, vars),
-              input.rule.id
-            )}`
+            `${text}\n\n${input.rule.button_text}: ${content.buttonUrl}`
           )
         : sendDirectMessage(input.token, input.accountId, input.recipientId, text),
     3
@@ -1044,6 +1326,7 @@ async function sendRuleOptinDm(input: {
   const sent = !result?.error;
 
   if (sent) {
+    await recordDmVariant(`rule:${input.rule.id}`, variant, variantRecent);
     await recordMetricEvent({
       kind: "dm_sent",
       creatorId: input.workspaceId,
@@ -1087,7 +1370,7 @@ async function sendRuleOptinDm(input: {
       status: sent ? "SENT" : "FAILED",
       keyword: "OPTIN",
       sequence_step: 2,
-      variant: variant.text ? "variant" : "default",
+      variant: variant.index >= 0 ? `variant-${variant.index + 1}` : "default",
     });
   }
 
@@ -1102,12 +1385,9 @@ async function loadPendingGateConfig(pending: {
   message: string | null;
   button_text: string | null;
 }): Promise<{ config: FollowGateConfig; rule: DmRule | null }> {
-  let config = normalizeFollowGateConfig({
-    enabled: true,
-    openingMessage: pending.message,
-    buttonLabel: pending.button_text,
-    onUnavailable: "hold",
-  });
+  // `pending.message` is the *deliverable* (the guide DM), not the opener copy.
+  // Never use it as the opening message: use the shared defaults instead.
+  let config = normalizeFollowGateConfig({ enabled: true, onUnavailable: "hold" });
   let rule: DmRule | null = null;
 
   if (pending.rule_id && hasAdminDb()) {
@@ -1120,7 +1400,7 @@ async function loadPendingGateConfig(pending: {
       rule = toDmRule(data as Partial<DmRule> & Record<string, unknown>);
       config = normalizeFollowGateConfig({
         enabled: true,
-        openingMessage: rule.opening_message ?? pending.message,
+        openingMessage: rule.opening_message ?? null,
         buttonLabel: rule.follow_gate_button_label ?? pending.button_text,
         onUnavailable: rule.follow_gate_on_unavailable ?? "hold",
       });
@@ -1134,7 +1414,7 @@ async function loadPendingGateConfig(pending: {
     if (data) {
       config = normalizeFollowGateConfig({
         enabled: true,
-        openingMessage: (data.opening_message as string | null) ?? pending.message,
+        openingMessage: (data.opening_message as string | null) ?? null,
         buttonLabel: (data.follow_gate_button_label as string | null) ?? pending.button_text,
         onUnavailable: (data.follow_gate_on_unavailable as string | null) ?? "hold",
       });
@@ -1220,11 +1500,16 @@ async function releasePendingOptin(input: {
 
   // Generic pending message (legacy opt-ins or rule rows that disappeared).
   const username = await contactUsername(pending.workspace_id, input.userId);
-  const text = formatDmText(pending.message ?? "", {
+  const vars = await varsForTemplate({
+    workspaceId: pending.workspace_id,
+    template: pending.message ?? "",
+    scopeKey: `pending:${pending.id}`,
+    recipientId: input.userId,
     username: username ?? undefined,
-    link: pending.button_url ?? "",
     keyword: "OPTIN",
+    link: isAutoReelLink(pending.button_url) ? "" : pending.button_url ?? "",
   });
+  const text = formatDmText(pending.message ?? "", vars);
   const result = await withRetry(
     () => sendDirectMessage(input.token, input.accountId, input.userId, text),
     3
@@ -1472,6 +1757,86 @@ async function resolveFollowPrompt(input: {
 
 // ── Dispatch helpers ─────────────────────────────────────────────────────────
 
+/**
+ * Posts a public reply and records the outcome.
+ *
+ * The Graph result is no longer discarded: every attempt lands in
+ * `public_replies` with status and error detail, so failures are countable and
+ * visible in diagnostics instead of silently disappearing.
+ */
+async function sendPublicReply(input: {
+  workspaceId: string;
+  accountDbId: string | null;
+  automationId: string;
+  token: string;
+  commentId: string;
+  recipientId: string;
+  username?: string;
+  keyword?: string;
+  link?: string;
+  variants: string[];
+}): Promise<{ sent: boolean; error?: MetaApiError }> {
+  const variants = normalizePublicReplies(input.variants);
+  const recent = await getRecentPublicReplyFingerprints(input.automationId);
+  const chosen = choosePublicReply(variants, recent);
+  const message = renderPublicReply(chosen.message, {
+    username: input.username,
+    keyword: input.keyword,
+    link: input.link,
+  });
+
+  const result = await withRetry(
+    () => postPublicCommentReply(input.token, input.commentId, message),
+    2
+  );
+  const sent = !result?.error;
+  const code = metaErrorCode(result?.error);
+  const detail = result?.error
+    ? describeMetaError(result.error).slice(0, 500)
+    : null;
+
+  if (hasAdminDb()) {
+    await getAdminDb().from("public_replies").insert({
+      workspace_id: input.workspaceId,
+      automation_id: input.automationId,
+      instagram_account_id: input.accountDbId,
+      comment_id: input.commentId,
+      recipient_id: input.recipientId,
+      message,
+      status: sent ? "sent" : "failed",
+      error_code: code ?? null,
+      error_message: detail,
+    });
+  }
+
+  // Only used variants enter the history, so a rejected reply is not burned.
+  if (sent) {
+    await recordPublicReplyFingerprint(
+      input.automationId,
+      chosen.fingerprint,
+      recent
+    );
+  }
+
+  // Public replies are counted from the `public_replies` ledger, not the DM
+  // metric kind — adding a kind here would inflate "DMs sent" dashboards.
+  captureServerEvent({
+    event: sent ? "public_reply_sent" : "public_reply_failed",
+    properties: {
+      automation_id: input.automationId,
+      error_code: code ?? null,
+      variant_count: variants.length,
+      variant_index: chosen.index,
+    },
+    anonymous: true,
+  });
+  if (!sent) {
+    console.warn(`[public-reply] Failed for comment ${input.commentId}: ${detail}`);
+  }
+
+  return { sent, error: result?.error };
+}
+
 async function sendCommentDm(input: {
   token: string;
   accountId: string;
@@ -1511,9 +1876,8 @@ async function sendCommentDm(input: {
       }
     }
 
-    await createPending({
+    await enqueueQueuedDm({
       workspaceId: input.workspaceId,
-      kind: "queued",
       automationId: auto.id,
       instagramAccountId: input.accountDbId,
       recipientId: input.recipientId,
@@ -1522,37 +1886,121 @@ async function sendCommentDm(input: {
       buttonText: auto.buttonText,
       buttonUrl: auto.buttonUrl,
     });
+    await recordSafety({
+      workspaceId: input.workspaceId,
+      instagramAccountId: input.accountDbId,
+      recipientId: input.recipientId,
+      kind: "rate_limit_breach",
+    });
     console.warn(`[safety] Hourly cap reached for ${auto.name}; message parked (retry in ${limit.retryAfterMs}ms)`);
     return { sent: false };
   }
 
-  const variants = auto.dmVariants ?? [];
-  const variant = pickVariant(variants);
-  const template = variant.text ?? auto.dmMessage;
-  const vars = {
-    username: input.username || "there",
-    link: auto.buttonUrl || "",
+  // Proactive viral-spike throttle: shape delivery before Meta's own limits.
+  const throttle = await acquireThrottleSlot(input.accountId);
+  if (!throttle.allowed) {
+    await recordSafety({
+      workspaceId: input.workspaceId,
+      instagramAccountId: input.accountDbId,
+      recipientId: input.recipientId,
+      kind: "viral_throttle",
+    });
+    await recordSendOutcome({
+      accountId: input.accountDbId ?? input.accountId,
+      outcome: "throttled",
+      error: "Viral spike throttle",
+    });
+    await enqueueQueuedDm({
+      workspaceId: input.workspaceId,
+      automationId: auto.id,
+      instagramAccountId: input.accountDbId,
+      recipientId: input.recipientId,
+      commentId: input.commentId,
+      message: auto.dmMessage,
+      buttonText: auto.buttonText,
+      buttonUrl: auto.buttonUrl,
+    });
+    return { sent: false };
+  }
+  if (throttle.delayMs > 0) {
+    await jitter(throttle.delayMs, throttle.delayMs);
+  }
+
+  const { choice: variant, recent: variantRecent } = await chooseDmVariant(
+    `auto:${auto.id}`,
+    auto.dmVariants,
+    auto.dmMessage
+  );
+  const content = await buildAutomationContent({
+    auto: {
+      id: auto.id,
+      postScope: auto.postScope,
+      buttonUrl: auto.buttonUrl,
+      dmMessage: variant.text,
+      messageFormat: auto.messageFormat,
+      messageAssets: auto.messageAssets,
+    },
+    token: input.token,
+    accountId: input.accountId,
+    mediaId: input.event?.mediaId ?? null,
     keyword: input.keyword,
-  };
-  const text = formatDmText(template, vars);
+    username: input.username,
+    workspaceId: input.workspaceId,
+    contactId: input.contactId,
+    recipientId: input.recipientId,
+    voucherPrefix: auto.name,
+    shortLinksEnabled: auto.shortLinksEnabled ?? false,
+    linkRotatorId: auto.linkRotatorId,
+    sequenceStep: 1,
+  });
+  const { text, vars } = content;
+
+  if (content.linkSource === "auto" || content.linkSource === "unavailable") {
+    captureServerEvent({
+      event: "reel_link_resolved",
+      properties: {
+        result: content.linkSource,
+        automation_id: auto.id,
+        media_id: input.event?.mediaId ?? null,
+      },
+      anonymous: true,
+    });
+  }
+
   await jitter(50, 350);
 
-  const dispatch = () =>
-    auto.buttonText && auto.buttonUrl
+  const dispatch = () => {
+    if (content.formatted.attachment) {
+      return sendPrivateReplyWithAttachment(
+        input.token,
+        input.accountId,
+        input.commentId,
+        content.formatted
+      );
+    }
+    return auto.buttonText && content.buttonUrl
       ? sendPrivateReplyWithButton(
           input.token,
           input.accountId,
           input.commentId,
           text,
           personalizeMessage(auto.buttonText, vars),
-          linkForMessage(personalizeMessage(auto.buttonUrl, vars), auto.id)
+          content.buttonUrl
         )
       : sendPrivateReply(input.token, input.accountId, input.commentId, text);
+  };
 
   const result = await withRetry(dispatch, 3);
   const succeeded = !result?.error;
 
+  await recordSendOutcome({
+    accountId: input.accountDbId ?? input.accountId,
+    outcome: succeeded ? "sent" : "failed",
+    error: succeeded ? null : describeMetaError(result.error),
+  });
+
   if (succeeded) {
+    await recordDmVariant(`auto:${auto.id}`, variant, variantRecent);
     await recordSafety({
       workspaceId: input.workspaceId,
       instagramAccountId: input.accountDbId,
@@ -1565,14 +2013,18 @@ async function sendCommentDm(input: {
     });
 
     if (auto.publicReplyEnabled) {
-      const replies = auto.publicReplyMessages ?? [];
-      const replyText = replies.length
-        ? replies[Math.floor(Math.random() * replies.length)]
-        : "Sent you a DM! 📩";
-      await withRetry(
-        () => postPublicCommentReply(input.token, input.commentId, personalizeMessage(replyText, vars)),
-        2
-      );
+      await sendPublicReply({
+        workspaceId: input.workspaceId,
+        accountDbId: input.accountDbId,
+        automationId: auto.id,
+        token: input.token,
+        commentId: input.commentId,
+        recipientId: input.recipientId,
+        username: input.username,
+        keyword: input.keyword,
+        link: vars.link,
+        variants: auto.publicReplyMessages ?? [],
+      });
     }
 
     if (input.contactId && auto.collectField) {
@@ -1600,7 +2052,8 @@ async function sendCommentDm(input: {
     post_id: input.event?.mediaId ?? null,
     keyword: input.keyword,
     sequence_step: 1,
-    variant: variant?.text ? "variant" : "default",
+    variant: variant.index >= 0 ? `variant-${variant.index + 1}` : "default",
+    message_format: content.formatted.format,
   });
 
   if (input.contactId) {
@@ -1644,6 +2097,10 @@ export async function processCommentEventForAutomation(
   const latestMediaCache = new Map<string, Promise<string | null>>();
   const matchedKeyword = findMatchingKeyword(auto.triggerKeywords, event.commentText);
   if (matchedKeyword === null) return { sent: false, skipped: "No keyword match" };
+
+  if (await isOptedOut(auto.workspaceId, event.commenterId)) {
+    return { sent: false, skipped: "Recipient opted out of automated DMs" };
+  }
   if (!(await matchesPostScope(auto, event, token, latestMediaCache))) {
     return { sent: false, skipped: "Post scope mismatch" };
   }
@@ -1695,6 +2152,8 @@ export async function processCommentEventForAutomation(
       keyword: matchedKeyword,
       deliverMessage: auto.dmMessage,
       buttonUrl: auto.buttonUrl,
+      contactId,
+      mediaId: event.mediaId,
     });
     if (!gate.proceed) {
       return {
@@ -1754,6 +2213,24 @@ async function processDirectRule(input: {
   matchedText?: string;
 }): Promise<boolean> {
   const { rule } = input;
+
+  // Opt-out handling takes priority over every rule, including keyword rules.
+  if (isOptOutMessage(input.matchedText)) {
+    await recordOptOut(input.workspaceId, input.recipientId, String(input.matchedText ?? ""));
+    await withRetry(() =>
+      sendDirectMessage(
+        input.token,
+        input.accountId,
+        input.recipientId,
+        "You've been unsubscribed from automated messages. Reply START anytime to re-subscribe."
+      )
+    );
+    return false;
+  }
+
+  if (await isOptedOut(input.workspaceId, input.recipientId)) {
+    return false;
+  }
   if (await recentlyMessaged(input.workspaceId, input.recipientId, rule.id, rule.once_per_days)) {
     return false;
   }
@@ -1786,6 +2263,7 @@ async function processDirectRule(input: {
       keyword: input.matchedText ?? rule.keywords?.[0] ?? "",
       deliverMessage: rule.message,
       buttonUrl: rule.button_url,
+      contactId,
     });
     if (!gate.proceed) return false;
   }
@@ -1794,26 +2272,41 @@ async function processDirectRule(input: {
     ? await ensureConversation(input.workspaceId, input.accountDbId, contactId)
     : null;
 
-  const variant = pickVariant(rule.variants);
-  const text = formatDmText(variant.text ?? rule.message, {
-    username: input.username,
-    link: rule.button_url ?? "",
+  const { choice: variant, recent: variantRecent } = await chooseDmVariant(
+    `rule:${rule.id}`,
+    rule.variants,
+    rule.message
+  );
+  const content = await buildAutomationContent({
+    auto: {
+      id: rule.id,
+      postScope: null,
+      buttonUrl: rule.button_url,
+      dmMessage: variant.text,
+      shortLinksEnabled: rule.short_links_enabled ?? false,
+      linkRotatorId: rule.link_rotator_id ?? null,
+    },
+    token: input.token,
+    accountId: input.accountId,
+    mediaId: null,
     keyword: input.matchedText ?? "",
+    username: input.username,
+    workspaceId: input.workspaceId,
+    contactId,
+    recipientId: input.recipientId,
   });
+  const text = content.text;
 
   await jitter(50, 350);
   // Always send the real destination URL in DM text. Long signed /go/ links
   // are not rendered as clickable links by Instagram.
   const result = await withRetry(() =>
-    rule.button_text && rule.button_url
+    rule.button_text && content.buttonUrl
       ? sendDirectMessage(
           input.token,
           input.accountId,
           input.recipientId,
-          `${text}\n\n${rule.button_text}: ${linkForMessage(
-            personalizeMessage(rule.button_url, { username: input.username }),
-            rule.id
-          )}`
+          `${text}\n\n${rule.button_text}: ${content.buttonUrl}`
         )
       : sendDirectMessage(input.token, input.accountId, input.recipientId, text)
   );
@@ -1826,6 +2319,7 @@ async function processDirectRule(input: {
     kind: `rule:${rule.id}`,
   });
   if (succeeded) {
+    await recordDmVariant(`rule:${rule.id}`, variant, variantRecent);
     await recordMetricEvent({
       kind: "dm_sent",
       creatorId: input.workspaceId,
@@ -1857,7 +2351,7 @@ async function processDirectRule(input: {
       status: succeeded ? "SENT" : "FAILED",
       keyword: (input.matchedText || rule.keywords?.[0] || "DM_RULE").toUpperCase(),
       sequence_step: 1,
-      variant: variant.text ? "variant" : "default",
+      variant: variant.index >= 0 ? `variant-${variant.index + 1}` : "default",
     });
   }
 
@@ -1892,16 +2386,10 @@ export async function sendOptinDm(input: {
   postId?: string | null;
   keyword?: string;
 }): Promise<{ sent: boolean; error?: MetaApiError }> {
-  const variants = input.auto.dmVariants ?? [];
-  const variant = pickVariant(variants);
-  const template = variant.text ?? input.auto.dmMessage ?? "";
-
-  // Send the real destination URL. A signed /go/ token is ~290 characters and
-  // Instagram does not render it as a clickable link in DM text. Short UTM
-  // parameters keep attribution without breaking the link.
-  const link = linkForMessage(
-    personalizeMessage(input.auto.buttonUrl || "", { keyword: "OPTIN" }),
-    input.auto.id
+  const { choice: variant, recent: variantRecent } = await chooseDmVariant(
+    `auto:${input.auto.id}`,
+    input.auto.dmVariants,
+    input.auto.dmMessage ?? ""
   );
 
   let username = "there";
@@ -1915,25 +2403,46 @@ export async function sendOptinDm(input: {
     if (contact?.username) username = String(contact.username);
   }
 
-  const text = formatDmText(template, {
+  const content = await buildAutomationContent({
+    auto: {
+      id: input.auto.id,
+      postScope: input.auto.postScope,
+      buttonUrl: input.auto.buttonUrl,
+      dmMessage: variant.text,
+      messageFormat: input.auto.messageFormat,
+      messageAssets: input.auto.messageAssets,
+    },
+    token: input.token,
+    accountId: input.accountId,
+    mediaId: input.postId,
+    keyword: input.keyword ?? "OPTIN",
     username,
-    link,
-    keyword: "OPTIN",
+    workspaceId: input.workspaceId,
+    contactId: input.contactId,
+    recipientId: input.recipientId,
+    voucherPrefix: input.auto.name,
+    shortLinksEnabled: input.auto.shortLinksEnabled ?? false,
+    linkRotatorId: input.auto.linkRotatorId,
+    sequenceStep: 2,
   });
+  const text = content.text;
 
   const response = await withRetry(
     () =>
-      sendDirectMessage(
-        input.token,
-        input.accountId,
-        input.recipientId,
-        text
-      ),
+      content.formatted.attachment
+        ? sendDirectMessageWithAttachment(
+            input.token,
+            input.accountId,
+            input.recipientId,
+            content.formatted
+          )
+        : sendDirectMessage(input.token, input.accountId, input.recipientId, text),
     3
   );
   const sent = !response?.error;
 
   if (sent) {
+    await recordDmVariant(`auto:${input.auto.id}`, variant, variantRecent);
     await recordMetricEvent({
       kind: "dm_sent",
       creatorId: input.workspaceId,
@@ -1959,7 +2468,8 @@ export async function sendOptinDm(input: {
       post_id: input.postId ?? null,
       keyword: input.keyword ?? "OPTIN",
       sequence_step: 2,
-      variant: variant.text ? "variant" : "default",
+      variant: variant.index >= 0 ? `variant-${variant.index + 1}` : "default",
+      message_format: content.formatted.format,
     });
   }
 
@@ -2011,8 +2521,15 @@ export async function processWebhookPayload(
         .select("id", { count: "exact", head: true })
         .eq("workspace_id", account.workspace_id)
         .gte("received_at", fiveMinutesAgo);
+      await recordCommentVelocity(event.instagramAccountId, recentCount ?? 0);
       if (isViralSpike(recentCount ?? 0)) {
         console.warn("[safety] Viral spike detected — throttling delivery");
+        await recordSafety({
+          workspaceId: account.workspace_id,
+          instagramAccountId: account.id,
+          recipientId: event.commenterId,
+          kind: "viral_spike",
+        });
         await jitter(500, 2000);
       }
 
@@ -2107,6 +2624,57 @@ export async function processWebhookPayload(
           .eq("id", conversationId)
           .maybeSingle();
         if (conversation && conversation.is_bot_active === false) continue;
+      }
+
+      // Opt-out handling takes priority over every rule.
+      if (isOptOutMessage(event.messageText)) {
+        await recordOptOut(account.workspace_id, event.senderId, event.messageText ?? "");
+        if (!token) continue;
+        await withRetry(() =>
+          sendDirectMessage(
+            token,
+            event.instagramAccountId,
+            event.senderId,
+            "You've been unsubscribed from automated messages. Reply START anytime to re-subscribe."
+          )
+        );
+        continue;
+      }
+      if (await isOptedOut(account.workspace_id, event.senderId)) {
+        if (!token) continue;
+        const normalized = (event.messageText ?? "").toLowerCase().trim();
+        if (normalized === "start" || normalized === "subscribe" || normalized === "yes") {
+          if (hasAdminDb()) {
+            await getAdminDb()
+              .from("contacts")
+              .update({ opted_out_at: null, updated_at: nowIso() })
+              .eq("workspace_id", account.workspace_id)
+              .eq("instagram_id", event.senderId);
+          }
+          await withRetry(() =>
+            sendDirectMessage(
+              token,
+              event.instagramAccountId,
+              event.senderId,
+              "You're re-subscribed. We'll be in touch again."
+            )
+          );
+        }
+        continue;
+      }
+
+      // If this sender was just handled by a story trigger, do not also run
+      // keyword rules — that is the double-fire the audit calls out. The
+      // inbound message is already recorded above for the inbox.
+      if (await wasStoryHandled(event.instagramAccountId, event.senderId)) {
+        result.events.push({
+          kind: "message",
+          accountId: event.instagramAccountId,
+          outcome: "skipped",
+          detail: "Already handled by a story trigger",
+        });
+        result.skipped++;
+        continue;
       }
 
       // A reply to a lead-capture question is stored on the contact first.
@@ -2492,13 +3060,15 @@ export async function processWebhookPayload(
     try {
       const account = await getAccount(event.instagramAccountId);
       if (!account) continue;
+      const triggerTypes =
+        event.kind === "MENTION"
+          ? ["STORY_MENTION"]
+          : event.kind === "REACTION"
+            ? ["STORY_REACTION"]
+            : ["STORY_REPLY"];
       const candidates = (
-        await getRules(account.workspace_id, ["STORY_MENTION", "STORY_REPLY"])
-      ).filter(
-        (rule) =>
-          rule.trigger_type ===
-          (event.kind === "MENTION" ? "STORY_MENTION" : "STORY_REPLY")
-      );
+        await getRules(account.workspace_id, triggerTypes)
+      ).filter((rule) => rule.trigger_type === triggerTypes[0]);
       const selection = selectInboundRule(candidates, event.text ?? "");
       const chosen = selection.rule;
       const token = await getToken(event.instagramAccountId, account);
@@ -2508,6 +3078,10 @@ export async function processWebhookPayload(
         result.events.push({ kind: "story", accountId: event.instagramAccountId, outcome: "ignored", detail: "No matching story rule" });
         continue;
       }
+      // Mark this sender as handled by a story trigger so the same message
+      // (delivered as an inbound DM by Meta) does not also fire a DM keyword
+      // rule — that is the double-fire the audit calls out.
+      await markStoryHandled(event.instagramAccountId, event.senderId);
       // Only one live story rule should fire per mention (Zorcha parity).
       const succeeded = await processDirectRule({
         workspaceId: account.workspace_id,

@@ -6,10 +6,15 @@ const { getUserMediaMock } = vi.hoisted(() => ({
 
 vi.mock("@/lib/meta/client", () => ({
   getUserMedia: getUserMediaMock,
+  getMediaPermalink: vi.fn(async () => null),
   checkIsFollower: vi.fn(async () => true),
   postPublicCommentReply: vi.fn(async () => ({})),
   sendPrivateReply: vi.fn(async () => ({})),
   sendPrivateReplyWithButton: vi.fn(async () => ({})),
+}));
+vi.mock("@/lib/upstash", () => ({
+  hasUpstashRedis: () => false,
+  getRedis: () => ({}),
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
@@ -21,10 +26,12 @@ import {
   formatDmText,
   withRetry,
 } from "@/lib/meta/webhook-processor";
+import { clearReelLinkCache } from "@/lib/meta/reel-link-resolver";
 
 afterEach(() => {
   vi.useRealTimers();
   getUserMediaMock.mockClear();
+  clearReelLinkCache();
 });
 
 describe("DM personalization", () => {
@@ -139,12 +146,15 @@ describe("post scope matching", () => {
     expect(await matchesPostScope({ postScope: "SPECIFIC_POST", postId: "a" }, { mediaId: "b" }, "t", cache)).toBe(false);
   });
 
-  it("resolves NEXT_POST to the most recent media", async () => {
+  it("resolves NEXT_POST to the most recent media and reuses the cached answer", async () => {
     cache.clear();
     getUserMediaMock.mockResolvedValueOnce([{ id: "latest-media" }]);
-    expect(await matchesPostScope({ postScope: "NEXT_POST" }, { mediaId: "latest-media" }, "t", cache)).toBe(true);
-    expect(await matchesPostScope({ postScope: "NEXT_POST" }, { mediaId: "old-media" }, "t", cache)).toBe(false);
+    const auto = { postScope: "NEXT_POST" };
+    expect(await matchesPostScope(auto, { mediaId: "latest-media" }, "t", cache)).toBe(true);
+    expect(await matchesPostScope(auto, { mediaId: "latest-media" }, "t", cache)).toBe(true);
     expect(getUserMediaMock).toHaveBeenCalledTimes(1);
+    // An old post does not match; a single mismatch refresh may run.
+    expect(await matchesPostScope(auto, { mediaId: "old-media" }, "t", cache)).toBe(false);
   });
 });
 

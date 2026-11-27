@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { FollowGateSettings } from "@/components/campaigns/follow-gate-settings";
+import { DmVariablePicker } from "@/components/campaigns/dm-variable-picker";
 import {
   FOLLOW_GATE_DEFAULTS,
   type FollowGateUnavailablePolicy,
@@ -179,6 +180,12 @@ export function FallbackReplySettings({
 
       <div className="space-y-1.5">
         <Label htmlFor="fallback-message">Reply message</Label>
+        <DmVariablePicker
+          textareaId="fallback-message"
+          value={form.message}
+          onChange={(value) => update("message", value)}
+          disabled={busy}
+        />
         <textarea
           id="fallback-message"
           rows={3}
@@ -189,7 +196,7 @@ export function FallbackReplySettings({
           className="w-full rounded-xl border border-[#c7cad5] dark:border-border bg-background px-3.5 py-2.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 resize-none"
         />
         <p className="text-[10px] text-[#6b6f7e]">
-          Supports {"{username}"}, {"{keyword}"} and {"{link}"}.
+          Supports {"{username}"}, {"{name}"}, {"{email}"}, {"{phone}"}, {"{keyword}"}, {"{link}"}, {"{voucher}"} and {"{voucher_url}"}.
         </p>
       </div>
 
