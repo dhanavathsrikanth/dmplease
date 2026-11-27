@@ -891,6 +891,10 @@ export async function sendDirectMessage(
   options?: { messagingType?: "RESPONSE" | "UPDATE" | "MESSAGE_TAG"; tag?: "HUMAN_AGENT" }
 ): Promise<{ recipient_id?: string; message_id?: string; error?: MetaApiError }> {
   const url = `${instagramApiBase(accessToken)}/${instagramAccountId}/messages`;
+  // `messaging_type` and `tag` are Messenger Platform fields. Instagram Login
+  // tokens use the Instagram Platform messaging endpoint, which does not
+  // accept them, so only send them on the Facebook-login host.
+  const isInstagramLogin = accessToken.trim().startsWith("IG");
   try {
     const res = await fetch(url, {
       method: "POST",
@@ -900,8 +904,12 @@ export async function sendDirectMessage(
       },
       body: JSON.stringify({
         recipient: { id: recipientUserId },
-        messaging_type: options?.messagingType ?? "RESPONSE",
-        ...(options?.tag ? { tag: options.tag } : {}),
+        ...(isInstagramLogin
+          ? {}
+          : {
+              messaging_type: options?.messagingType ?? "RESPONSE",
+              ...(options?.tag ? { tag: options.tag } : {}),
+            }),
         message: { text },
       }),
     });
