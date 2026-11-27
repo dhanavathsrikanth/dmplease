@@ -7,6 +7,32 @@
  */
 
 import { getAdminDb, hasAdminDb } from "@/lib/db-admin";
+import {
+  summarizeShares,
+  type ShareClickRow,
+  type ShareDmRow,
+  type ShareEventRow,
+  type ShareSummary,
+} from "@/lib/share-analytics";
+import {
+  summarizeComments,
+  type CommentClickRow,
+  type CommentConversionRow,
+  type CommentDmRow,
+  type CommentEventRow,
+  type CommentSummary,
+} from "@/lib/comment-analytics";
+import {
+  buildCampaignComparison,
+  type CampaignComparison,
+  type ComparisonInput,
+} from "@/lib/period-comparison";
+import {
+  DEFAULT_TIMEZONE,
+  addDaysToDateOnly,
+  getTodayInTimeZone,
+  zonedTimeToUtc,
+} from "@/lib/timezone";
 
 export interface CampaignAnalytics {
   dmSent: number;
@@ -32,7 +58,44 @@ export interface CampaignAnalytics {
   leadsCaptured: number;
   leadsSkipped: number;
   leadCaptureRate: number | null;
+  shareTriggers: number;
+  share: ShareSummary;
+  comment: CommentSummary;
+  comparison: CampaignComparison;
 }
+
+const EMPTY_INPUT: ComparisonInput = {
+  dmSent: 0,
+  dmFailed: 0,
+  deliveryRate: null,
+  readRate: null,
+  linkClicks: 0,
+  uniqueClickers: 0,
+  conversions: 0,
+  revenueMinor: 0,
+  leadsCaptured: 0,
+  leadCaptureRate: null,
+  comment: {
+    commentsReceived: 0,
+    matchedComments: 0,
+    dmsSent: 0,
+    clicks: 0,
+    conversions: 0,
+    revenueMinor: 0,
+    commentToDmRate: null,
+    averageOrderValueMinor: null,
+    revenuePerDmMinor: null,
+    clickToConversionRate: null,
+  },
+  share: {
+    sharesReceived: 0,
+    dmsSent: 0,
+    clicks: 0,
+    shareToDmRate: null,
+  },
+};
+
+const EMPTY_COMPARISON = buildCampaignComparison(EMPTY_INPUT, EMPTY_INPUT);
 
 const EMPTY: CampaignAnalytics = {
   dmSent: 0,
@@ -58,16 +121,213 @@ const EMPTY: CampaignAnalytics = {
   leadsCaptured: 0,
   leadsSkipped: 0,
   leadCaptureRate: null,
+  shareTriggers: 0,
+  share: {
+    sharesReceived: 0,
+    uniqueSharers: 0,
+    dmsSent: 0,
+    dmsFailed: 0,
+    skipped: 0,
+    shareToDmRate: null,
+    clicks: 0,
+    topMedia: [],
+  },
+  comment: {
+    commentsReceived: 0,
+    uniqueCommenters: 0,
+    matchedComments: 0,
+    dmsSent: 0,
+    dmsFailed: 0,
+    skipped: 0,
+    commentToDmRate: null,
+    clicks: 0,
+    conversions: 0,
+    revenueMinor: 0,
+    averageOrderValueMinor: null,
+    revenuePerDmMinor: null,
+    clickToConversionRate: null,
+    avgResponseMs: null,
+    daily: [],
+    keywords: [],
+    posts: [],
+    mediaTypes: [],
+    times: [],
+  },
+  comparison: EMPTY_COMPARISON,
 };
+
+/**
+ * Loads the same metrics for the window immediately before the current one.
+ * Kept separate from the main loader so the current-period code path is
+ * untouched and the comparison can never change the headline numbers.
+ */
+async function loadPreviousPeriodInput(
+  db: ReturnType<typeof getAdminDb>,
+  workspaceId: string,
+  automationId: string,
+  since: string,
+  until: string,
+  timeZone: string
+): Promise<ComparisonInput> {
+  const [
+    dmLogsRes,
+    linkClicksRes,
+    conversionsRes,
+    leadEventsRes,
+    automationRes,
+    shareEventsRes,
+    commentEventsRes,
+  ] = await Promise.all([
+    db
+      .from("dm_logs")
+      .select(
+        "status, recipient_id, trigger_keyword, keyword, delivered_at, read_at, post_id, sent_at, variant"
+      )
+      .eq("workspace_id", workspaceId)
+      .eq("automation_id", automationId)
+      .gte("sent_at", since)
+      .lt("sent_at", until)
+      .limit(5000),
+    db
+      .from("link_clicks")
+      .select("contact_id, is_bot, post_id, keyword")
+      .eq("automation_id", automationId)
+      .gte("clicked_at", since)
+      .lt("clicked_at", until)
+      .limit(5000),
+    db
+      .from("conversions")
+      .select("revenue_minor, contact_id, keyword, post_id")
+      .eq("workspace_id", workspaceId)
+      .eq("automation_id", automationId)
+      .gte("occurred_at", since)
+      .lt("occurred_at", until)
+      .limit(5000),
+    db
+      .from("lead_events")
+      .select("kind")
+      .eq("automation_id", automationId)
+      .gte("created_at", since)
+      .lt("created_at", until)
+      .limit(5000),
+    db
+      .from("automations")
+      .select("post_scope, post_id, trigger_keywords")
+      .eq("id", automationId)
+      .maybeSingle(),
+    db
+      .from("share_events")
+      .select("sender_id, media_id, title, received_at")
+      .eq("workspace_id", workspaceId)
+      .gte("received_at", since)
+      .lt("received_at", until)
+      .limit(5000),
+    db
+      .from("comment_events")
+      .select(
+        "media_id, media_type, media_product_type, commenter_id, text, received_at"
+      )
+      .eq("workspace_id", workspaceId)
+      .gte("received_at", since)
+      .lt("received_at", until)
+      .limit(5000),
+  ]);
+
+  const dmLogs = dmLogsRes.data ?? [];
+  const dmSent = dmLogs.filter((r) => r.status === "SENT").length;
+  const dmFailed = dmLogs.filter((r) => r.status === "FAILED").length;
+  const deliveryRate =
+    dmSent + dmFailed > 0 ? Math.round((dmSent / (dmSent + dmFailed)) * 100) : null;
+  const dmRead = dmLogs.filter((r) => Boolean(r.read_at)).length;
+  const readRate = dmSent > 0 ? Math.round((dmRead / dmSent) * 100) : null;
+
+  const clicks = (linkClicksRes.data ?? []).filter((r) => !r.is_bot);
+  const uniqueClickers = new Set(
+    clicks.map((r) => r.contact_id).filter(Boolean)
+  ).size;
+
+  const conversions = conversionsRes.data ?? [];
+  const revenueMinor = conversions.reduce(
+    (sum, row) => sum + Number(row.revenue_minor ?? 0),
+    0
+  );
+
+  const leadEvents = leadEventsRes.data ?? [];
+  const collectPrompts = leadEvents.filter((e) => e.kind === "prompt").length;
+  const leadsCaptured = leadEvents.filter((e) => e.kind === "captured").length;
+  const leadCaptureRate =
+    collectPrompts > 0 ? Math.round((leadsCaptured / collectPrompts) * 100) : null;
+
+  const automationMeta = automationRes.data as
+    | { post_scope?: string | null; post_id?: string | null; trigger_keywords?: string[] | null }
+    | null;
+  const shareEvents = (shareEventsRes.data ?? []) as ShareEventRow[];
+  const scopedShareEvents =
+    automationMeta?.post_scope === "SPECIFIC_POST" && automationMeta.post_id
+      ? shareEvents.filter((event) => event.media_id === automationMeta.post_id)
+      : shareEvents;
+  const share = summarizeShares({
+    events: scopedShareEvents,
+    dms: dmLogs as ShareDmRow[],
+    clicks: (linkClicksRes.data ?? []) as ShareClickRow[],
+  });
+
+  const allCommentEvents = (commentEventsRes.data ?? []) as CommentEventRow[];
+  const scopedCommentEvents =
+    automationMeta?.post_scope === "SPECIFIC_POST" && automationMeta.post_id
+      ? allCommentEvents.filter(
+          (event) => event.media_id === automationMeta.post_id
+        )
+      : allCommentEvents;
+  const comment = summarizeComments({
+    comments: scopedCommentEvents,
+    dms: dmLogs as CommentDmRow[],
+    clicks: (linkClicksRes.data ?? []) as CommentClickRow[],
+    conversions: (conversionsRes.data ?? []) as CommentConversionRow[],
+    keywords: (automationMeta?.trigger_keywords ?? []) as string[],
+    timeZone,
+  });
+
+  return {
+    dmSent,
+    dmFailed,
+    deliveryRate,
+    readRate,
+    linkClicks: clicks.length,
+    uniqueClickers,
+    conversions: conversions.length,
+    revenueMinor,
+    leadsCaptured,
+    leadCaptureRate,
+    comment,
+    share,
+  };
+}
 
 export async function loadCampaignAnalytics(
   workspaceId: string,
-  automationId: string
+  automationId: string,
+  days = 30,
+  range?: { from: string; to: string },
+  timeZone = DEFAULT_TIMEZONE
 ): Promise<CampaignAnalytics> {
   if (!hasAdminDb()) return { ...EMPTY };
 
   const db = getAdminDb();
-  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const windowDays = range
+    ? Math.max(
+        1,
+        Math.ceil(
+          (new Date(`${range.to}T23:59:59.999Z`).getTime() -
+            new Date(`${range.from}T00:00:00.000Z`).getTime()) /
+            86_400_000
+        )
+      )
+    : Math.min(365, Math.max(1, Math.floor(days)));
+  const toDate = range?.to ?? getTodayInTimeZone(timeZone);
+  const fromDate = range?.from ?? addDaysToDateOnly(toDate, -(windowDays - 1));
+  const since = zonedTimeToUtc(fromDate, timeZone).toISOString();
+  const until = zonedTimeToUtc(toDate, timeZone, true).toISOString();
 
   const [
     dmLogsRes,
@@ -77,50 +337,83 @@ export async function loadCampaignAnalytics(
     vouchersRes,
     followChecksRes,
     leadEventsRes,
+    automationRes,
+    shareEventsRes,
+    commentEventsRes,
   ] = await Promise.all([
     db
       .from("dm_logs")
       .select(
-        "status, variant, message_format, recipient_id, trigger_keyword, keyword, delivered_at, read_at"
+        "status, variant, message_format, recipient_id, trigger_keyword, keyword, delivered_at, read_at, post_id, sent_at"
       )
       .eq("workspace_id", workspaceId)
       .eq("automation_id", automationId)
       .gte("sent_at", since)
+      .lte("sent_at", until)
       .limit(5000),
     db
       .from("public_replies")
       .select("status")
       .eq("automation_id", automationId)
       .gte("created_at", since)
+      .lte("created_at", until)
       .limit(5000),
     db
       .from("link_clicks")
-      .select("contact_id, is_bot")
+      .select("contact_id, is_bot, post_id, keyword")
       .eq("automation_id", automationId)
       .gte("clicked_at", since)
+      .lte("clicked_at", until)
       .limit(5000),
     db
       .from("conversions")
-      .select("revenue_minor, contact_id")
+      .select("revenue_minor, contact_id, keyword, post_id")
       .eq("workspace_id", workspaceId)
       .eq("automation_id", automationId)
       .gte("occurred_at", since)
+      .lte("occurred_at", until)
       .limit(5000),
     db
       .from("dm_vouchers")
       .select("id, recipient_id")
       .eq("scope_key", `auto:${automationId}`)
+      .gte("created_at", since)
+      .lte("created_at", until)
       .limit(5000),
     db
       .from("follow_checks")
       .select("status")
       .eq("automation_id", automationId)
+      .gte("created_at", since)
+      .lte("created_at", until)
       .limit(5000),
     db
       .from("lead_events")
       .select("kind")
       .eq("automation_id", automationId)
       .gte("created_at", since)
+      .lte("created_at", until)
+      .limit(5000),
+    db
+      .from("automations")
+      .select("post_scope, post_id, trigger_keywords")
+      .eq("id", automationId)
+      .maybeSingle(),
+    db
+      .from("share_events")
+      .select("sender_id, media_id, title, received_at")
+      .eq("workspace_id", workspaceId)
+      .gte("received_at", since)
+      .lte("received_at", until)
+      .limit(5000),
+    db
+      .from("comment_events")
+      .select(
+        "media_id, media_type, media_product_type, commenter_id, text, received_at"
+      )
+      .eq("workspace_id", workspaceId)
+      .gte("received_at", since)
+      .lte("received_at", until)
       .limit(5000),
   ]);
 
@@ -187,6 +480,44 @@ export async function loadCampaignAnalytics(
     (r) => r.trigger_keyword === "OPENING" || r.keyword === "OPENING"
   ).length;
 
+  // Share-to-DM triggers
+  const shareTriggers = dmLogs.filter(
+    (r) => r.trigger_keyword === "SHARE" || r.keyword === "SHARE"
+  ).length;
+
+  // Share performance: attribute share events by the campaign's media scope.
+  const automationMeta = automationRes.data as
+    | { post_scope?: string | null; post_id?: string | null }
+    | null;
+  const shareEvents = (shareEventsRes.data ?? []) as ShareEventRow[];
+  const scopedShareEvents =
+    automationMeta?.post_scope === "SPECIFIC_POST" && automationMeta.post_id
+      ? shareEvents.filter((event) => event.media_id === automationMeta.post_id)
+      : shareEvents;
+  const share = summarizeShares({
+    events: scopedShareEvents,
+    dms: dmLogs as ShareDmRow[],
+    clicks: (linkClicksRes.data ?? []) as ShareClickRow[],
+  });
+
+  // Comment-keyword performance, scoped to the campaign's media.
+  const allCommentEvents = (commentEventsRes.data ?? []) as CommentEventRow[];
+  const scopedCommentEvents =
+    automationMeta?.post_scope === "SPECIFIC_POST" && automationMeta.post_id
+      ? allCommentEvents.filter(
+          (event) => event.media_id === automationMeta.post_id
+        )
+      : allCommentEvents;
+  const comment = summarizeComments({
+    comments: scopedCommentEvents,
+    dms: dmLogs as CommentDmRow[],
+    clicks: (linkClicksRes.data ?? []) as CommentClickRow[],
+    conversions: (conversionsRes.data ?? []) as CommentConversionRow[],
+    keywords: ((automationMeta as { trigger_keywords?: string[] | null })
+      ?.trigger_keywords ?? []) as string[],
+    timeZone,
+  });
+
   // Lead capture
   const leadEvents = leadEventsRes.data ?? [];
   const collectPrompts = leadEvents.filter((e) => e.kind === "prompt").length;
@@ -194,6 +525,35 @@ export async function loadCampaignAnalytics(
   const leadsSkipped = leadEvents.filter((e) => e.kind === "skipped").length;
   const leadCaptureRate =
     collectPrompts > 0 ? Math.round((leadsCaptured / collectPrompts) * 100) : null;
+
+  // Previous-period comparison. The previous window ends exactly where the
+  // current one starts, so the two periods never overlap.
+  const currentInput: ComparisonInput = {
+    dmSent,
+    dmFailed,
+    deliveryRate,
+    readRate,
+    linkClicks: clicks.length,
+    uniqueClickers,
+    conversions: conversions.length,
+    revenueMinor,
+    leadsCaptured,
+    leadCaptureRate,
+    comment,
+    share,
+  };
+  const previousSince = new Date(
+    new Date(since).getTime() - windowDays * 24 * 60 * 60 * 1000
+  ).toISOString();
+  const previousInput = await loadPreviousPeriodInput(
+    db,
+    workspaceId,
+    automationId,
+    previousSince,
+    since,
+    timeZone
+  );
+  const comparison = buildCampaignComparison(currentInput, previousInput);
 
   return {
     dmSent,
@@ -219,5 +579,9 @@ export async function loadCampaignAnalytics(
     leadsCaptured,
     leadsSkipped,
     leadCaptureRate,
+    shareTriggers,
+    share,
+    comment,
+    comparison,
   };
 }

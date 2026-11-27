@@ -42,7 +42,8 @@ import {
   renderOpeningDm,
   type OpeningDmTemplate,
 } from "@/lib/meta/opening-dm";
-import { FOLLOW_GATE_LIMITS } from "@/lib/follow-gate-constants";
+import { FOLLOW_GATE_LIMITS, isRecentInbound } from "@/lib/follow-gate-constants";
+import { getWorkspaceTimeZone } from "@/lib/workspace-preferences";
 import {
   fallbackAsRule,
   matchesRuleKeywords,
@@ -109,6 +110,7 @@ import {
   type WebhookCommentEvent,
   type WebhookPayload,
   type WebhookPostbackEvent,
+  type WebhookShareEvent,
 } from "@/lib/meta/webhook";
 
 export type EventOutcome = "sent" | "skipped" | "failed" | "ignored";
@@ -136,6 +138,7 @@ export interface AutomationLike {
   id: string;
   workspaceId: string;
   name?: string | null;
+  triggerType?: "COMMENT" | "SHARE_TO_DM" | null;
   triggerKeywords?: string[] | null;
   postScope?: string | null;
   postId?: string | null;
@@ -169,6 +172,7 @@ type AutomationRow = {
   id: string;
   workspace_id: string;
   name?: string | null;
+  trigger_type?: string | null;
   trigger_keywords?: string[] | null;
   post_scope?: string | null;
   post_id?: string | null;
@@ -208,6 +212,7 @@ export function toAutomationLike(row: AutomationRow): AutomationLike {
     id: row.id,
     workspaceId: row.workspace_id,
     name: row.name,
+    triggerType: row.trigger_type === "SHARE_TO_DM" ? "SHARE_TO_DM" : "COMMENT",
     triggerKeywords: row.trigger_keywords ?? [],
     postScope: row.post_scope,
     postId: row.post_id,
@@ -819,12 +824,41 @@ async function persistCommentEvent(
           commenter_id: event.commenterId,
           commenter_username: event.commenterName ?? null,
           text: event.commentText,
+          media_type: event.mediaType ?? null,
+          media_product_type: event.mediaProductType ?? null,
         },
         { onConflict: "workspace_id,external_id", ignoreDuplicates: true }
       );
     if (error) throw error;
   } catch (error) {
     console.warn("[webhook] Could not persist comment event:", error);
+  }
+}
+
+async function persistShareEvent(
+  workspaceId: string,
+  accountId: string | null,
+  event: WebhookShareEvent
+): Promise<void> {
+  if (!hasAdminDb()) return;
+  try {
+    await getAdminDb()
+      .from("share_events")
+      .upsert(
+        {
+          workspace_id: workspaceId,
+          instagram_account_id: accountId,
+          external_id: event.messageId,
+          sender_id: event.senderId,
+          sender_username: event.senderName ?? null,
+          media_id: event.mediaId ?? null,
+          title: event.title ?? null,
+          url: event.url ?? null,
+        },
+        { onConflict: "workspace_id,external_id", ignoreDuplicates: true }
+      );
+  } catch (error) {
+    console.warn("[webhook] Could not persist share event:", error);
   }
 }
 
@@ -1165,28 +1199,50 @@ async function contactUsername(
 }
 
 /**
- * A short-lived verification is enough to avoid a Meta call on every comment
- * in an active conversation. Both timestamps are required so an opt-in that
- * was never confirmed can never count as verified.
+ * T1.11: skip the follow tap for people who already messaged the creator in
+ * the last 24 hours. They are in an active conversation, so gating them adds
+ * friction without protecting the account.
  */
-async function isRecentlyVerified(
+async function hasRecentInboundMessage(
   workspaceId: string,
-  recipientId: string
+  recipientId: string,
+  hours = 24
 ): Promise<boolean> {
   if (!hasAdminDb()) return false;
   try {
     const { data } = await getAdminDb()
       .from("contacts")
-      .select("opted_in_at, follow_verified_at")
+      .select("last_inbound_at")
       .eq("workspace_id", workspaceId)
       .eq("instagram_id", recipientId)
       .maybeSingle();
-    if (!data?.opted_in_at || !data.follow_verified_at) return false;
-    const verifiedAt = new Date(String(data.follow_verified_at)).getTime();
-    if (Number.isNaN(verifiedAt)) return false;
-    return Date.now() - verifiedAt < FOLLOW_GATE_LIMITS.verificationCacheMinutes * 60 * 1000;
+    return isRecentInbound(
+      data?.last_inbound_at ? String(data.last_inbound_at) : null,
+      hours
+    );
   } catch {
     return false;
+  }
+}
+
+/** Records that the contact sent an inbound message (used by the 24h skip). */
+async function markInboundInteraction(
+  workspaceId: string,
+  recipientId: string
+): Promise<void> {
+  if (!hasAdminDb()) return;
+  try {
+    await getAdminDb()
+      .from("contacts")
+      .update({
+        last_inbound_at: nowIso(),
+        last_interaction_at: nowIso(),
+        updated_at: nowIso(),
+      })
+      .eq("workspace_id", workspaceId)
+      .eq("instagram_id", recipientId);
+  } catch {
+    // Best effort; the gate still works without it.
   }
 }
 
@@ -1228,7 +1284,10 @@ async function recordFollowCheck(input: {
   pendingId?: string | null;
   promptId?: string | null;
   recipientId: string;
-  verification: Pick<FollowVerification, "status" | "method" | "reason"> & {
+  verification: {
+    status: string;
+    method: string;
+    reason?: string | null;
     fromCache?: boolean;
   };
 }): Promise<void> {
@@ -1385,6 +1444,7 @@ async function sendOpeningDm(input: {
     kind: "dm_sent",
     creatorId: input.workspaceId,
     targetId: input.automationId ?? input.ruleId ?? input.pendingId,
+    timeZone: await getWorkspaceTimeZone(input.workspaceId),
   });
   captureServerEvent({
     event: "follow_gate_opening_sent",
@@ -1465,30 +1525,36 @@ async function applyFollowGate(input: {
 }): Promise<FollowGateOutcome> {
   if (!input.config.enabled) return { proceed: true };
 
-  if (await isRecentlyVerified(input.workspaceId, input.recipientId)) {
-    const cached: FollowVerification = {
-      status: "follower",
-      method: "none",
-      reason: "recent_verification",
-      checkedAt: nowIso(),
-      fromCache: true,
-    };
+  // T1.11: skip the tap for people already in an active 24h conversation.
+  if (await hasRecentInboundMessage(input.workspaceId, input.recipientId, 24)) {
     await recordFollowCheck({
       workspaceId: input.workspaceId,
       accountDbId: input.accountDbId,
       automationId: input.automationId,
       ruleId: input.ruleId,
       recipientId: input.recipientId,
-      verification: cached,
+      verification: {
+        status: "skipped",
+        method: "none",
+        reason: "recent_inbound",
+      },
     });
-    return { proceed: true, verification: cached };
+    await recordSafety({
+      workspaceId: input.workspaceId,
+      instagramAccountId: input.accountDbId,
+      recipientId: input.recipientId,
+      kind: "follow_gate_skip_recent",
+    });
+    return { proceed: true };
   }
 
+  // Every new request checks Meta again, so an unfollow is caught immediately.
   const verification = await verifyFollowership(
     input.token,
     input.accountId,
     input.recipientId,
-    input.username
+    input.username,
+    { force: true }
   );
   await recordFollowCheck({
     workspaceId: input.workspaceId,
@@ -1650,6 +1716,7 @@ async function sendRuleOptinDm(input: {
       kind: "dm_sent",
       creatorId: input.workspaceId,
       targetId: input.rule.id,
+      timeZone: await getWorkspaceTimeZone(input.workspaceId),
     });
     await recordSafety({
       workspaceId: input.workspaceId,
@@ -1839,6 +1906,7 @@ async function releasePendingOptin(input: {
       kind: "dm_sent",
       creatorId: pending.workspace_id,
       targetId: pending.id,
+      timeZone: await getWorkspaceTimeZone(pending.workspace_id),
     });
     await recordSafety({
       workspaceId: pending.workspace_id,
@@ -2369,6 +2437,7 @@ async function sendCommentDm(input: {
       kind: "dm_sent",
       creatorId: input.workspaceId,
       targetId: auto.id,
+      timeZone: await getWorkspaceTimeZone(input.workspaceId),
     });
 
     if (auto.publicReplyEnabled) {
@@ -2588,6 +2657,196 @@ export async function processCommentEventForAutomation(
   };
 }
 
+/**
+ * T1.9: Share-to-DM campaign trigger.
+ *
+ * A follower shares a reel/post into the creator's DM. We send the campaign's
+ * thank-you DM once per share, with the same safety guards as a comment send.
+ */
+export async function processShareEventForAutomation(
+  event: WebhookShareEvent,
+  auto: AutomationLike
+): Promise<{ sent: boolean; skipped?: string; error?: MetaApiError }> {
+  if (!hasAdminDb()) return { sent: false, skipped: "Database unavailable" };
+
+  const account = await getAccount(event.instagramAccountId);
+  if (!account) return { sent: false, skipped: "Account not connected" };
+  const token = await getToken(event.instagramAccountId, account);
+  if (!token) return { sent: false, skipped: "No valid access token" };
+
+  if (await isOptedOut(auto.workspaceId, event.senderId)) {
+    return { sent: false, skipped: "Recipient opted out of automated DMs" };
+  }
+
+  // Once per share event. Meta can retry a webhook; the message id is stable.
+  const shareKey = `share:handled:${event.instagramAccountId}:${event.messageId}`;
+  if (hasUpstashRedis()) {
+    try {
+      if (await getRedis().get(shareKey)) {
+        return { sent: false, skipped: "Share already handled" };
+      }
+    } catch {
+      // Dedupe is best-effort; the DB guards below still apply.
+    }
+  }
+
+  // Once per person per campaign per 24h.
+  const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { data: existing } = await getAdminDb()
+    .from("dm_logs")
+    .select("id")
+    .eq("automation_id", auto.id)
+    .eq("recipient_id", event.senderId)
+    .eq("status", "SENT")
+    .gte("sent_at", dayAgo)
+    .limit(1)
+    .maybeSingle();
+  if (existing) return { sent: false, skipped: "Already messaged in 24h" };
+
+  const cooldownOk = await checkRecipientCooldown(
+    event.instagramAccountId,
+    event.mediaId ?? "",
+    event.senderId
+  );
+  if (!cooldownOk) return { sent: false, skipped: "Recipient cooldown" };
+
+  const alreadyReplied = await hasRepliedRecently(
+    event.instagramAccountId,
+    event.mediaId ?? "",
+    event.senderId
+  );
+  if (alreadyReplied) {
+    return { sent: false, skipped: "Already replied to this person for this share" };
+  }
+
+  const contactId = await ensureContact(
+    auto.workspaceId,
+    event.senderId,
+    event.senderName,
+    "share"
+  );
+  const conversationId = contactId
+    ? await ensureConversation(auto.workspaceId, account.id, contactId)
+    : null;
+
+  // Safety: hourly cap + viral throttle + randomized delay.
+  const cap = auto.hourlyCap ?? 0;
+  if (cap > 0) {
+    const slot = await acquireSendSlot(`${event.instagramAccountId}:${auto.id}`, cap);
+    if (!slot.allowed) return { sent: false, skipped: "Hourly cap reached" };
+  }
+  const throttle = await acquireThrottleSlot(event.instagramAccountId);
+  if (!throttle.allowed) return { sent: false, skipped: "Viral throttle" };
+  if (throttle.delayMs > 0) await jitter(throttle.delayMs, throttle.delayMs);
+  const delayMin = auto.delayMinMs ?? 0;
+  const delayMax = auto.delayMaxMs ?? 0;
+  if (delayMax > 0) await jitter(delayMin, delayMax);
+
+  const { choice: variant, recent: variantRecent } = await chooseDmVariant(
+    `auto:${auto.id}`,
+    auto.dmVariants,
+    auto.dmMessage
+  );
+
+  const content = await buildAutomationContent({
+    auto: {
+      id: auto.id,
+      postScope: auto.postScope,
+      buttonUrl: auto.buttonUrl,
+      dmMessage: variant.text,
+      messageFormat: auto.messageFormat,
+      messageAssets: auto.messageAssets,
+    },
+    token,
+    accountId: event.instagramAccountId,
+    mediaId: event.mediaId ?? null,
+    keyword: "SHARE",
+    username: event.senderName,
+    workspaceId: auto.workspaceId,
+    contactId,
+    recipientId: event.senderId,
+    voucherPrefix: auto.name,
+    shortLinksEnabled: auto.shortLinksEnabled ?? false,
+    linkRotatorId: auto.linkRotatorId,
+    sequenceStep: 1,
+  });
+
+  const text = content.text;
+  const result = await withRetry(() =>
+    auto.buttonText && content.buttonUrl
+      ? sendDirectMessageWithButton(
+          token,
+          event.instagramAccountId,
+          event.senderId,
+          text,
+          auto.buttonText,
+          content.buttonUrl
+        )
+      : sendDirectMessage(token, event.instagramAccountId, event.senderId, text)
+  );
+  const succeeded = !result?.error;
+
+  if (succeeded) {
+    if (hasUpstashRedis()) {
+      try {
+        await getRedis().set(shareKey, "1", { ex: 60 * 60 * 24 * 30 });
+      } catch {
+        // Best effort.
+      }
+    }
+    await recordDmVariant(`auto:${auto.id}`, variant, variantRecent);
+    await markReplied(
+      event.instagramAccountId,
+      event.mediaId ?? "",
+      event.senderId,
+      30
+    );
+    await recordMetricEvent({
+      kind: "dm_sent",
+      creatorId: auto.workspaceId,
+      targetId: auto.id,
+      timeZone: await getWorkspaceTimeZone(auto.workspaceId),
+    });
+  }
+
+  await recordSafety({
+    workspaceId: auto.workspaceId,
+    instagramAccountId: account.id,
+    recipientId: event.senderId,
+    kind: "share",
+  });
+
+  if (conversationId) {
+    await recordMessage({
+      workspaceId: auto.workspaceId,
+      conversationId,
+      externalId: result?.message_id ?? null,
+      direction: "outbound",
+      senderType: "bot",
+      text,
+      status: succeeded ? "sent" : "failed",
+    });
+  }
+
+  await getAdminDb().from("dm_logs").insert({
+    workspace_id: auto.workspaceId,
+    instagram_account_id: account.id,
+    automation_id: auto.id,
+    recipient_id: event.senderId,
+    recipient_username: event.senderName || "instagram_user",
+    trigger_keyword: "SHARE",
+    dm_message: text,
+    status: succeeded ? "SENT" : "FAILED",
+    post_id: event.mediaId ?? null,
+    keyword: "SHARE",
+    sequence_step: 1,
+    variant: variant.index >= 0 ? `variant-${variant.index + 1}` : "default",
+    message_format: content.formatted.format,
+  });
+
+  return { sent: succeeded, error: result?.error };
+}
+
 async function processDirectRule(input: {
   workspaceId: string;
   accountId: string;
@@ -2728,6 +2987,7 @@ async function processDirectRule(input: {
       kind: "dm_sent",
       creatorId: input.workspaceId,
       targetId: rule.id,
+      timeZone: await getWorkspaceTimeZone(input.workspaceId),
     });
   }
 
@@ -2870,6 +3130,7 @@ export async function sendOptinDm(input: {
       kind: "dm_sent",
       creatorId: input.workspaceId,
       targetId: input.auto.id,
+      timeZone: await getWorkspaceTimeZone(input.workspaceId),
     });
     await recordSafety({
       workspaceId: input.workspaceId,
@@ -3042,10 +3303,12 @@ export async function processWebhookPayload(
           text: event.messageText,
         });
       }
+      await markInboundInteraction(account.workspace_id, event.senderId);
       await recordMetricEvent({
         kind: "dm_reply",
         creatorId: account.workspace_id,
         targetId: account.id,
+        timeZone: await getWorkspaceTimeZone(account.workspace_id),
       });
 
       // Human takeover is authoritative: no automation replies while an agent
@@ -3793,9 +4056,43 @@ export async function processWebhookPayload(
     try {
       const account = await getAccount(event.instagramAccountId);
       if (!account) continue;
-      const rules = await getRules(account.workspace_id, ["SHARE_TO_DM"]);
+      await persistShareEvent(account.workspace_id, account.id, event);
       const token = await getToken(event.instagramAccountId, account);
-      if (!token || rules.length === 0) continue;
+      if (!token) continue;
+
+      // Campaign automations take priority over inbox rules so a creator who
+      // configured a share campaign does not also fire a generic share rule.
+      const { data: shareAutomations } = await getAdminDb()
+        .from("automations")
+        .select("*")
+        .eq("workspace_id", account.workspace_id)
+        .eq("trigger_type", "SHARE_TO_DM")
+        .eq("active", true)
+        .order("created_at", { ascending: true })
+        .limit(5);
+
+      if (shareAutomations && shareAutomations.length > 0) {
+        for (const row of shareAutomations) {
+          const auto = toAutomationLike(
+            row as Parameters<typeof toAutomationLike>[0]
+          );
+          const outcome = await processShareEventForAutomation(event, auto);
+          result.events.push({
+            kind: "share",
+            accountId: event.instagramAccountId,
+            outcome: outcome.sent ? "sent" : "skipped",
+            detail: outcome.sent
+              ? auto.name ?? "Share campaign"
+              : outcome.skipped ?? "Not eligible",
+          });
+          if (outcome.sent) result.sent++;
+          else result.skipped++;
+        }
+        continue;
+      }
+
+      const rules = await getRules(account.workspace_id, ["SHARE_TO_DM"]);
+      if (rules.length === 0) continue;
       const succeeded = await processDirectRule({
         workspaceId: account.workspace_id,
         accountId: event.instagramAccountId,

@@ -1,4 +1,5 @@
 import { getRedis, hasUpstashRedis } from "@/lib/upstash";
+import { getDayKey } from "@/lib/timezone";
 
 /** Fast daily counters in Redis; flushed to Postgres on a schedule. */
 
@@ -47,6 +48,8 @@ export async function recordMetricEvent(params: {
   creatorId: string;
   targetId: string;
   amount?: number;
+  /** Workspace timezone so the daily bucket matches the analytics calendar. */
+  timeZone?: string;
 }): Promise<void> {
   if (!hasUpstashRedis()) return;
   const amount = params.amount ?? 1;
@@ -56,6 +59,7 @@ export async function recordMetricEvent(params: {
     kind: params.kind,
     creatorId: params.creatorId,
     targetId: params.targetId,
+    day: params.timeZone ? getDayKey(new Date(), params.timeZone) : undefined,
   });
 
   try {

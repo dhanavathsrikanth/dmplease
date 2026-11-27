@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { submitOnboarding, OnboardingPayload } from "@/app/onboarding/actions";
+import { AccountSelection } from "@/components/onboarding/account-selection";
 
 // ── Meta (Infinity symbol) logo SVG ───────────────────────────────────────────
 function MetaInfinityIcon({ className = "size-7" }: { className?: string }) {
@@ -62,6 +63,7 @@ interface OnboardingWizardProps {
   connectionStatus?: string;
   connectionError?: string;
   initialAccountParam?: string;
+  pendingId?: string;
 }
 
 const AUTOMATION_GOALS = [
@@ -116,6 +118,7 @@ export function OnboardingWizard({
   connectionStatus,
   connectionError,
   initialAccountParam,
+  pendingId,
 }: OnboardingWizardProps) {
   const router = useRouter();
 
@@ -226,7 +229,17 @@ export function OnboardingWizard({
           {/* ═════════════════════════════════════════════════════════════════ */}
           {/* STEP 0: Channel Selector (Exact Zorcha Two-Option Parity)         */}
           {/* ═════════════════════════════════════════════════════════════════ */}
-          {step === 0 && (
+          {step === 0 && pendingId && (
+            <div className="p-6 sm:p-10 max-w-2xl mx-auto">
+              <AccountSelection
+                pendingId={pendingId}
+                redirectTo="/onboarding"
+                onCancel={() => router.push("/onboarding")}
+              />
+            </div>
+          )}
+
+          {step === 0 && !pendingId && (
             <div className="flex flex-col md:flex-row items-stretch min-h-[500px]">
               {/* Left Column: Form & Channels */}
               <div className="w-full md:w-[54%] p-8 sm:p-12 flex flex-col justify-between space-y-8">

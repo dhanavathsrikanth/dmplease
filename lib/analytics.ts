@@ -5,6 +5,7 @@ import {
   type TargetKind,
 } from "@/lib/live-metrics";
 import { mergeDbAndLiveMetrics, type DbMetricRow } from "@/lib/merge-metrics";
+import { DEFAULT_TIMEZONE, getTodayInTimeZone } from "@/lib/timezone";
 
 export function getStartDayUtc(days: number, todayUtc = getUtcToday()): string {
   const base = new Date(`${todayUtc}T00:00:00.000Z`);
@@ -20,8 +21,12 @@ const EMPTY = mergeDbAndLiveMetrics({
 });
 
 /** Historical daily rollups plus today's unflushed Redis counters. */
-export async function getWorkspaceAnalytics(creatorId: string, days: number) {
-  const todayUtc = getUtcToday();
+export async function getWorkspaceAnalytics(
+  creatorId: string,
+  days: number,
+  timeZone = DEFAULT_TIMEZONE
+) {
+  const todayUtc = getTodayInTimeZone(timeZone);
   const startDay = getStartDayUtc(days, todayUtc);
 
   if (!hasAdminDb()) {

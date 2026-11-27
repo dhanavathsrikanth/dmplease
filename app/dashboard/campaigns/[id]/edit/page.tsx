@@ -2,11 +2,18 @@ import { Suspense } from "react";
 import { connection } from "next/server";
 import { notFound } from "next/navigation";
 import { CampaignBuilder } from "@/components/campaigns/campaign-builder";
+import { RerunButton } from "@/components/campaigns/rerun-button";
 import { FollowupReport } from "@/components/campaigns/followup-report";
 import { FollowupStepsEditor } from "@/components/campaigns/followup-steps-editor";
 import { listLinkRotators } from "@/app/dashboard/campaigns/link-actions";
 import { LinkPerformance } from "@/components/campaigns/link-performance";
 import { CampaignAnalyticsCard } from "@/components/campaigns/campaign-analytics";
+import { SharePerformance } from "@/components/campaigns/share-performance";
+import { CommentPerformance } from "@/components/campaigns/comment-performance";
+import { CampaignAnalyticsTabs } from "@/components/campaigns/campaign-analytics-tabs";
+import { resolveAnalyticsRange } from "@/lib/analytics-range";
+import { getWorkspacePreferences } from "@/lib/workspace-preferences";
+import { listAnalyticsViews } from "@/app/dashboard/campaigns/analytics-view-actions";
 import { loadCampaignAnalytics } from "@/lib/campaign-analytics";
 import { FollowGateReport } from "@/components/campaigns/follow-gate-report";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -40,22 +47,27 @@ function BuilderSkeleton() {
 
 export default async function EditCampaignPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams?: Promise<{ range?: string; from?: string; to?: string; tab?: string }>;
 }) {
   return (
     <Suspense fallback={<BuilderSkeleton />}>
-      <EditCampaignContent params={params} />
+      <EditCampaignContent params={params} searchParams={searchParams} />
     </Suspense>
   );
 }
 
 async function EditCampaignContent({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams?: Promise<{ range?: string; from?: string; to?: string; tab?: string }>;
 }) {
   const { id } = await params;
+  const paramsValue = (await searchParams) ?? {};
   await connection();
 
   const profile = await getCurrentProfile();
@@ -73,6 +85,16 @@ async function EditCampaignContent({
   if (!campaign || !ownedWorkspaceIds.includes(String(campaign.workspace_id))) {
     notFound();
   }
+
+  const preferences = await getWorkspacePreferences(String(campaign.workspace_id));
+  const analyticsRange = resolveAnalyticsRange({
+    range: paramsValue.range,
+    from: paramsValue.from,
+    to: paramsValue.to,
+    timeZone: preferences.timezone,
+  });
+  const analyticsDays = analyticsRange.days;
+  const activeTab = paramsValue.tab ?? "overview";
 
   let connectedHandle: string | undefined;
   const { data: accounts } = await supabase
@@ -129,6 +151,7 @@ async function EditCampaignContent({
     follower: gateRows.filter((row) => row.status === "follower").length,
     notFollower: gateRows.filter((row) => row.status === "not_follower").length,
     unavailable: gateRows.filter((row) => row.status === "unavailable").length,
+    skipped: gateRows.filter((row) => row.status === "skipped").length,
     topReasons: [...reasonCounts.entries()]
       .sort((a, b) => b[1] - a[1])
       .map(([reason, count]) => ({ reason, count })),
@@ -201,19 +224,46 @@ async function EditCampaignContent({
     .sort((a, b) => b.clicks - a.clicks)
     .slice(0, 20);
 
-  const campaignAnalytics = await loadCampaignAnalytics(
-    String(campaign.workspace_id),
-    String(campaign.id)
-  );
+  const [campaignAnalytics, savedViews] = await Promise.all([
+    loadCampaignAnalytics(
+      String(campaign.workspace_id),
+      String(campaign.id),
+      analyticsDays,
+      analyticsRange.kind === "custom"
+        ? { from: analyticsRange.from, to: analyticsRange.to }
+        : undefined,
+      preferences.timezone
+    ),
+    listAnalyticsViews(String(campaign.workspace_id)),
+  ]);
 
   return (
     <div className="space-y-6">
+    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#e0e2e8] dark:border-border/80">
+      <div>
+        <h1 className="text-xl sm:text-2xl font-medium tracking-tight text-foreground">
+          {String(campaign.name ?? "Campaign")}
+        </h1>
+        <p className="text-xs text-[#555a6a] dark:text-muted-foreground mt-0.5">
+          Edit this automation or apply it to recent comments.
+        </p>
+      </div>
+      <RerunButton
+        campaign={{
+          id: String(campaign.id),
+          name: String(campaign.name ?? "Campaign"),
+          active: Boolean(campaign.active),
+          postScope: campaign.post_scope as string | null,
+        }}
+      />
+    </div>
     <CampaignBuilder
       mode="edit"
       initialHandle={connectedHandle}
       initialCampaign={{
         id: String(campaign.id),
         name: String(campaign.name ?? "Instagram Auto-DM Campaign"),
+        triggerType: campaign.trigger_type as string | null,
         postScope: campaign.post_scope as string | null,
         postId: campaign.post_id as string | null,
         postThumbnailUrl: campaign.post_thumbnail_url as string | null,
@@ -247,27 +297,62 @@ async function EditCampaignContent({
       }}
       linkRotators={linkRotators}
     />
-    <CampaignAnalyticsCard data={campaignAnalytics} />
-    <FollowupStepsEditor
-      campaignId={String(id)}
-      initialSteps={(stepsRes.data ?? []).map((step) => ({
-        step: Number(step.step),
-        delayMinutes: Number(step.delay_minutes),
-        message: String(step.message ?? ""),
-        enabled: Boolean(step.enabled),
-        holdoutPercent: Number(step.holdout_percent),
-      }))}
+    <CampaignAnalyticsTabs
+      days={analyticsDays}
+      from={analyticsRange.from}
+      to={analyticsRange.to}
+      rangeKind={analyticsRange.kind}
+      activeTab={activeTab}
+      savedViews={savedViews}
+      workspaceId={String(campaign.workspace_id)}
+      timeZone={preferences.timezone}
+      overview={<CampaignAnalyticsCard data={campaignAnalytics} />}
+      comments={
+        <CommentPerformance
+          data={campaignAnalytics.comment}
+          comparison={campaignAnalytics.comparison}
+          timeZone={preferences.timezone}
+          weekStartsOn={preferences.weekStartsOn}
+        />
+      }
+      shares={
+        <SharePerformance
+          data={campaignAnalytics.share}
+          comparison={campaignAnalytics.comparison}
+        />
+      }
+      links={
+        <LinkPerformance
+          rows={linkPerformance}
+          timeZone={preferences.timezone}
+        />
+      }
+      followups={
+        <div className="space-y-4">
+          <FollowupStepsEditor
+            campaignId={String(id)}
+            initialSteps={(stepsRes.data ?? []).map((step) => ({
+              step: Number(step.step),
+              delayMinutes: Number(step.delay_minutes),
+              message: String(step.message ?? ""),
+              enabled: Boolean(step.enabled),
+              holdoutPercent: Number(step.holdout_percent),
+            }))}
+          />
+          <FollowupReport data={followupReport} />
+        </div>
+      }
+      followGate={
+        <FollowGateReport
+          data={{
+            ...followGateReport,
+            campaignId: String(campaign.id),
+            workspaceId: String(campaign.workspace_id),
+          }}
+          enabled={Boolean(campaign.follow_gate_enabled)}
+        />
+      }
     />
-    <LinkPerformance rows={linkPerformance} />
-    <FollowupReport data={followupReport} />
-      <FollowGateReport
-        data={{
-          ...followGateReport,
-          campaignId: String(campaign.id),
-          workspaceId: String(campaign.workspace_id),
-        }}
-        enabled={Boolean(campaign.follow_gate_enabled)}
-      />
     </div>
   );
 }

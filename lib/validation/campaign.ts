@@ -16,6 +16,8 @@ import {
 export const campaignSchema = z.object({
   name: z.string().trim().min(1, "Give the campaign a name").max(80),
   goal: z.string().trim().max(60).optional(),
+  /** COMMENT = keyword on a post; SHARE_TO_DM = someone shares a reel/post. */
+  triggerType: z.enum(["COMMENT", "SHARE_TO_DM"]).default("COMMENT"),
   postScope: z.enum(["ANY_POST", "SPECIFIC_POST", "NEXT_POST"]),
   postId: z.string().trim().max(255).nullable().optional(),
   postThumbnailUrl: z

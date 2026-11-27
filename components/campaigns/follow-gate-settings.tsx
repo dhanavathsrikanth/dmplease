@@ -309,6 +309,17 @@ export function FollowGateSettings({
             </p>
           </div>
 
+          <div className="flex gap-2.5 rounded-xl border border-[#e0e2e8] dark:border-border/60 bg-[#f7f8fa] dark:bg-muted/30 px-3.5 py-3">
+            <Info className="size-4 shrink-0 text-[#4262ff] mt-0.5" aria-hidden="true" />
+            <p className="text-[10px] leading-relaxed text-[#555a6a] dark:text-muted-foreground">
+              <strong className="font-semibold text-foreground">Checked every time:</strong>{" "}
+              we ask Meta whether the person still follows you on every new
+              request, so an unfollow is caught before delivery. If they messaged
+              you in the last 24 hours, we skip the tap and deliver immediately
+              because the conversation is already open.
+            </p>
+          </div>
+
           <div className="flex gap-2.5 rounded-xl border border-amber-200/70 dark:border-amber-500/20 bg-amber-50/70 dark:bg-amber-500/10 px-3.5 py-3">
             <AlertTriangle
               className="size-4 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5"

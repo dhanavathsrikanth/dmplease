@@ -58,6 +58,8 @@ export interface WebhookCommentEvent {
   commenterId: string;
   commenterName?: string;
   mediaId: string;
+  mediaType?: string | null;
+  mediaProductType?: string | null;
   parentCommentId?: string | null;
 }
 
@@ -76,6 +78,8 @@ export interface WebhookEntry {
       };
       media?: {
         id?: string;
+        media_type?: string;
+        media_product_type?: string;
       };
       media_id?: string;
       story_id?: string;
@@ -274,6 +278,8 @@ export function parseCommentEvents(
       const mediaId = value?.media?.id ?? value?.media_id;
       const commenterId = value?.from?.id;
       const parentCommentId = value?.parent_id ?? value?.parent?.id ?? null;
+      const mediaType = value?.media?.media_type ?? null;
+      const mediaProductType = value?.media?.media_product_type ?? null;
 
       if (!entry.id || !commentId || !mediaId || !commenterId) {
         continue;
@@ -291,6 +297,8 @@ export function parseCommentEvents(
         commenterId,
         commenterName: value.from?.username,
         mediaId,
+        mediaType,
+        mediaProductType,
         parentCommentId,
       });
     }

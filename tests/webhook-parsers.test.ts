@@ -5,6 +5,7 @@ import {
   parseMessageEvents,
   parsePostbackEvents,
   parseReadEvents,
+  parseShareEvents,
   parseStoryEvents,
   type WebhookPayload,
 } from "@/lib/meta/webhook";
@@ -127,6 +128,45 @@ describe("webhook parsers", () => {
       userId: "user-1",
       mids: ["m1", "m2"],
       watermark: 456,
+    });
+  });
+
+  it("parses share-to-DM attachments", () => {
+    const payload: WebhookPayload = {
+      object: "instagram",
+      entry: [
+        {
+          id: "ig-123",
+          time: 1,
+          messaging: [
+            {
+              sender: { id: "user-1", username: "alice" },
+              recipient: { id: "ig-123" },
+              message: {
+                mid: "share-1",
+                attachments: [
+                  {
+                    type: "share",
+                    media_id: "reel-9",
+                    title: "A great reel",
+                    url: "https://instagram.com/reel/reel-9",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const events = parseShareEvents(payload);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      instagramAccountId: "ig-123",
+      messageId: "share-1",
+      senderId: "user-1",
+      senderName: "alice",
+      mediaId: "reel-9",
+      title: "A great reel",
     });
   });
 

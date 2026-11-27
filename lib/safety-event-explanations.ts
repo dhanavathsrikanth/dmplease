@@ -10,6 +10,8 @@ export const SAFETY_EVENT_EXPLANATIONS: Record<string, string> = {
   follow_gate_opening: "An opening DM was sent asking someone to follow before receiving the guide.",
   follow_gate_exception:
     "Meta could not verify follow status, so the creator's hold/deliver policy released the content anyway.",
+  follow_gate_skip_recent:
+    "The follow tap was skipped because the person already messaged you in the last 24 hours.",
   viral_spike: "A comment burst was detected and delivery was slowed to protect the account.",
   viral_throttle: "A send was paused because the account was in critical throttle mode.",
   rate_limit_breach: "Meta's hourly send limit was reached; the DM was parked in the queue for a retry.",

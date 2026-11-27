@@ -1,20 +1,33 @@
+import type { ReactNode } from "react";
 import { BarChart3, Layers, MessageSquare, ShieldCheck, Ticket, UserPlus, Zap } from "lucide-react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { DeltaBadge } from "@/components/ui/delta-badge";
 import type { CampaignAnalytics } from "@/lib/campaign-analytics";
 
 interface CampaignAnalyticsCardProps {
   data: CampaignAnalytics;
 }
 
-function Tile({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
+function Tile({
+  label,
+  value,
+  hint,
+  delta,
+}: {
+  label: string;
+  value: string | number;
+  hint?: string;
+  delta?: ReactNode;
+}) {
   return (
     <div className="rounded-xl border border-[#e0e2e8] dark:border-border bg-[#f7f8fa] dark:bg-muted/30 px-3 py-2.5">
       <p className="text-[10px] font-semibold uppercase tracking-wide text-[#6b6f7e]">
         {label}
       </p>
       <p className="mt-1 text-xl font-bold tracking-tight text-foreground">{value}</p>
+      {delta && <div className="mt-0.5">{delta}</div>}
       {hint && <p className="mt-0.5 text-[10px] text-muted-foreground">{hint}</p>}
     </div>
   );
@@ -52,11 +65,13 @@ export function CampaignAnalyticsCard({ data }: CampaignAnalyticsCardProps) {
             label="DMs sent"
             value={data.dmSent}
             hint={data.dmFailed > 0 ? `${data.dmFailed} failed` : "All delivered"}
+            delta={<DeltaBadge comparison={data.comparison.dmSent} periodLabel="vs prev" />}
           />
           <Tile
             label="Delivery rate"
             value={data.deliveryRate === null ? "—" : `${data.deliveryRate}%`}
             hint={data.dmSent + data.dmFailed > 0 ? `${data.dmSent + data.dmFailed} total` : "No sends yet"}
+            delta={<DeltaBadge comparison={data.comparison.deliveryRate} periodLabel="vs prev" />}
           />
           <Tile
             label="Read rate"
@@ -66,11 +81,13 @@ export function CampaignAnalyticsCard({ data }: CampaignAnalyticsCardProps) {
                 ? `${data.dmRead} read${data.dmDelivered > 0 ? ` · ${data.dmDelivered} delivered` : ""}`
                 : "Meta has not sent receipts yet"
             }
+            delta={<DeltaBadge comparison={data.comparison.readRate} periodLabel="vs prev" />}
           />
           <Tile
             label="Link clicks"
             value={data.linkClicks}
             hint={data.uniqueClickers > 0 ? `${data.uniqueClickers} people` : "No clicks yet"}
+            delta={<DeltaBadge comparison={data.comparison.linkClicks} periodLabel="vs prev" />}
           />
           <Tile
             label="Conversions"
@@ -80,6 +97,7 @@ export function CampaignAnalyticsCard({ data }: CampaignAnalyticsCardProps) {
                 ? `₹${(data.revenueMinor / 100).toLocaleString("en-IN")}`
                 : "No revenue yet"
             }
+            delta={<DeltaBadge comparison={data.comparison.conversions} periodLabel="vs prev" />}
           />
         </div>
 
@@ -192,6 +210,19 @@ export function CampaignAnalyticsCard({ data }: CampaignAnalyticsCardProps) {
                   </span>
                 )}
               </div>
+            </div>
+          )}
+
+          {data.shareTriggers > 0 && (
+            <div className="rounded-xl border border-[#e0e2e8] dark:border-border px-3.5 py-3 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Zap className="size-3.5 text-[#4262ff]" aria-hidden="true" />
+                <span className="text-xs font-semibold">Share-to-DM triggers</span>
+              </div>
+              <span className="text-xs">
+                <strong className="text-foreground">{data.shareTriggers}</strong>{" "}
+                <span className="text-muted-foreground">thank-you DMs sent</span>
+              </span>
             </div>
           )}
 

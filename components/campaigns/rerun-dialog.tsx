@@ -56,7 +56,14 @@ export function RerunDialog({
   onCompleted,
 }: RerunDialogProps) {
   const [days, setDays] = useState<number>(7);
-  const [preview, setPreview] = useState<{ count: number; sample: string[] } | null>(null);
+  const [preview, setPreview] = useState<{
+    count: number;
+    sample: string[];
+    total?: number;
+    alreadyContacted?: number;
+    optedOut?: number;
+    accountUnavailable?: number;
+  } | null>(null);
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [job, setJob] = useState<JobStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -91,12 +98,23 @@ export function RerunDialog({
       const data = (await res.json()) as {
         count?: number;
         sample?: string[];
+        total?: number;
+        alreadyContacted?: number;
+        optedOut?: number;
+        accountUnavailable?: number;
         error?: string;
       };
       if (!res.ok || typeof data.count !== "number") {
         setError(data.error ?? "Could not preview this re-run.");
       } else {
-        setPreview({ count: data.count, sample: data.sample ?? [] });
+        setPreview({
+          count: data.count,
+          sample: data.sample ?? [],
+          total: data.total,
+          alreadyContacted: data.alreadyContacted,
+          optedOut: data.optedOut,
+          accountUnavailable: data.accountUnavailable,
+        });
       }
     } catch {
       setError("Network error while checking recent comments.");
@@ -161,7 +179,13 @@ export function RerunDialog({
         jobId?: string | null;
         message?: string;
         error?: string;
+        status?: string;
       };
+      if (res.status === 409 && data.jobId) {
+        // A re-run is already active; attach to it instead of starting another.
+        await refreshJob(data.jobId);
+        return;
+      }
       if (!res.ok || !data.success) {
         setError(data.error ?? "Could not start the re-run.");
         setBusy(false);
@@ -232,7 +256,8 @@ export function RerunDialog({
           </DialogTitle>
           <DialogDescription className="text-xs text-[#555a6a] dark:text-muted-foreground leading-relaxed">
             Apply &ldquo;{campaign?.name}&rdquo; to comments that matched its keywords.
-            People contacted in the last 24 hours are skipped automatically.
+            Anyone already contacted by this campaign in the last 30 days, or who
+            opted out, is skipped automatically.
           </DialogDescription>
         </DialogHeader>
 
@@ -273,14 +298,30 @@ export function RerunDialog({
                 Checking recent comments…
               </div>
             ) : preview ? (
-              <div className="rounded-2xl border border-[#ffd02f]/40 bg-[#fff8e0]/60 dark:bg-[#746019]/20 p-4">
-                <p className="text-2xl font-bold text-foreground">{preview.count}</p>
-                <p className="text-xs text-[#555a6a] dark:text-muted-foreground mt-0.5">
-                  eligible commenter{preview.count === 1 ? "" : "s"} in the last {days} day
-                  {days === 1 ? "" : "s"}.
-                </p>
+              <div className="rounded-2xl border border-[#ffd02f]/40 bg-[#fff8e0]/60 dark:bg-[#746019]/20 p-4 space-y-2">
+                <div className="flex items-end gap-2">
+                  <p className="text-2xl font-bold text-foreground">{preview.count}</p>
+                  <p className="text-xs text-[#555a6a] dark:text-muted-foreground pb-1">
+                    eligible commenter{preview.count === 1 ? "" : "s"} in the last {days} day
+                    {days === 1 ? "" : "s"}.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-muted-foreground">
+                  {typeof preview.total === "number" && (
+                    <span>{preview.total} matched the keyword</span>
+                  )}
+                  {(preview.alreadyContacted ?? 0) > 0 && (
+                    <span>{preview.alreadyContacted} already contacted</span>
+                  )}
+                  {(preview.optedOut ?? 0) > 0 && (
+                    <span>{preview.optedOut} opted out</span>
+                  )}
+                  {(preview.accountUnavailable ?? 0) > 0 && (
+                    <span>{preview.accountUnavailable} account paused</span>
+                  )}
+                </div>
                 {preview.sample.length > 0 && (
-                  <p className="text-[10px] text-muted-foreground mt-2 truncate">
+                  <p className="text-[10px] text-muted-foreground truncate">
                     e.g. {preview.sample.join(", ")}
                   </p>
                 )}

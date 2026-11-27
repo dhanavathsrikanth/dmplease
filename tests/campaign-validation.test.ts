@@ -19,6 +19,18 @@ describe("campaign validation", () => {
     expect(result.data?.triggerKeywords).toEqual(["GUIDE", "LINK"]);
   });
 
+  it("accepts a share-to-DM campaign without keywords", () => {
+    const result = validateCampaign({
+      ...validCampaign,
+      triggerType: "SHARE_TO_DM",
+      triggerKeywords: [],
+      dmMessage: "Thanks for sharing!",
+    });
+    expect(result.success).toBe(true);
+    expect(result.data?.triggerType).toBe("SHARE_TO_DM");
+    expect(result.data?.triggerKeywords).toEqual([]);
+  });
+
   it("reports field-level errors for invalid input", () => {
     const result = validateCampaign({ ...validCampaign, name: "", dmMessage: "", buttonUrl: "ftp://bad" });
     expect(result.success).toBe(false);

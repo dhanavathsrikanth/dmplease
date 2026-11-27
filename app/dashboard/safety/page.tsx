@@ -1,6 +1,7 @@
 import { connection } from "next/server";
 import { notFound } from "next/navigation";
 import { getCurrentProfile } from "@/lib/profile";
+import { getWorkspacePreferences } from "@/lib/workspace-preferences";
 import { getAdminDb, hasAdminDb } from "@/lib/db-admin";
 import { getQueueStats } from "@/lib/dm-queue";
 import { computeSafetyScore } from "@/lib/meta/safety-score";
@@ -23,6 +24,7 @@ export default async function SafetyPage() {
   if (!profile) notFound();
   const ownedWorkspaceIds = (profile.ownedWorkspaces || []).map((w) => w.id);
   if (ownedWorkspaceIds.length === 0) notFound();
+  const preferences = await getWorkspacePreferences(ownedWorkspaceIds[0]);
 
   const safetyStats = { breaches: 0, throttles: 0, viralSpikes: 0, optOuts: 0, exceptions: 0 };
   let accountHealth: Array<{
@@ -257,6 +259,7 @@ export default async function SafetyPage() {
           pending={queueStats.pending}
           failed={queueStats.failed}
           oldestPendingAt={queueStats.oldestPendingAt}
+          timeZone={preferences.timezone}
         />
         <SafetyCard stats={safetyStats} accounts={accountHealth} />
       </div>
@@ -306,6 +309,7 @@ export default async function SafetyPage() {
                           month: "short",
                           hour: "2-digit",
                           minute: "2-digit",
+                          timeZone: preferences.timezone,
                         })}
                       </p>
                     </div>

@@ -59,8 +59,10 @@ interface MessageBubble {
 
 export function InboxInteractiveChat({
   conversations: initialConversations,
+  timeZone = "Asia/Kolkata",
 }: {
   conversations: ConversationItem[];
+  timeZone?: string;
 }) {
   const [conversations, setConversations] =
     useState<ConversationItem[]>(initialConversations);
@@ -130,6 +132,7 @@ export function InboxInteractiveChat({
           time: new Date().toLocaleTimeString([], {
             hour: "2-digit",
             minute: "2-digit",
+            timeZone,
           }),
           status: "Delivered",
         };
@@ -183,7 +186,11 @@ export function InboxInteractiveChat({
         id: `follow-${Date.now()}`,
         sender: "manual",
         text: data.openingText || "Follow the account, then tap below to unlock your content.",
-        time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        time: new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+          timeZone,
+        }),
         status: "Awaiting follow confirmation",
         kind: "follow_prompt",
       };

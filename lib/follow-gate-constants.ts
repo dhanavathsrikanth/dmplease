@@ -26,8 +26,14 @@ export const FOLLOW_GATE_DEFAULTS = {
 export const FOLLOW_GATE_LIMITS = {
   openingMessage: 500,
   buttonLabel: 20,
-  /** Follower relationships change; keep verification results short-lived. */
-  verificationCacheMinutes: 15,
+  /**
+   * How long a confirmed follow is trusted before we re-check Meta.
+   *
+   * A person can unfollow after receiving the link, so a new request after
+   * this window always triggers a fresh verification. Within the window we
+   * reuse the result to avoid duplicate checks in a burst.
+   */
+  reverificationMinutes: 15,
   /** How many times a pending opt-in can be retried before it is closed. */
   maxChecksPerPending: 3,
 } as const;
@@ -36,6 +42,21 @@ export function normalizeFollowGatePolicy(
   value: unknown
 ): FollowGateUnavailablePolicy {
   return value === "deliver" ? "deliver" : "hold";
+}
+
+/**
+ * T1.11: true when the person messaged the creator within the window, so the
+ * follow tap can be skipped and the content delivered immediately.
+ */
+export function isRecentInbound(
+  lastInboundAt: string | null | undefined,
+  hours = 24,
+  now = Date.now()
+): boolean {
+  if (!lastInboundAt) return false;
+  const time = new Date(lastInboundAt).getTime();
+  if (Number.isNaN(time)) return false;
+  return time >= now - hours * 60 * 60 * 1000;
 }
 
 /**
@@ -53,6 +74,8 @@ export const FOLLOW_GATE_REASONS: Record<string, string> = {
     "This account/token cannot expose follow status (permission or account type).",
   meta_error_190: "The connected Instagram token needs to be reconnected.",
   recent_verification: "Verified recently; no extra API call was needed.",
+  recent_inbound:
+    "The person messaged you in the last 24 hours, so the follow tap was skipped.",
 };
 
 export function describeFollowGateReason(reason?: string | null): string {

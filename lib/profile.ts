@@ -7,6 +7,7 @@ export interface AutomationData {
   id: string;
   name: string;
   goal: string | null;
+  triggerType?: string | null;
   postScope?: string | null;
   postId?: string | null;
   postThumbnailUrl?: string | null;
@@ -146,6 +147,7 @@ async function loadCurrentProfile(): Promise<UserProfileData | null> {
         id: a.id as string,
         name: a.name as string,
         goal: (a.goal as string) || null,
+        triggerType: (a.trigger_type as string) || "COMMENT",
         postScope: (a.post_scope as string) || null,
         postId: (a.post_id as string) || null,
         postThumbnailUrl: (a.post_thumbnail_url as string) || null,

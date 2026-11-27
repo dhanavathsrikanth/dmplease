@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { parseTrackedLink } from "@/lib/tracking";
 import { recordMetricEvent } from "@/lib/metrics";
+import { getWorkspaceTimeZone } from "@/lib/workspace-preferences";
 import { getAdminDb, hasAdminDb } from "@/lib/db-admin";
 import {
   findTrackedLink,
@@ -19,7 +20,8 @@ function withAttribution(destination: string, link: {
     url.searchParams.set("utm_source", "dmplease");
     url.searchParams.set("utm_medium", "instagram_dm");
     if (link.automationId) {
-      url.searchParams.set("utm_campaign", link.automationId.slice(0, 8));
+      // Full id so the conversion ingest can attribute to the exact campaign.
+      url.searchParams.set("utm_campaign", link.automationId);
     }
     if (link.postId) url.searchParams.set("utm_content", link.postId);
     if (link.keyword) url.searchParams.set("utm_term", link.keyword);
@@ -43,6 +45,7 @@ export async function GET(
       kind: "dm_link_click",
       creatorId: tracked.workspace_id,
       targetId: tracked.automation_id ?? tracked.workspace_id,
+      timeZone: await getWorkspaceTimeZone(tracked.workspace_id),
     });
     await recordTrackedLinkClick({
       link: tracked,
@@ -70,6 +73,7 @@ export async function GET(
     kind: "dm_link_click",
     creatorId: payload.workspaceId,
     targetId: payload.automationId ?? payload.workspaceId,
+    timeZone: await getWorkspaceTimeZone(payload.workspaceId),
   });
 
   if (hasAdminDb()) {

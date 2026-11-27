@@ -18,6 +18,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { getCurrentProfile } from "@/lib/profile";
+import { getWorkspacePreferences } from "@/lib/workspace-preferences";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata = {
@@ -50,6 +51,9 @@ async function DmLogsContent() {
   const supabase = await createClient();
 
   const workspaceIds = (profile?.ownedWorkspaces || []).map((w) => w.id);
+  const preferences = workspaceIds[0]
+    ? await getWorkspacePreferences(workspaceIds[0])
+    : { timezone: "Asia/Kolkata", weekStartsOn: 1 };
 
   let logs: Array<{
     id: string;
@@ -95,6 +99,7 @@ async function DmLogsContent() {
             day: "numeric",
             hour: "2-digit",
             minute: "2-digit",
+            timeZone: preferences.timezone,
           }),
         };
       });

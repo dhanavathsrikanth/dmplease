@@ -17,6 +17,7 @@ import {
   TrendingDown,
   Sparkles,
   UserPlus,
+  ExternalLink,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -31,6 +32,13 @@ import { getCurrentProfile } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
 import { getWebhookHealth } from "@/lib/meta/webhook-events";
 import { getWorkspaceAnalytics } from "@/lib/analytics";
+import { getReportLink } from "@/app/dashboard/settings/report-actions";
+import { getWorkspacePreferences } from "@/lib/workspace-preferences";
+import {
+  addDaysToDateOnly,
+  getTodayInTimeZone,
+  zonedTimeToUtc,
+} from "@/lib/timezone";
 import {
   EMPTY_FOLLOW_PROMPT_STATS,
   summarizeFollowPrompts,
@@ -113,9 +121,16 @@ async function OverviewContent({ searchParams }: PageProps) {
   const supabase = await createClient();
 
   const workspaceIds = (profile?.ownedWorkspaces || []).map((w) => w.id);
+  const reportLink = workspaceIds[0]
+    ? await getReportLink(workspaceIds[0])
+    : null;
+  const preferences = workspaceIds[0]
+    ? await getWorkspacePreferences(workspaceIds[0])
+    : { timezone: "Asia/Kolkata", weekStartsOn: 1 };
+  const timeZone = preferences.timezone;
   const analyticsDays = range === "7d" ? 7 : range === "30d" ? 30 : 90;
   const analytics = workspaceIds[0]
-    ? await getWorkspaceAnalytics(workspaceIds[0], analyticsDays)
+    ? await getWorkspaceAnalytics(workspaceIds[0], analyticsDays, timeZone)
     : null;
 
   interface OverviewLog {
@@ -125,6 +140,7 @@ async function OverviewContent({ searchParams }: PageProps) {
     status: string | null;
     sent_at: string | null;
     automation_id: string | null;
+    instagram_account_id: string | null;
     post_id: string | null;
     sequence_step: number | null;
   }
@@ -138,17 +154,23 @@ async function OverviewContent({ searchParams }: PageProps) {
     let query = supabase
       .from("dm_logs")
       .select(
-        "id, trigger_keyword, keyword, status, sent_at, automation_id, post_id, sequence_step",
+        "id, trigger_keyword, keyword, status, sent_at, automation_id, instagram_account_id, post_id, sequence_step",
         { count: "exact" }
       )
       .in("workspace_id", workspaceIds);
 
-    const now = Date.now();
+    const today = getTodayInTimeZone(timeZone);
     if (range === "7d") {
-      periodCutoff = new Date(now - 7 * 86400000).toISOString();
+      periodCutoff = zonedTimeToUtc(
+        addDaysToDateOnly(today, -6),
+        timeZone
+      ).toISOString();
       query = query.gte("sent_at", periodCutoff);
     } else if (range === "30d") {
-      periodCutoff = new Date(now - 30 * 86400000).toISOString();
+      periodCutoff = zonedTimeToUtc(
+        addDaysToDateOnly(today, -29),
+        timeZone
+      ).toISOString();
       query = query.gte("sent_at", periodCutoff);
     }
 
@@ -188,6 +210,7 @@ async function OverviewContent({ searchParams }: PageProps) {
     keyword: string | null;
     post_id: string | null;
     contact_id: string | null;
+    automation_id: string | null;
     sequence_step: number;
     occurred_at: string;
   }
@@ -238,12 +261,12 @@ async function OverviewContent({ searchParams }: PageProps) {
       periodCutoff
         ? supabase
             .from("conversions")
-            .select("type, revenue_minor, currency, keyword, post_id, contact_id, sequence_step, occurred_at")
+            .select("type, revenue_minor, currency, keyword, post_id, contact_id, automation_id, sequence_step, occurred_at")
             .in("workspace_id", workspaceIds)
             .gte("occurred_at", periodCutoff)
         : supabase
             .from("conversions")
-            .select("type, revenue_minor, currency, keyword, post_id, contact_id, sequence_step, occurred_at")
+            .select("type, revenue_minor, currency, keyword, post_id, contact_id, automation_id, sequence_step, occurred_at")
             .in("workspace_id", workspaceIds),
     ]);
     triggerComments = commentsRes.count ?? 0;
@@ -376,6 +399,52 @@ async function OverviewContent({ searchParams }: PageProps) {
   const repeatBuyers = Array.from(conversionContactCounts.values()).filter(
     (count) => count > 1
   ).length;
+
+  // Per-account breakdown (DMs, delivery, conversions).
+  const accountStats = new Map<
+    string,
+    { dms: number; failed: number; conversions: number }
+  >();
+  const automationAccount = new Map<string, string>();
+  for (const log of logs) {
+    if (!log.instagram_account_id) continue;
+    const entry =
+      accountStats.get(log.instagram_account_id) ?? {
+        dms: 0,
+        failed: 0,
+        conversions: 0,
+      };
+    if (log.status === "SENT" || log.status === "Delivered" || !log.status) {
+      entry.dms++;
+    }
+    if (log.status === "FAILED") entry.failed++;
+    accountStats.set(log.instagram_account_id, entry);
+    if (log.automation_id && !automationAccount.has(log.automation_id)) {
+      automationAccount.set(log.automation_id, log.instagram_account_id);
+    }
+  }
+  for (const row of conversionRows) {
+    if (!row.automation_id) continue;
+    const accountId = automationAccount.get(row.automation_id);
+    if (!accountId) continue;
+    const entry = accountStats.get(accountId);
+    if (entry) entry.conversions++;
+  }
+  const accountNameById = new Map(
+    accountHealth.map((account) => [account.id, account.username])
+  );
+  const accountBreakdown = [...accountStats.entries()]
+    .map(([id, value]) => ({
+      id,
+      username: accountNameById.get(id) ?? null,
+      dms: value.dms,
+      deliveryRate:
+        value.dms + value.failed > 0
+          ? Math.round((value.dms / (value.dms + value.failed)) * 100)
+          : null,
+      conversions: value.conversions,
+    }))
+    .sort((a, b) => b.dms - a.dms);
 
   // Follower growth attributed to in-chat "Ask to follow" prompts.
   let followStats = EMPTY_FOLLOW_PROMPT_STATS;
@@ -582,6 +651,7 @@ async function OverviewContent({ searchParams }: PageProps) {
           </p>
         </div>
 
+        <div className="flex flex-wrap items-center gap-2">
         {/* Timeframe Filter Navigation */}
         <div className="flex items-center gap-1.5 p-1 rounded-full bg-[#f0f2f5] dark:bg-muted/60 border border-[#e0e2e8] dark:border-border/60 w-fit">
           <Link
@@ -614,6 +684,36 @@ async function OverviewContent({ searchParams }: PageProps) {
           >
             All Time
           </Link>
+        </div>
+        {reportLink?.enabled ? (
+          <Button
+            asChild
+            size="sm"
+            variant="outline"
+            className="rounded-full h-9 text-xs font-semibold gap-1.5"
+          >
+            <a
+              href={`/report/${reportLink.token}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              <ExternalLink className="size-3.5" aria-hidden="true" />
+              Share report
+            </a>
+          </Button>
+        ) : (
+          <Button
+            asChild
+            size="sm"
+            variant="outline"
+            className="rounded-full h-9 text-xs font-semibold gap-1.5"
+          >
+            <Link href="/dashboard/settings">
+              <ExternalLink className="size-3.5" aria-hidden="true" />
+              Create report link
+            </Link>
+          </Button>
+        )}
         </div>
       </div>
 
@@ -721,6 +821,7 @@ async function OverviewContent({ searchParams }: PageProps) {
         pending={queueStats.pending}
         failed={queueStats.failed}
         oldestPendingAt={queueStats.oldestPendingAt}
+        timeZone={timeZone}
       />
 
       <SafetyCard
@@ -1075,6 +1176,7 @@ async function OverviewContent({ searchParams }: PageProps) {
                         month: "short",
                         hour: "2-digit",
                         minute: "2-digit",
+                        timeZone,
                       })}
                     </p>
                   )}
@@ -1145,6 +1247,47 @@ async function OverviewContent({ searchParams }: PageProps) {
           )}
         </CardContent>
       </Card>
+
+      {accountBreakdown.length > 0 && (
+        <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border shadow-subtle">
+          <CardHeader className="pb-3 border-b border-[#e0e2e8] dark:border-border/60">
+            <CardTitle className="text-base font-semibold tracking-tight">
+              Per-account breakdown
+            </CardTitle>
+            <CardDescription className="text-xs mt-0.5 text-[#555a6a] dark:text-muted-foreground">
+              DMs, delivery and conversions for each connected Instagram account.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="pt-5">
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs min-w-[420px]">
+                <thead>
+                  <tr className="text-left text-[10px] uppercase tracking-wide text-[#6b6f7e]">
+                    <th scope="col" className="py-2 font-semibold">Account</th>
+                    <th scope="col" className="py-2 font-semibold text-right">DMs</th>
+                    <th scope="col" className="py-2 font-semibold text-right">Delivery</th>
+                    <th scope="col" className="py-2 font-semibold text-right">Conversions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {accountBreakdown.map((row) => (
+                    <tr key={row.id} className="border-t border-[#e0e2e8]/60 dark:border-border/40">
+                      <td className="py-2 text-foreground truncate max-w-[200px]">
+                        {row.username ? `@${row.username}` : row.id.slice(0, 8)}
+                      </td>
+                      <td className="py-2 text-right font-mono">{row.dms.toLocaleString()}</td>
+                      <td className="py-2 text-right font-mono">
+                        {row.deliveryRate === null ? "—" : `${row.deliveryRate}%`}
+                      </td>
+                      <td className="py-2 text-right font-mono">{row.conversions}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border shadow-subtle">
         <CardHeader className="pb-3 border-b border-[#e0e2e8] dark:border-border/60">

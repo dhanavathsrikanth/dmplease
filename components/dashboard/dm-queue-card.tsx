@@ -12,9 +12,15 @@ interface DmQueueCardProps {
   pending: number;
   failed: number;
   oldestPendingAt: string | null;
+  timeZone?: string;
 }
 
-export function DmQueueCard({ pending, failed, oldestPendingAt }: DmQueueCardProps) {
+export function DmQueueCard({
+  pending,
+  failed,
+  oldestPendingAt,
+  timeZone = "Asia/Kolkata",
+}: DmQueueCardProps) {
   const [isPending, startTransition] = useTransition();
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -82,6 +88,7 @@ export function DmQueueCard({ pending, failed, oldestPendingAt }: DmQueueCardPro
                 ? new Date(oldestPendingAt).toLocaleTimeString("en-IN", {
                     hour: "2-digit",
                     minute: "2-digit",
+                    timeZone,
                   })
                 : "—"}
             </p>

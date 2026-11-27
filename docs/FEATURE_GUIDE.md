@@ -1,33 +1,33 @@
-# Feature Guide — Next-Reel & Opening DM
+# Feature Guide â€” Next-Reel & Opening DM
 
 > **Status:** implemented and verified (2026-11-26).
 > This is the source of truth for what these features do and why. For the wider
 > capability verdict, see [Feature Implementation Audit](FEATURE_IMPLEMENTATION_AUDIT.md).
 >
-> - [Part 1 — Next-Reel: auto-attached reel permalink](#1-what-problem-it-solves)
-> - [Part 2 — Opening DM: copy, delivery and observability](#12-what-problem-it-solves-1)
-> - [Part 3 — 24h follow-ups: steps, timing and cancellation](#19-what-problem-it-solves-2)
-> - [Part 4 — Public comment replies: variants and failure logging](#27-what-problem-it-solves-3)
-> - [Part 5 — Re-run: durable jobs and live progress](#34-what-problem-it-solves-4)
-> - [Part 6 — Personalised DMs: variables, contact fields and vouchers](#40-what-problem-it-solves-5)
-> - [Part 7 — DM variations: rotation without repeats](#46-what-problem-it-solves-6)
-> - [Part 8 — Six DM formats on Cloudflare R2](#52-what-problem-it-solves-7)
-> - [Part 9 — Short-link rotation: sticky destinations and click attribution](#58-what-problem-it-solves-8)
-> - [Part 10 — DM queue: durable overflow and safe manual sends](#65-what-problem-it-solves-9)
-> - [Part 11 — Safety engine: measured, not mocked](#71-what-problem-it-solves-10)
-> - [Part 12 — Safety polish: digest, explanations, badge](#77-what-problem-it-solves-11)
+> - [Part 1 â€” Next-Reel: auto-attached reel permalink](#1-what-problem-it-solves)
+> - [Part 2 â€” Opening DM: copy, delivery and observability](#12-what-problem-it-solves-1)
+> - [Part 3 â€” 24h follow-ups: steps, timing and cancellation](#19-what-problem-it-solves-2)
+> - [Part 4 â€” Public comment replies: variants and failure logging](#27-what-problem-it-solves-3)
+> - [Part 5 â€” Re-run: durable jobs and live progress](#34-what-problem-it-solves-4)
+> - [Part 6 â€” Personalised DMs: variables, contact fields and vouchers](#40-what-problem-it-solves-5)
+> - [Part 7 â€” DM variations: rotation without repeats](#46-what-problem-it-solves-6)
+> - [Part 8 â€” Six DM formats on Cloudflare R2](#52-what-problem-it-solves-7)
+> - [Part 9 â€” Short-link rotation: sticky destinations and click attribution](#58-what-problem-it-solves-8)
+> - [Part 10 â€” DM queue: durable overflow and safe manual sends](#65-what-problem-it-solves-9)
+> - [Part 11 â€” Safety engine: measured, not mocked](#71-what-problem-it-solves-10)
+> - [Part 12 â€” Safety polish: digest, explanations, badge](#77-what-problem-it-solves-11)
 
 ---
 
 ## 1. What problem it solves
 
 A campaign has three post scopes: `ANY_POST`, `SPECIFIC_POST` and `NEXT_POST`.
-`NEXT_POST` means "run this automation on my *next* upload" — a creator picks it
+`NEXT_POST` means "run this automation on my *next* upload" â€” a creator picks it
 before the reel exists, so there is no URL to paste into the DM at setup time.
 
 Before this work, `NEXT_POST` was **only a targeting filter**: the webhook
 compared the comment's media ID with the latest media ID from Meta. The media
-picker did fetch `permalink`, but only for the UI preview — no DM ever received
+picker did fetch `permalink`, but only for the UI preview â€” no DM ever received
 it. The pill in the campaign builder said **"Auto-attaches"**, but that was
 UI-only copy.
 
@@ -44,8 +44,8 @@ multi-layer cache.
 
 | Scope | Destination URL in builder | What the DM contains |
 | --- | --- | --- |
-| `NEXT_POST` | Set to `{permalink}` automatically ("Auto — new reel permalink") | The triggering reel's real permalink, in `{link}` and the button. |
-| `NEXT_POST` | Left empty (legacy campaigns) | Same auto behavior — empty means "attach the reel" for this scope. |
+| `NEXT_POST` | Set to `{permalink}` automatically ("Auto â€” new reel permalink") | The triggering reel's real permalink, in `{link}` and the button. |
+| `NEXT_POST` | Left empty (legacy campaigns) | Same auto behavior â€” empty means "attach the reel" for this scope. |
 | `NEXT_POST` | Explicit static URL ("Use custom URL") | That static URL. No resolver call. |
 | `SPECIFIC_POST` / `ANY_POST` | Static URL as before | Static URL as before. `{permalink}` still works as an explicit opt-in. |
 
@@ -68,15 +68,15 @@ Key rules:
 
 ## 3. Creator-facing flow (campaign builder)
 
-1. In **Step 1 — Target Content Scope**, choose **Next Post**.
+1. In **Step 1 â€” Target Content Scope**, choose **Next Post**.
 2. The builder switches the destination URL to a locked display:
-   `Auto — new reel permalink`, with a **Use custom URL** button to override.
+   `Auto â€” new reel permalink`, with a **Use custom URL** button to override.
 3. An info card explains that no URL is needed: when someone comments on the
    next upload, dmplease resolves that reel's permalink and attaches it.
 4. The phone preview shows an Instagram reel placeholder and the caption
-   "Starts with your next upload — its link is attached automatically".
+   "Starts with your next upload â€” its link is attached automatically".
 5. On publish, the stored `button_url` is the sentinel `{permalink}`.
-   No database migration is required — it uses the existing column.
+   No database migration is required â€” it uses the existing column.
 
 Editing an existing campaign reads `button_url` back, so the auto state survives
 edit/save cycles (see `app/dashboard/campaigns/[id]/edit/page.tsx`).
@@ -88,25 +88,25 @@ edit/save cycles (see `app/dashboard/campaigns/[id]/edit/page.tsx`).
 When a comment webhook arrives:
 
 ```
-webhook → processWebhookPayload
-  → processCommentEventForAutomation
-      → matchesPostScope(auto, event, token)
-          → resolveLatestMedia(token, event.mediaId)   [cached]
-          → latestId === event.mediaId ? continue : skip
-      → follow gate (optional)
-      → sendCommentDm
-          → buildAutomationContent(...)                [cached link]
-              → usesReelPermalink(auto)?
-                  → resolveReelPermalink(token, event.mediaId)
-              → linkForMessage(...) + formatDmText(...)
-          → sendPrivateReply / sendPrivateReplyWithButton
-          → public reply (reuses the same template vars)
-          → dm_logs / safety_events / inbox records
+webhook â†’ processWebhookPayload
+  â†’ processCommentEventForAutomation
+      â†’ matchesPostScope(auto, event, token)
+          â†’ resolveLatestMedia(token, event.mediaId)   [cached]
+          â†’ latestId === event.mediaId ? continue : skip
+      â†’ follow gate (optional)
+      â†’ sendCommentDm
+          â†’ buildAutomationContent(...)                [cached link]
+              â†’ usesReelPermalink(auto)?
+                  â†’ resolveReelPermalink(token, event.mediaId)
+              â†’ linkForMessage(...) + formatDmText(...)
+          â†’ sendPrivateReply / sendPrivateReplyWithButton
+          â†’ public reply (reuses the same template vars)
+          â†’ dm_logs / safety_events / inbox records
 ```
 
 The follow-gate "Ask for Follow" path uses the same content builder when the
 opt-in is released (`sendOptinDm`), so a commenter who follows first still gets
-the reel permalink. The opening "follow me" DM deliberately uses no link —
+the reel permalink. The opening "follow me" DM deliberately uses no link â€”
 showing a setup-time sentinel there would be meaningless.
 
 ---
@@ -119,7 +119,7 @@ showing a setup-time sentinel there would be meaningless.
 | `lib/meta/reel-link-resolver.ts` | Server-side cached resolution for latest media and per-media permalinks. |
 | `lib/meta/dm-content.ts` | Single place that builds final DM text, template vars and button URL. |
 | `lib/meta/dm-template.ts` | Pure helpers (`personalizeMessage`, `linkForMessage`, `formatDmText`). Re-exported from the processor for compatibility. |
-| `lib/meta/client.ts` | Added `getMediaPermalink(accessToken, mediaId)` — a single-object Graph fetch (`fields=permalink`) on the correct host (`instagramApiBase`). |
+| `lib/meta/client.ts` | Added `getMediaPermalink(accessToken, mediaId)` â€” a single-object Graph fetch (`fields=permalink`) on the correct host (`instagramApiBase`). |
 | `lib/meta/webhook-processor.ts` | Wires scope matching and both comment/opt-in send paths to the new modules. |
 | `lib/validation/campaign.ts` | Accepts the `{permalink}` sentinel in `button_url`. |
 | `components/campaigns/campaign-builder.tsx` | NEXT_POST UI: sentinel, locked URL display, info card, preview URL. |
@@ -136,14 +136,14 @@ tuned in one file.
 
 | Concern | Value |
 | --- | --- |
-| Layers | in-process Map → Upstash Redis → Meta Graph API |
+| Layers | in-process Map â†’ Upstash Redis â†’ Meta Graph API |
 | Latest media TTL | 5 minutes (`LATEST_TTL_SECONDS`) |
-| Permalink TTL | 7 days (`PERMALINK_TTL_SECONDS`) — immutable once published |
-| Failure TTL | 30 seconds (`FAILURE_TTL_SECONDS`) — short-circuits repeated failures during a spike |
+| Permalink TTL | 7 days (`PERMALINK_TTL_SECONDS`) â€” immutable once published |
+| Failure TTL | 30 seconds (`FAILURE_TTL_SECONDS`) â€” short-circuits repeated failures during a spike |
 | New-upload refresh | A mismatching `hintMediaId` forces one refresh per 30 seconds (`MISMATCH_REFRESH_MS`) |
 | Concurrency | `singleflight` map coalesces simultaneous misses per isolate |
 | Key safety | Access token is FNV-1a hashed before use in a cache key; raw secrets never enter Redis keys |
-| Cache failures | Redis errors are swallowed — the cache is an optimisation, never a dependency |
+| Cache failures | Redis errors are swallowed â€” the cache is an optimisation, never a dependency |
 
 Effect: a viral burst of comments on one new reel makes **one** latest-media
 Graph call and **one** permalink Graph call (per cache key), not one per DM.
@@ -152,16 +152,16 @@ Graph call and **one** permalink Graph call (per cache key), not one per DM.
 
 ## 7. Failure handling and edge cases
 
-- **Meta returns no permalink** → `linkSource: "unavailable"`, link/button dropped,
+- **Meta returns no permalink** â†’ `linkSource: "unavailable"`, link/button dropped,
   DM still sent with the rest of the message. A PostHog event records the result.
-- **Meta returns error 190 (invalid token)** → existing `markTokenInvalid()`
+- **Meta returns error 190 (invalid token)** â†’ existing `markTokenInvalid()`
   path still applies; no special-case here.
-- **Redis unavailable** → in-process cache + direct Graph call; behavior unchanged.
-- **Old campaign with `NEXT_POST` and no URL** → treated as auto-attach.
-- **Old campaign with a static URL** → unaffected.
-- **Sentinel leak prevention** → `applyFollowGate()` and the generic pending
+- **Redis unavailable** â†’ in-process cache + direct Graph call; behavior unchanged.
+- **Old campaign with `NEXT_POST` and no URL** â†’ treated as auto-attach.
+- **Old campaign with a static URL** â†’ unaffected.
+- **Sentinel leak prevention** â†’ `applyFollowGate()` and the generic pending
   release strip the sentinel from opening/legacy DMs.
-- **Hourly-cap overflow / queued DMs** → the queued job re-runs the comment
+- **Hourly-cap overflow / queued DMs** â†’ the queued job re-runs the comment
   event, so it resolves the permalink through the same path.
 
 ---
@@ -181,19 +181,19 @@ Graph call and **one** permalink Graph call (per cache key), not one per DM.
 Commands and last result:
 
 ```bash
-npm test          # 18 files, 103 tests — all pass
+npm test          # 18 files, 103 tests â€” all pass
 npm run lint      # clean
 npx tsc --noEmit  # clean
 ```
 
 New/updated coverage:
 
-- `tests/reel-link-resolver.test.ts` — sequential caching, concurrent
+- `tests/reel-link-resolver.test.ts` â€” sequential caching, concurrent
   singleflight, permalink caching, failure short-circuit, new-upload refresh.
-- `tests/dm-content.test.ts` — empty URL vs sentinel, static URL preserved,
+- `tests/dm-content.test.ts` â€” empty URL vs sentinel, static URL preserved,
   failure drops the link, specific-post campaigns unchanged.
-- `tests/campaign-validation.test.ts` — `{permalink}` accepted.
-- `tests/webhook-processor.test.ts` — NEXT_POST matching with cached latest media.
+- `tests/campaign-validation.test.ts` â€” `{permalink}` accepted.
+- `tests/webhook-processor.test.ts` â€” NEXT_POST matching with cached latest media.
 
 ---
 
@@ -203,7 +203,7 @@ New/updated coverage:
   `lib/meta/reel-link-resolver.ts`.
 - To change the sentinel, update `AUTO_REEL_LINK` in `lib/reel-link.ts` **and**
   the validation message/test fixtures. Stored campaigns keep the old token,
-  so a migration would be needed for a production rename — prefer keeping it.
+  so a migration would be needed for a production rename â€” prefer keeping it.
 - To add auto-attach to another scope (e.g. story rules), call
   `buildAutomationContent()` from that send path with the correct `mediaId`.
 - `clearReelLinkCache()` exists for tests; call it between cases that need a
@@ -217,12 +217,12 @@ New/updated coverage:
 
 **Next Post now really does auto-attach the reel:** the real permalink is
 resolved once, cached across the whole fleet, and injected into the DM and
-button at send time — with explicit static URLs and failure fallbacks handled
+button at send time â€” with explicit static URLs and failure fallbacks handled
 safely.
 
 ---
 
-# Part 2 — Opening DM (Ask for Follow)
+# Part 2 â€” Opening DM (Ask for Follow)
 
 ## 12. What problem it solves
 
@@ -233,20 +233,20 @@ a successful follow check, the real guide DM is released.
 The runtime flow already worked, but the feature was not properly established:
 
 - The copy was editable in the campaign builder, but there was **no single
-  source of truth** for its defaults, placeholders and length limits — the same
+  source of truth** for its defaults, placeholders and length limits â€” the same
   logic was duplicated across campaign, rule and fallback paths.
 - The opener was **not recorded as a sent DM**: no `dm_logs` row, no inbox
   message, no `dm_sent` metric. The dashboard counted *pending opt-in rows*
   (created before the Meta call, deleted on failure), so "Opening messages
   sent" could overstate reality.
-- `loadPendingGateConfig()` fell back to `pending.message` — which is the
-  **guide DM**, not the opener — when stored copy was missing.
+- `loadPendingGateConfig()` fell back to `pending.message` â€” which is the
+  **guide DM**, not the opener â€” when stored copy was missing.
 
 ## 13. Behavior
 
 | Situation | Result |
 | --- | --- |
-| Confirmed follower | No opener — the guide DM is delivered immediately. |
+| Confirmed follower | No opener â€” the guide DM is delivered immediately. |
 | Confirmed non-follower | Opening DM with `OPTIN:` button; guide DM withheld until verified. |
 | Meta check unavailable + `hold` (default) | Opening DM; follow policy never silently fails open. |
 | Meta check unavailable + `deliver` | `follow_gate_exception` safety event; guide DM delivered. |
@@ -257,7 +257,7 @@ The runtime flow already worked, but the feature was not properly established:
 
 `{username}`, `{keyword}` and `{link}` are supported in the opener, with safe
 defaults (`there`, `this`, empty). For `NEXT_POST` campaigns the `{link}` value
-is intentionally empty in the opener — the real reel permalink is attached to
+is intentionally empty in the opener â€” the real reel permalink is attached to
 the guide DM, not to a "follow me" CTA.
 
 ## 14. Architecture / file map
@@ -278,20 +278,20 @@ reply or a share.
 
 ## 15. Side effects of a successful opening DM
 
-1. `safety_events` row — `kind = "follow_gate_opening"`.
-2. `dm_sent` metric — target is the automation, rule or pending ID.
+1. `safety_events` row â€” `kind = "follow_gate_opening"`.
+2. `dm_sent` metric â€” target is the automation, rule or pending ID.
 3. PostHog `follow_gate_opening_sent` with the verification reason.
 4. Inbound-conversation `messages` row (outbound, bot, sent).
-5. `dm_logs` row — `trigger_keyword = OPENING`, `keyword = OPENING`,
+5. `dm_logs` row â€” `trigger_keyword = OPENING`, `keyword = OPENING`,
    `sequence_step = 0`, `variant = "opening"`, `status = SENT`, and the source
    `post_id` when the opener was triggered by a comment.
 
 ## 16. Tests and verification
 
-- `tests/opening-dm.test.ts` — defaults, override, truncation, interpolation,
+- `tests/opening-dm.test.ts` â€” defaults, override, truncation, interpolation,
   safe fallbacks, clickable links.
-- `tests/campaign-validation.test.ts` — shared length limit is enforced.
-- `tests/follow-gate.test.ts` — verification/gate behavior unchanged by the
+- `tests/campaign-validation.test.ts` â€” shared length limit is enforced.
+- `tests/follow-gate.test.ts` â€” verification/gate behavior unchanged by the
   copy-module move (`buildOpeningText` re-export keeps the existing API).
 
 Run `npm test`, `npm run lint` and `npx tsc --noEmit` after any change here.
@@ -300,7 +300,7 @@ Run `npm test`, `npm run lint` and `npx tsc --noEmit` after any change here.
 
 - Change default copy or length limits in `lib/follow-gate-constants.ts`; both
   the UI and validation pick them up automatically.
-- To add another opener variable, extend `buildOpeningText()` and the docs —
+- To add another opener variable, extend `buildOpeningText()` and the docs â€”
   do not add ad-hoc replacements in the processor.
 - Never send the `{permalink}` sentinel as the opener's `{link}`; strip it the
   way `applyFollowGate()` does.
@@ -315,7 +315,7 @@ count delivered openers instead of pending records.
 
 ---
 
-# Part 3 — 24h follow-ups
+# Part 3 â€” 24h follow-ups
 
 ## 19. What problem it solves
 
@@ -329,11 +329,11 @@ conversion outcomes were not deduplicated through one path.
 | Situation | Result |
 | --- | --- |
 | Step due, no engagement | DM sent, `followup_events` records `sent`. |
-| Opt-in confirmed 24h ago | Follow-up due — **opt-in is the clock**, first DM is the fallback. |
+| Opt-in confirmed 24h ago | Follow-up due â€” **opt-in is the clock**, first DM is the fallback. |
 | Recipient clicked a tracked link after the anchor | `cancelled`, no DM. |
 | Recipient replied after the anchor | `cancelled`, no DM. |
-| Conversion recorded for the contact | `converted`, no DM — duplicate conversion webhooks cannot count twice. |
-| In holdout bucket | `held_out`, no DM — stable hash keeps the same follower in the same bucket. |
+| Conversion recorded for the contact | `converted`, no DM â€” duplicate conversion webhooks cannot count twice. |
+| In holdout bucket | `held_out`, no DM â€” stable hash keeps the same follower in the same bucket. |
 | Send fails | No `sent` event, so a later cron run retries it. |
 | Two cron runs overlap | Distributed lock (`withCronLock`) makes the second a no-op; unique event keys add a second layer. |
 
@@ -341,20 +341,20 @@ conversion outcomes were not deduplicated through one path.
 
 | File | Role |
 | --- | --- |
-| `lib/followup-constants.ts` | Client-safe limits and defaults (max 3 steps, 60 min–7 days, 1000-char message). |
+| `lib/followup-constants.ts` | Client-safe limits and defaults (max 3 steps, 60 minâ€“7 days, 1000-char message). |
 | `lib/followup-policy.ts` | Pure decisions: anchor selection, due check, cancellation reason, step numbering. |
 | `lib/validation/followup.ts` | One zod schema used by the editor's server action, so invalid steps never reach the engine. |
 | `lib/followups.ts` | Bounded, batched engine. One `recordEvent()` path for all outcomes; content reused from `buildAutomationContent()`. |
 | `components/campaigns/followup-steps-editor.tsx` | Accessible editor: labelled fields, fieldsets/legends, `aria-describedby`, alerts, kill switches, holdout slider. |
-| `app/dashboard/campaigns/actions.ts` | `saveFollowupSteps()` — ownership check + validation + upsert/remove in one transaction of operations. |
+| `app/dashboard/campaigns/actions.ts` | `saveFollowupSteps()` â€” ownership check + validation + upsert/remove in one transaction of operations. |
 | `vercel.json` | `7 * * * *` hourly cron for `/api/cron/followups`. |
 | `supabase/migrations/20261126_followups_cancellation.sql` | Adds `cancelled` to the action constraint and indexes for due/engagement queries. |
 
 ### Scaling rules baked in
 
 - An hourly cron wraps the whole run in a 55-second Redis lock.
-- Steps are capped at 3 × 50 rows; each step processes at most 50 baseline DMs per run.
-- Per step, contacts, conversions, clicks and replies are loaded with **one query each** (two for replies) and joined in memory — no query per recipient.
+- Steps are capped at 3 Ã— 50 rows; each step processes at most 50 baseline DMs per run.
+- Per step, contacts, conversions, clicks and replies are loaded with **one query each** (two for replies) and joined in memory â€” no query per recipient.
 - All writes use upsert with `ignoreDuplicates`, so retries and overlapping schedules are harmless.
 
 ## 22. UI and accessibility
@@ -363,15 +363,15 @@ The editor lives on the campaign edit page under **24h follow-ups** and is linke
 
 ## 23. Tests and verification
 
-- `tests/followup-policy.test.ts` — opt-in baseline, due check, cancellation ordering, invalid timestamps, step numbering.
-- `tests/followups.test.ts` — deterministic holdout buckets and 0%/100% behavior (unchanged).
+- `tests/followup-policy.test.ts` â€” opt-in baseline, due check, cancellation ordering, invalid timestamps, step numbering.
+- `tests/followups.test.ts` â€” deterministic holdout buckets and 0%/100% behavior (unchanged).
 
 Run `npm test`, `npm run lint` and `npx tsc --noEmit` after any change here.
 
 ## 24. Maintenance notes
 
 - Change limits/defaults in `lib/followup-constants.ts`; UI, validation and engine stay in sync.
-- Never add a send path that bypasses `recordEvent()` — that is the dedupe boundary.
+- Never add a send path that bypasses `recordEvent()` â€” that is the dedupe boundary.
 - If a new cancellation signal is needed, add it to `cancellationReason()` and to the migration's action constraint, not as an ad-hoc check in the engine.
 - The QStash schedule at `/api/admin/followup-schedule` remains an alternative trigger; both hit the same locked cron route.
 
@@ -381,13 +381,13 @@ Run `npm test`, `npm run lint` and `npx tsc --noEmit` after any change here.
 
 ---
 
-# Part 4 — Public comment replies
+# Part 4 â€” Public comment replies
 
 ## 27. What problem it solves
 
 The Graph call itself worked, but two things undermined it in production:
 
-- The result of `POST /{comment-id}/replies` was **discarded** — a failed public reply left no row, no metric and no diagnostic, even though the DM succeeded.
+- The result of `POST /{comment-id}/replies` was **discarded** â€” a failed public reply left no row, no metric and no diagnostic, even though the DM succeeded.
 - The backend supports up to 10 rotating variants, but the builder stored exactly **one string**, and the field had no accessible label (placeholder only). Creators could not use rotation at all, and screen-reader users had no field name.
 
 ## 28. Behavior
@@ -396,12 +396,12 @@ The Graph call itself worked, but two things undermined it in production:
 | --- | --- |
 | DM delivered, public reply enabled | One variant is chosen and posted under the comment. |
 | Several variants configured | Chosen randomly per send; blank/duplicate entries are removed first. |
-| No variants configured | At least 3 natural defaults are used ("Sent you a DM! 📩", "Just sent it over to your inbox 👇", "Done — it's in your DM, {username}! ✅", plus more). |
+| No variants configured | At least 3 natural defaults are used ("Sent you a DM! ðŸ“©", "Just sent it over to your inbox ðŸ‘‡", "Done â€” it's in your DM, {username}! âœ…", plus more). |
 | One variant configured | Two natural defaults are added automatically so the thread never shows one repeated line. |
 | Same reply recently used | Excluded from the next pick. Redis remembers the last 3 per automation across instances, so two comments on different workers cannot get the same reply back-to-back. |
 | Public reply fails | `public_replies` row with `status = failed`, error code/message, warning log and `public_reply_failed` event. The DM is still counted as sent. |
 | Public reply succeeds | `public_replies` row with `status = sent` and a `public_reply_sent` PostHog event. Counted from the ledger, not the DM metric (so "DMs sent" stays honest). |
-| Follow-up DM sent | No public reply — replies belong to the original comment only. |
+| Follow-up DM sent | No public reply â€” replies belong to the original comment only. |
 
 Placeholders `{username}`, `{keyword}` and `{link}` use the same renderer as the DM, so the public text cannot drift from the private text.
 
@@ -409,7 +409,7 @@ Placeholders `{username}`, `{keyword}` and `{link}` use the same renderer as the
 
 | File | Role |
 | --- | --- |
-| `lib/public-replies.ts` | Natural defaults, client-safe pure helpers: `normalizePublicReplies()` (guarantees ≥3 variants), `choosePublicReply()` (excludes recently used), `renderPublicReply()`. |
+| `lib/public-replies.ts` | Natural defaults, client-safe pure helpers: `normalizePublicReplies()` (guarantees â‰¥3 variants), `choosePublicReply()` (excludes recently used), `renderPublicReply()`. |
 | `lib/meta/public-reply-rotation.ts` | Recent-variant history in Redis (with in-process fallback) shared across serverless instances. |
 | `lib/validation/public-replies.ts` | Shared zod schema (max 10 variants, 500 chars each), reused by campaign validation. |
 | `lib/meta/webhook-processor.ts` | `sendPublicReply()` is the only send path: retry, ledger row, metrics, analytics. |
@@ -423,22 +423,22 @@ The toggle and every message input have explicit `<label htmlFor>` associations;
 
 ## 31. Tests and verification
 
-- `tests/public-replies.test.ts` — defaults, normalisation, caps, deterministic rotation, personalisation.
-- `tests/campaign-validation.test.ts` — over-limit/long variants are rejected.
+- `tests/public-replies.test.ts` â€” defaults, normalisation, caps, deterministic rotation, personalisation.
+- `tests/campaign-validation.test.ts` â€” over-limit/long variants are rejected.
 
 Run `npm test`, `npm run lint` and `npx tsc --noEmit` after any change here.
 
 ## 32. Part 4 takeaway
 
-**Public replies are now honest and varied:** creators start with at least three natural variants, history-aware rotation never repeats the same reply back-to-back, and every send — success or failure — is recorded instead of silently disappearing.
+**Public replies are now honest and varied:** creators start with at least three natural variants, history-aware rotation never repeats the same reply back-to-back, and every send â€” success or failure â€” is recorded instead of silently disappearing.
 
 ---
 
-# Part 5 — Re-run (durable jobs)
+# Part 5 â€” Re-run (durable jobs)
 
 ## 34. What problem it solves
 
-The old re-run synchronously queried comments, then looped inside `after()` — a 60-second budget could truncate it, it reported "queued" before anything was sent, it happily re-DMed from paused campaigns, and there was no record of progress or failure.
+The old re-run synchronously queried comments, then looped inside `after()` â€” a 60-second budget could truncate it, it reported "queued" before anything was sent, it happily re-DMed from paused campaigns, and there was no record of progress or failure.
 
 ## 35. Behavior
 
@@ -463,17 +463,17 @@ Eligibility is unchanged in spirit: keyword match, one recipient per commenter, 
 | `app/api/campaigns/rerun/route.ts` | Auth, active check, preview, job + item creation, queue publish. |
 | `app/api/workers/rerun/route.ts` | Signed QStash worker for each batch. |
 | `app/api/campaigns/rerun/[jobId]/route.ts` | `GET` progress and `PATCH` cancellation. |
-| `components/campaigns/rerun-dialog.tsx` | Accessible preview → progress → result flow. |
+| `components/campaigns/rerun-dialog.tsx` | Accessible preview â†’ progress â†’ result flow. |
 | `supabase/migrations/20261126_rerun_jobs.sql` | Job ledger, work items, status constraints, RLS. |
 
 ## 37. UX and accessibility
 
-The dialog uses labelled radio options for the look-back window (`<fieldset>/<legend>`), `role="status"` while previewing, `role="alert"` for errors, `aria-live="polite"` with a `role="progressbar"` for progress, and a clear "Stop re-run" action while work is in flight. Every state — preview, running, completed, cancelled — is described in plain language. Nothing says "queued DMs" until the DMs are actually sent.
+The dialog uses labelled radio options for the look-back window (`<fieldset>/<legend>`), `role="status"` while previewing, `role="alert"` for errors, `aria-live="polite"` with a `role="progressbar"` for progress, and a clear "Stop re-run" action while work is in flight. Every state â€” preview, running, completed, cancelled â€” is described in plain language. Nothing says "queued DMs" until the DMs are actually sent.
 
 ## 38. Tests and verification
 
-- `tests/rerun-candidates.test.ts` — keyword matching rules.
-- `npm test`, `npm run lint`, `npx tsc --noEmit` — all clean.
+- `tests/rerun-candidates.test.ts` â€” keyword matching rules.
+- `npm test`, `npm run lint`, `npx tsc --noEmit` â€” all clean.
 
 ## 39. Part 5 takeaway
 
@@ -481,7 +481,7 @@ The dialog uses labelled radio options for the look-back window (`<fieldset>/<le
 
 ---
 
-# Part 6 — Personalised DMs
+# Part 6 â€” Personalised DMs
 
 ## 40. What problem it solves
 
@@ -505,7 +505,7 @@ Both `{name}` and `{{name}}` work, case-insensitively. Unknown tokens are left v
 
 | File | Role |
 |---|---|
-| `lib/dm-variables.ts` | Client-safe catalogue, renderer, discovery and fallbacks — one source of truth. |
+| `lib/dm-variables.ts` | Client-safe catalogue, renderer, discovery and fallbacks â€” one source of truth. |
 | `lib/vouchers.ts` | HMAC-derived, stable codes + durable audit rows in `dm_vouchers`. |
 | `lib/meta/dm-variable-resolver.ts` | Loads contact fields only when a template uses them; mints vouchers only when needed. |
 | `lib/meta/dm-template.ts` | `personalizeMessage` / `formatDmText` delegate to the shared engine. |
@@ -528,8 +528,8 @@ Resolution is demand-driven: no contact query unless `{name|email|phone}` is pre
 
 ## 44. Tests and verification
 
-- `tests/dm-variables.test.ts` — discovery (both brace styles), rendering, fallbacks, unknown tokens, missing-value reporting, legacy compatibility, deterministic vouchers.
-- `npm test`, `npm run lint`, `npx tsc --noEmit` — clean.
+- `tests/dm-variables.test.ts` â€” discovery (both brace styles), rendering, fallbacks, unknown tokens, missing-value reporting, legacy compatibility, deterministic vouchers.
+- `npm test`, `npm run lint`, `npx tsc --noEmit` â€” clean.
 
 ## 45. Part 6 takeaway
 
@@ -537,17 +537,17 @@ Resolution is demand-driven: no contact query unless `{name|email|phone}` is pre
 
 ---
 
-# Part 7 — DM variations
+# Part 7 â€” DM variations
 
 ## 46. What problem it solves
 
-A rotator existed but nothing ever populated the variant array — the campaign builder always sent `[]`. Callers also never passed `previousIndex`, so the same message could land on two consecutive followers.
+A rotator existed but nothing ever populated the variant array â€” the campaign builder always sent `[]`. Callers also never passed `previousIndex`, so the same message could land on two consecutive followers.
 
 ## 47. Behavior
 
 | Situation | Result |
 |---|---|
-| No variants configured | The main message is used — identical behavior to before. |
+| No variants configured | The main message is used â€” identical behavior to before. |
 | Variants configured | One is chosen per send; the previous variants are excluded, so consecutive repeats cannot happen. |
 | Two events on different workers | Redis-backed history keeps the exclusion list shared, so the guarantee survives serverless scaling. |
 | A send fails | The variant is not recorded, so it is not "burned" by a failed delivery. |
@@ -571,8 +571,8 @@ Variants are labelled fields with their own variable pickers and character count
 
 ## 50. Tests and verification
 
-- `tests/dm-variants.test.ts` — normalization, caps, exclusion of recent variants, a 20-send simulated thread with no consecutive repeats, single-variant fallback.
-- `tests/campaign-validation.test.ts` — over-limit/long variants rejected.
+- `tests/dm-variants.test.ts` â€” normalization, caps, exclusion of recent variants, a 20-send simulated thread with no consecutive repeats, single-variant fallback.
+- `tests/campaign-validation.test.ts` â€” over-limit/long variants rejected.
 
 ## 51. Part 7 takeaway
 
@@ -580,7 +580,7 @@ Variants are labelled fields with their own variable pickers and character count
 
 ---
 
-# Part 9 — Short-link rotation
+# Part 9 â€” Short-link rotation
 
 ## 58. What problem it solves
 
@@ -590,12 +590,12 @@ Variants are labelled fields with their own variable pickers and character count
 
 | Situation | Result |
 |---|---|
-| Smart links off | The destination URL is sent directly with UTM params — unchanged behavior. |
+| Smart links off | The destination URL is sent directly with UTM params â€” unchanged behavior. |
 | Smart links on, single destination | A genuinely short URL (e.g. `dmpl.co/A1b2C3d4`) is sent; it redirects to the destination with attribution appended. |
 | Rotation group configured | Each recipient is assigned a destination using sticky hashing (same person always gets the same link) or round-robin. |
 | Click | The short link resolves from Redis/DB, records a click row with full attribution, and redirects with UTMs appended. |
 | Legacy DM | Old signed tokens still resolve and redirect. |
-| R2/Cloudflare | Not involved — short links are pure data, no binary. |
+| R2/Cloudflare | Not involved â€” short links are pure data, no binary. |
 
 Short links matter because Instagram does not linkify long tokens in DM text; an 8-character code fits on one line and renders as a real clickable link.
 
@@ -625,8 +625,8 @@ Set `SHORT_LINK_DOMAIN` (e.g. `https://dmpl.co`) for the shortest possible links
 
 ## 63. Tests and verification
 
-- `tests/link-rotation.test.ts` — deterministic sticky assignment, spread, round-robin cycling, disabled-target skipping, empty result.
-- `npm test`, `npm run lint`, `npx tsc --noEmit` — clean.
+- `tests/link-rotation.test.ts` â€” deterministic sticky assignment, spread, round-robin cycling, disabled-target skipping, empty result.
+- `npm test`, `npm run lint`, `npx tsc --noEmit` â€” clean.
 
 ## 64. Part 9 takeaway
 
@@ -634,18 +634,18 @@ Set `SHORT_LINK_DOMAIN` (e.g. `https://dmpl.co`) for the shortest possible links
 
 ---
 
-# Part 10 — DM queue
+# Part 10 â€” DM queue
 
 ## 65. What problem it solves
 
-QStash is the real queue, but `kind="queued"` overflow rows were write-only: parked by `sendCommentDm` and never drained. The manual send endpoint also bypassed every safety guard — no hourly cap, no cooldown, no dedupe — so a creator could violate Meta's limits from the Inbox.
+QStash is the real queue, but `kind="queued"` overflow rows were write-only: parked by `sendCommentDm` and never drained. The manual send endpoint also bypassed every safety guard â€” no hourly cap, no cooldown, no dedupe â€” so a creator could violate Meta's limits from the Inbox.
 
 ## 66. Behavior
 
 | Situation | Result |
 |---|---|
 | Hourly cap reached | The DM is parked in `pending_dms` (`kind = 'queued'`) and retried by the worker. |
-| Cap still full on retry | Backoff (5 → 10 → 20 → 40 → 60 min) and retry up to 5 times. |
+| Cap still full on retry | Backoff (5 â†’ 10 â†’ 20 â†’ 40 â†’ 60 min) and retry up to 5 times. |
 | 5 failures | Row marked `failed` with the last error; visible on the Overview dashboard. |
 | Manual DM | Hourly cap (30/hour), recipient cooldown, 24h dedupe, personalisation and logging all apply. |
 | Cap reached manually | Returns 429 with `retryAfterMs`; nothing is silently dropped. |
@@ -668,7 +668,7 @@ The Overview dashboard shows pending count, failed count and the age of the olde
 
 ## 69. Tests and verification
 
-- `npm test`, `npm run lint`, `npx tsc --noEmit` — clean. The queue engine is exercised by the same processor tests (`processCommentEventForAutomation`).
+- `npm test`, `npm run lint`, `npx tsc --noEmit` â€” clean. The queue engine is exercised by the same processor tests (`processCommentEventForAutomation`).
 
 ## 70. Part 10 takeaway
 
@@ -676,7 +676,7 @@ The Overview dashboard shows pending count, failed count and the age of the olde
 
 ---
 
-# Part 8 — Six DM formats (Cloudflare R2)
+# Part 8 â€” Six DM formats (Cloudflare R2)
 
 ## 52. What problem it solves
 
@@ -693,13 +693,13 @@ Only text (plus a button template) was sendable. There was no format column, no 
 | Card | generic template, 1 element | optional image URL |
 | Carousel | generic template, up to 10 elements | optional image URLs |
 
-Companion text is sent in the same message for media/file formats. Templates cannot carry companion text, so it is sent as a preceding DM when configured. If an asset is missing or Meta rejects the attachment, the message degrades to text rather than failing — no lead is lost.
+Companion text is sent in the same message for media/file formats. Templates cannot carry companion text, so it is sent as a preceding DM when configured. If an asset is missing or Meta rejects the attachment, the message degrades to text rather than failing â€” no lead is lost.
 
 ## 54. Cloudflare architecture
 
 | File | Role |
 |---|---|
-| `lib/cloudflare/r2.ts` | S3-compatible R2 client, presigned PUT URLs (2 min), public CDN URLs, safe object keys under `workspaces/{id}/messages/{format}/…`, scoped deletion. |
+| `lib/cloudflare/r2.ts` | S3-compatible R2 client, presigned PUT URLs (2 min), public CDN URLs, safe object keys under `workspaces/{id}/messages/{format}/â€¦`, scoped deletion. |
 | `app/api/assets/sign/route.ts` | `GET` config status, `POST` signed upload ticket with auth + MIME/size validation, `DELETE` scoped asset removal. |
 | `lib/message-formats.ts` | Client-safe format catalogue, Meta limits and card normalisation. |
 | `lib/meta/message-attachments.ts` | Pure builder producing Graph attachment payloads for every format. |
@@ -720,8 +720,8 @@ Enable a public CDN domain (or r2.dev) on the bucket and configure CORS for `PUT
 
 ## 56. Tests and verification
 
-- `tests/message-formats.test.ts` — MIME/size validation, all six Graph payloads, variable rendering, card limits, graceful text fallback.
-- `npm test` (156 passing), `npm run lint`, `npx tsc --noEmit` — clean.
+- `tests/message-formats.test.ts` â€” MIME/size validation, all six Graph payloads, variable rendering, card limits, graceful text fallback.
+- `npm test` (156 passing), `npm run lint`, `npx tsc --noEmit` â€” clean.
 
 ## 57. Part 8 takeaway
 
@@ -729,11 +729,11 @@ Enable a public CDN domain (or r2.dev) on the bucket and configure CORS for `PUT
 
 ---
 
-# Part 11 — Safety engine
+# Part 11 â€” Safety engine
 
 ## 71. What problem it solves
 
-LinkPlease markets a "Safety Engine" with a live dashboard showing 100% delivered and 0 breaches — but those numbers are a mockup. Our safety was already more honest (real token bucket, cooldown, dedupe, jitter, QStash) but it was invisible to creators and never proactively throttled during a spike.
+LinkPlease markets a "Safety Engine" with a live dashboard showing 100% delivered and 0 breaches â€” but those numbers are a mockup. Our safety was already more honest (real token bucket, cooldown, dedupe, jitter, QStash) but it was invisible to creators and never proactively throttled during a spike.
 
 ## 72. Behavior
 
@@ -756,7 +756,7 @@ LinkPlease markets a "Safety Engine" with a live dashboard showing 100% delivere
 |---|---|
 | `lib/meta/throttle.ts` | Proactive viral-spike throttle (elevated/critical). |
 | `lib/meta/account-health.ts` | Consecutive failures, last send, token status, auto-pause. |
-| `lib/meta/safety-score.ts` | Pure composite score (0–100) + band + deductions. |
+| `lib/meta/safety-score.ts` | Pure composite score (0â€“100) + band + deductions. |
 | `lib/meta/webhook-processor.ts` | `recordSafety()` kinds: `rate_limit_breach`, `viral_throttle`, `viral_spike`, `opt_out`. `isOptedOut`/`recordOptOut`. |
 | `app/dashboard/safety/page.tsx` | Dedicated dashboard: score, live gauge, queue, account health, recent events. |
 | `app/api/cron/safety-retention/route.ts` | 30-day retention for `safety_events`. |
@@ -765,7 +765,7 @@ LinkPlease markets a "Safety Engine" with a live dashboard showing 100% delivere
 
 ## 74. UI and accessibility
 
-- Safety score is a single number with a colour bar, band label and a list of deductions — no mystery numbers.
+- Safety score is a single number with a colour bar, band label and a list of deductions â€” no mystery numbers.
 - Live gauge shows sends/min vs Meta limit with green/amber/red thresholds.
 - Account health shows token status, consecutive failures and last error in plain text.
 - Pause/resume is a real button with a clear consequence ("queued DMs wait for resume").
@@ -789,9 +789,9 @@ The engine is calibrated to Meta's documented ceilings, not guesses. Constants l
 
 ## 76. Tests and verification
 
-- `tests/safety-score.test.ts` — 100 baseline, deductions, clamping, summary.
-- `tests/safety-limits.test.ts` — Meta limit constants, 30-day reply-once memory, spam screening.
-- `npm test`, `npm run lint`, `npx tsc --noEmit` — clean.
+- `tests/safety-score.test.ts` â€” 100 baseline, deductions, clamping, summary.
+- `tests/safety-limits.test.ts` â€” Meta limit constants, 30-day reply-once memory, spam screening.
+- `npm test`, `npm run lint`, `npx tsc --noEmit` â€” clean.
 
 ## 77. Part 11 takeaway
 
@@ -799,7 +799,7 @@ The engine is calibrated to Meta's documented ceilings, not guesses. Constants l
 
 ---
 
-# Part 12 — Safety polish
+# Part 12 â€” Safety polish
 
 ## 77. What problem it solves
 
@@ -812,7 +812,7 @@ application path.
 
 | Feature | Behavior |
 |---|---|
-| Plain-English explanations | Every safety event kind (`rate_limit_breach`, `viral_throttle`, `opt_out`, …) renders a human sentence in the dashboard and digest. Unknown kinds fall back to a readable label. |
+| Plain-English explanations | Every safety event kind (`rate_limit_breach`, `viral_throttle`, `opt_out`, â€¦) renders a human sentence in the dashboard and digest. Unknown kinds fall back to a readable label. |
 | Weekly safety digest | `/api/cron/safety-digest` runs Monday 09:00, aggregates 7 days of safety events per workspace, and emails the configured admin list via Resend. |
 | Tech Provider badge | `docs/META_TECH_PROVIDER_BADGE.md` lists prerequisites, application steps, demo-video requirements and post-approval code locations. |
 
@@ -993,3 +993,531 @@ px tsc --noEmit - clean.
 ## 98. Part 15 takeaway
 
 **Lead capture is now a first-class step:** validated replies become real contacts, every prompt/capture/skip is recorded, and the creator can see, edit and export the data without leaving the dashboard.
+
+---
+
+# Part 16 - Re-run / retro-trigger
+
+## 99. What problem it solves
+
+Meta does not replay webhooks, so a campaign created today cannot help the people who commented yesterday. T1.8 stores every inbound comment and lets a creator apply a new automation to the last 7 days of comments, with a dry-run preview and duplicate suppression.
+
+## 100. Behavior
+
+| Situation | Result |
+|---|---|
+| Creator opens Re-run | Dialog shows 1/7/30-day windows and a dry-run count. |
+| Dry run | Returns eligible count, matched count, already-contacted, opted-out and account-paused counts, plus a sample. |
+| Start re-run | Creates a durable job and returns immediately; delivery happens in batches. |
+| Already contacted | Anyone messaged by this automation in the last 30 days is skipped. |
+| Opted out | Skipped. |
+| Account paused / token invalid | Skipped. |
+| Worker crash | Claimed items older than 5 minutes are reset; after 3 attempts they are marked failed. |
+| Concurrent re-run | A second job for the same automation is rejected with the active job ID. |
+| Progress | Dialog polls the job and shows sent/skipped/failed/pending. |
+| Cancel | Stops the job; the worker checks status on every batch. |
+
+## 101. Architecture / file map
+
+| File | Role |
+|---|---|
+| lib/rerun-candidates.ts | Pure keyword matching, duplicate window, candidate query. |
+| lib/rerun-runner.ts | Batch runner, stuck-item recovery, retry limit, counter sync. |
+| pp/api/campaigns/rerun/route.ts | Dry run + job creation + concurrent-job guard. |
+| pp/api/campaigns/rerun/[jobId]/route.ts | Progress + cancel. |
+| pp/api/workers/rerun/route.ts | QStash worker. |
+| components/campaigns/rerun-dialog.tsx | Accessible dialog with preview and progress. |
+| components/campaigns/rerun-button.tsx | Entry point on the campaign edit page. |
+| supabase/migrations/20261126_rerun_jobs.sql | Job + item ledger. |
+
+## 102. Spike safety
+
+- Candidate lookup is bounded (2,000 events) and deduped in memory.
+- Jobs are chunked into 100-row inserts and 20-item batches.
+- A per-job Redis lock prevents two workers processing the same job.
+- Compare-and-set claims prevent duplicate sends from duplicate QStash deliveries.
+- Counters are recomputed from the item ledger, so retries cannot drift.
+- The live safety engine (hourly cap, throttle, 24h dedupe, 30-day reply-once) still applies to every re-run send.
+
+## 103. Tests and verification
+
+- 	ests/rerun-candidates.test.ts - keyword matching and duplicate-window rules.
+- 
+pm test, 
+pm run lint, 
+px tsc --noEmit - clean.
+
+## 104. Part 16 takeaway
+
+**Re-runs are durable and safe:** a new automation can reach the last 7 days of commenters, the dry run tells the creator exactly who will be contacted, and duplicate suppression plus the safety engine keep a spike from turning into spam.
+
+---
+
+# Part 17 - Share-to-DM trigger
+
+## 105. What problem it solves
+
+When a follower shares a reel or post into the creator's DM, that is a high-intent signal. T1.9 turns it into a first-class campaign trigger so the creator can send a thank-you DM (and a link) exactly once per share.
+
+## 106. Behavior
+
+| Situation | Result |
+|---|---|
+| Follower shares a reel/post to the DM | parseShareEvents extracts the sender, media id, title and url. |
+| Campaign with SHARE_TO_DM exists | The thank-you DM is sent once per share. |
+| Same share delivered twice by Meta | Redis message-id key suppresses the duplicate. |
+| Same person shares again within 24h | Skipped by the per-campaign 24h guard. |
+| Same person already got this campaign for the media | Skipped by the 30-day reply-once memory. |
+| Recipient opted out | Skipped. |
+| Hourly cap / viral spike | Queued or throttled by the safety engine. |
+| No campaign, but an inbox share rule exists | The inbox rule handles it. |
+| Both exist | The campaign wins; the inbox rule is skipped to avoid double-sends. |
+
+## 107. Architecture / file map
+
+| File | Role |
+|---|---|
+| lib/meta/webhook.ts | parseShareEvents + WebhookShareEvent. |
+| lib/meta/webhook-processor.ts | processShareEventForAutomation, campaign-first share loop. |
+| supabase/migrations/20261127_share_to_dm_campaigns.sql | utomations.trigger_type + index. |
+| components/campaigns/campaign-builder.tsx | Trigger selector (Comment keyword / Share to DM). |
+| components/campaigns/phone-preview.tsx | Live share-event preview. |
+| components/campaigns/campaigns-list.tsx | "Share to DM" badge. |
+| lib/campaign-analytics.ts | shareTriggers metric. |
+
+## 108. Spike safety
+
+- The share loop is bounded to 5 campaign automations per event.
+- Every send goes through the shared safety engine (hourly cap, throttle, delay).
+- Dedupe is layered: Redis message id, 24h DB guard, 30-day reply-once.
+- A failure in one share event is caught and recorded; the rest of the batch continues.
+
+## 109. Tests and verification
+
+- 	ests/webhook-parsers.test.ts - share attachment parsing.
+- 	ests/campaign-validation.test.ts - share campaign without keywords.
+- 
+pm test, 
+pm run lint, 
+px tsc --noEmit - clean.
+
+## 110. Part 17 takeaway
+
+**Shares are now a real campaign trigger:** a follower sharing a reel gets the configured thank-you DM exactly once, with the same safety and analytics as every other trigger.
+
+## 111. Share analytics
+
+Every share is persisted in share_events (sender, media id, title, url, timestamp). The campaign edit page renders a **Share performance** card backed by lib/share-analytics.ts:
+
+| Metric | What it tells the creator |
+|---|---|
+| Shares received | How many times the reel/post was shared into the DM. |
+| Unique sharers | How many distinct people shared. |
+| Thank-you DMs | How many share-triggered DMs were delivered. |
+| Share ? DM rate | Delivery health (duplicates, opt-outs and failures lower it). |
+| Skipped | Shares suppressed by dedupe/opt-out. |
+| Link clicks | Human clicks from share-triggered DMs. |
+| Top shared media | Which reel/post drove the most shares, DMs and clicks. |
+
+Share events are attributed to a campaign by its media scope: a specific-post campaign counts shares of that post; an any-post campaign counts all workspace shares. The card is read-only and uses real <table> semantics with text labels, so it is accessible and never colour-only.
+
+---
+
+# Part 18 - Comment keyword analytics
+
+## 112. What problem it solves
+
+A creator can see that a campaign sent DMs, but not which keyword, post or media type actually drove comments, clicks and conversions. T1.10 turns the comment pipeline into a full performance view.
+
+## 113. Scope options
+
+| Scope | Meaning |
+|---|---|
+| Any Post / Reel | Every post and reel on the account. |
+| Specific Post | One selected post or reel. |
+| Next Post | The next upload; the reel permalink is attached automatically. |
+
+## 114. Metrics shown
+
+| Metric | What it tells the creator |
+|---|---|
+| Comments received | Total comments in the campaign's media scope. |
+| Unique commenters | Distinct people who commented. |
+| Matched comments | Comments that contained a configured keyword. |
+| DMs sent / failed | Delivery health. |
+| Skipped | Matched comments that did not become a DM (duplicate, opt-out, follow gate). |
+| Comment ? DM rate | How many matched comments converted to a delivered DM. |
+| Human clicks | Non-bot clicks from the campaign's links. |
+| Conversions / revenue | Attributed conversions and revenue. |
+| Average reply time | Comment received ? first DM sent. |
+| Daily trend | Comments vs DMs per day. |
+| Keyword breakdown | Comments, DMs, clicks, conversions and rate per keyword. |
+| Top posts & reels | Comments, DMs, clicks and conversions per media. |
+| Media type | Reels vs feed posts vs stories. |
+
+## 115. Architecture / file map
+
+| File | Role |
+|---|---|
+| lib/comment-analytics.ts | Pure summarizer: keyword matching, funnel, per-keyword/post/media-type, daily trend, response time. |
+| lib/campaign-analytics.ts | Loads comment events, DM logs, clicks and conversions; calls the summarizer. |
+| components/campaigns/comment-performance.tsx | Accessible performance card with tiles, trend and tables. |
+| supabase/migrations/20261127_comment_analytics.sql | comment_events.media_type/media_product_type + indexes. |
+| lib/meta/webhook.ts | Parses media type from the comment webhook. |
+
+## 116. Tests and verification
+
+- 	ests/comment-analytics.test.ts - keyword matching, funnel, per-keyword/post/media-type, daily trend, response time, empty state.
+- 
+pm test, 
+pm run lint, 
+px tsc --noEmit - clean.
+
+## 117. Part 18 takeaway
+
+**Comment campaigns are now measurable end to end:** the creator can see which keyword and which post produced comments, DMs, clicks and revenue, and how fast the automation replied.
+
+## 118. Analytics UX
+
+The campaign page keeps analytics scannable instead of stacking every card:
+
+| Improvement | Why it helps |
+|---|---|
+| Tabbed workspace (Overview / Comments / Shares / Links / Follow-ups / Follow gate) | One area at a time; no endless scroll. |
+| 7 / 30 / 90-day range selector | Compare short campaigns with long ones. |
+| Visual funnel (Comments ? Matched ? DMs ? Clicks ? Conversions) | Shows exactly where people drop off. |
+| Metric info tooltips | Beginners can learn what AOV, revenue/DM and comment?DM mean without leaving the page. |
+| Plain-English insight line | "GUIDE is your top keyword with 96 comments and 8 conversions." |
+| Actionable empty state | When conversions are zero, a link opens Settings to connect the checkout. |
+| Horizontal-scroll tables | Keyword and post tables stay usable on mobile. |
+| Share funnel | Shares ? thank-you DMs ? clicks at a glance. |
+
+All charts use ole="img" with an ria-label, tables use real <th scope="col">, and tooltips are keyboard-focusable with an ria-label.
+
+## 119. Previous-period comparison
+
+Every analytics tile now shows how the current window compares with the window immediately before it.
+
+| Metric type | Delta shown | Example |
+|---|---|---|
+| Counts (DMs, comments, clicks, conversions, shares, leads) | Percent change | +18% vs prev |
+| Revenue | Percent change | -12% vs prev |
+| Rates (delivery, read, comment?DM, share?DM, click?conversion) | Percentage points | +4 pts vs prev |
+| New metric (previous was 0) | New | New vs prev |
+| No change | — | — |
+
+**How it is computed**
+
+- The current window is [now - N days, now].
+- The previous window is [now - 2N days, now - N days], so the two never overlap.
+- Counts use (current - previous) / previous × 100.
+- Rates use current - previous percentage points.
+- When the previous value is 0, a percent change is undefined, so the UI shows New instead of a misleading infinity.
+
+**UX details**
+
+- The badge uses an arrow icon, the value, and the label — never colour alone.
+- ria-label reads the full sentence, e.g. "Up 18% vs previous period".
+- For DMs failed, a decrease is treated as good (green), so the colour reflects the outcome, not just the direction.
+- The comparison is computed in lib/period-comparison.ts and is fully unit-tested.
+
+## 120. Custom date range and saved views
+
+The analytics workspace now supports any date window, not just 7/30/90 days.
+
+| Feature | Behavior |
+|---|---|
+| Preset ranges | 7 / 30 / 90 days, one click. |
+| Custom range | Pick a start and end date; the URL becomes ?from=YYYY-MM-DD&to=YYYY-MM-DD. |
+| Validation | The start must be on or before the end; invalid input shows an inline error and does not navigate. |
+| Saved views | Name the current range + tab and save it. Views are stored per user per workspace in nalytics_views. |
+| Apply a view | One click restores the exact range and tab. |
+| Delete a view | The × on the chip removes it. |
+| Shareable | Range and tab live in the URL, so a view can be bookmarked or shared. |
+
+**Architecture**
+
+| File | Role |
+|---|---|
+| lib/analytics-range.ts | Pure esolveAnalyticsRange, previousAnalyticsRange, angeToQuery. |
+| supabase/migrations/20261127_analytics_views.sql | nalytics_views table + RLS. |
+| pp/dashboard/campaigns/analytics-view-actions.ts | List / save / delete server actions with ownership checks. |
+| components/campaigns/campaign-analytics-tabs.tsx | Range picker, custom dates, save form, saved-view chips, controlled tabs. |
+| lib/campaign-analytics.ts | Accepts an optional { from, to } range and applies it to every query. |
+
+**UX details**
+
+- The active range is shown in plain text above the tabs (Last 30 days or 2026-11-01 ? 2026-11-10 · 10 days).
+- Date inputs are labelled and constrained (min/max) so an invalid range is hard to pick.
+- Saved views are chips with an apply button and a delete button, both with ria-label.
+- Errors use ole="alert"; success uses ole="status".
+- The previous-period comparison automatically uses the same custom window length.
+
+## 121. Keyword drill-down
+
+The keyword table is interactive: clicking a keyword filters the trend and the post table to that keyword.
+
+| Interaction | Result |
+|---|---|
+| Click a keyword | The trend and post table switch to that keyword; the row highlights. |
+| Click the same keyword again | Clears the filter. |
+| Clear filter chip | Restores the whole-campaign view. |
+| Media type chips | Also follow the selected keyword. |
+| Tiles and funnel | Stay campaign-level, so the headline numbers never change under the user. |
+
+**Data**
+
+summarizeComments now builds daily and posts for every keyword, so the drill-down is a pure client-side filter — no extra request when a keyword is clicked.
+
+**Accessibility**
+
+- The keyword is a real <button> with ria-pressed and an ria-label ("Filter trend and posts by GUIDE").
+- The filter chip has a clear button.
+- The trend's ria-label includes the selected keyword.
+- The post table header shows the active keyword.
+
+## 122. Best-time heatmap
+
+The Comments tab now includes a day × hour heatmap so a creator can see when their audience actually comments.
+
+| Element | Behavior |
+|---|---|
+| Grid | 7 days (Mon–Sun) × 24 hours |
+| Colour | Darker blue = more comments; zero cells are muted |
+| Peak | The busiest cell is ringed and summarised ("Peak: Tuesday at 19:00 · 24 comments") |
+| Tooltip | Each cell shows the day, hour and comment count |
+| Timezone | Computed in the viewer's local timezone, with a UTC±HH:MM label |
+| Drill-down | Selecting a keyword filters the heatmap to that keyword |
+| Legend | "Fewer ? More" swatches explain the colour scale |
+| Empty state | Explains that the heatmap appears after the first comment |
+
+**Architecture**
+
+| File | Role |
+|---|---|
+| lib/heatmap.ts | Pure uildCommentHeatmap, heatmapIntensity, describePeak |
+| components/campaigns/comment-heatmap.tsx | Client heatmap with local-timezone offset |
+| lib/comment-analytics.ts | Adds raw comment timestamps (	imes) to the summary and each keyword |
+
+**Accessibility**
+
+- The heatmap is a real <table> with a screen-reader <caption>, <th scope="col"> for hours and <th scope="row"> for days.
+- Every cell has an ria-label with the day, hour and count.
+- The peak is text, not colour-only.
+- The grid scrolls horizontally on small screens instead of shrinking to unreadable cells.
+
+### Why a custom heatmap instead of a chart library
+
+| Option | Verdict |
+|---|---|
+| shadcn/ui | No heatmap component; its charts are Recharts wrappers, and Recharts has no native heatmap. |
+| Recharts | No heatmap primitive; a scatter/treemap workaround loses the day × hour grid. |
+| Nivo / ECharts | Polished, but add ~200KB–1MB and render SVG/canvas with weak screen-reader semantics. |
+| Custom table heatmap | **Chosen.** Real <table> semantics, keyboard-focusable cells, zero bundle cost, fully themeable. |
+
+The custom heatmap is upgraded to feel like a chart: a 6-step sequential colour scale, hover/focus detail line, readable 12-hour labels, a ringed peak cell, a legend, and a live ria-live detail readout.
+
+---
+
+# Part 19 - Public performance reports
+
+## 123. What problem it solves
+
+Creators and agencies need to show results to clients without giving them dashboard access. T1.10 adds a read-only public report link that can be enabled, disabled and revoked.
+
+## 124. Behavior
+
+| Situation | Result |
+|---|---|
+| No link yet | Settings shows "Create public report link". |
+| Create | Generates a random token and a /report/<token> URL. |
+| Open | Anyone with the link sees a read-only report; no login required. |
+| Disable | The toggle stops the link from opening without deleting it. |
+| Revoke | Marks the link revoked; it can never be opened again. |
+| Generate new | Revokes the old link and creates a fresh token. |
+| Range | The report supports 7/30/90-day windows. |
+
+## 125. What the report shows
+
+- DMs sent, delivery rate, opt-ins, link clicks, conversions, revenue, comments.
+- Daily DMs vs clicks trend.
+- Keyword distribution with share.
+- Per-campaign breakdown (DMs, clicks, conversions, revenue).
+- Per-account breakdown (DMs, delivery rate, conversions).
+- Generated timestamp and a "read-only, query-backed" footer.
+
+## 126. Architecture / file map
+
+| File | Role |
+|---|---|
+| supabase/migrations/20261127_report_links.sql | eport_links table + RLS. |
+| lib/public-report.ts | Pure summarizePublicReport + token-gated loadPublicReport. |
+| pp/api/reports/[token]/route.ts | Public JSON API (?days=7|30|90). |
+| pp/report/[token]/page.tsx | Read-only public report page. |
+| pp/dashboard/settings/report-actions.ts | Create / toggle / revoke server actions. |
+| components/settings/report-link-settings.tsx | Settings UI with copy, toggle, revoke. |
+| pp/dashboard/overview/page.tsx | "Share report" / "Create report link" button. |
+
+## 127. Security
+
+- The token is 24 random bytes (base64url), not guessable.
+- loadPublicReport returns 
+ull unless the link is enabled and evoked_at is null.
+- The public page is 
+oindex, nofollow.
+- The API returns Cache-Control: no-store.
+- RLS lets only workspace members read or write their own links.
+
+## 128. Tests and verification
+
+- 	ests/public-report.test.ts - totals, keyword distribution, trend, per-campaign and per-account breakdowns, empty state.
+- 
+pm test, 
+pm run lint, 
+px tsc --noEmit - clean.
+
+---
+
+# Part 20 - Multi-account bulk connect
+
+## 129. What problem it solves
+
+A creator or agency often manages several Instagram accounts. Connecting them one OAuth flow at a time is slow and error-prone. T1.12 lets one Meta OAuth flow return every available account, then the creator chooses exactly which ones to add.
+
+## 130. Behavior
+
+| Situation | Result |
+|---|---|
+| Meta OAuth completes | The callback stores the token + account list in pending_connections and redirects with ?pending=<id>. No workspace is created yet. |
+| Selection screen | Shows a checklist with search, follower counts, verified marks and a live "Create N workspaces" count. |
+| Already connected | Greyed out with a "Connected" badge and cannot be selected. |
+| Create | One isolated workspace per selected account, with an owner membership and webhook subscription. |
+| Duplicate | An account already connected to any of the user's workspaces is skipped, never duplicated. |
+| Failure | The account is reported as failed with its error; the pending session is kept so the user can retry only the failed ones. |
+| Cancel | Deletes the pending session without creating anything. |
+| Expiry | The pending session expires after 30 minutes. |
+
+## 131. Architecture / file map
+
+| File | Role |
+|---|---|
+| supabase/migrations/20261127_pending_connections.sql | pending_connections table + RLS. |
+| pp/api/auth/meta/callback/route.ts | Stores the OAuth result and redirects to the selection screen. |
+| pp/api/instagram/pending/[id]/route.ts | Loads the pending accounts + already-connected status; cancels the session. |
+| pp/api/instagram/accounts/connect/route.ts | Idempotent workspace creation with per-account results. |
+| components/onboarding/account-selection.tsx | Checklist UI with search, select-all, live count, results and retry. |
+| lib/account-selection.ts | Pure filtering, counting and result-merging helpers. |
+| pp/onboarding/page.tsx + components/onboarding/onboarding-wizard.tsx | Renders the selection step when ?pending= is present. |
+| pp/dashboard/settings/page.tsx | Renders the selection card when ?pending= is present. |
+
+## 132. UX and accessibility
+
+- The checklist is a labelled list of checkboxes; connected accounts are disabled and visibly greyed out.
+- Search filters by username and display name.
+- "Select all" only selects selectable accounts.
+- The primary button always states the exact outcome: "Create 5 workspaces".
+- Results show created / skipped / failed counts, with a "Retry failed" action.
+- Errors use ole="alert"; the live count is plain text.
+- The pending session expiry time is shown so the user knows the window.
+
+## 133. Tests and verification
+
+- 	ests/account-selection.test.ts - filtering, selection counting, connected-account exclusion, retry merging.
+- 
+pm test, 
+pm run lint, 
+px tsc --noEmit - clean.
+
+---
+
+# Part 21 - Ask-to-follow with real verification
+
+## 134. What problem it solves
+
+Creators want to grow followers from comment automations, but Meta only exposes follow status after the person messages or taps a button. T1.11 turns that into a reliable gate: an opening DM with a tap card, real verification, and the promised link released only after the follow is confirmed.
+
+## 135. Behavior
+
+| Situation | Result |
+|---|---|
+| Confirmed follower comments | The link is delivered immediately. |
+| Non-follower comments | They receive the opening DM with a tap card; the link is held. |
+| They tap after following | Meta confirms the follow and the link is released. |
+| They tap without following | They are asked again, up to the retry limit. |
+| Already verified as a follower | We check Meta again on every new request, so an unfollow is caught before delivery. |
+| They messaged you in the last 24 hours | The tap is skipped and the link is delivered immediately. |
+| Meta cannot verify | The creator's hold/deliver policy applies; exceptions are logged. |
+
+## 136. Architecture / file map
+
+| File | Role |
+|---|---|
+| lib/meta/follow-gate.ts | Meta verification, cache, identity check, gate decision. |
+| lib/meta/opening-dm.ts | Opening DM copy and rendering. |
+| lib/meta/webhook-processor.ts | pplyFollowGate, 24h inbound skip, lifetime verification, postback release. |
+| lib/follow-gate-constants.ts | Shared limits, defaults, reasons and isRecentInbound. |
+| components/campaigns/follow-gate-settings.tsx | Campaign builder editor with the smart-skip explainer. |
+| components/campaigns/follow-gate-report.tsx | Performance panel with checks, followers, asked, unavailable and skipped. |
+| supabase/migrations/20261127_follow_gate_lifetime.sql | contacts.last_inbound_at + index. |
+
+## 137. UX and accessibility
+
+- The campaign builder explains the three-step flow (trigger ? opening DM ? verified delivery).
+- A "Smart skips" note explains lifetime verification and the 24-hour skip.
+- The report shows a "Skipped (recent)" tile so creators can see the skip working.
+- The opening message and button label are editable with character counters and placeholder buttons.
+- The hold/deliver policy is a labelled radio group with plain-English consequences.
+
+## 138. Tests and verification
+
+- 	ests/follow-gate.test.ts - verification, identity mismatch, retries, cache, isRecentInbound.
+- 
+pm test, 
+pm run lint, 
+px tsc --noEmit - clean.
+
+## 139. Workspace time zone and week start
+
+### What it solves
+
+The platform stores every timestamp in UTC, but creators think in their own
+calendar. A creator in India should see "today" as IST, not the UTC day, and a
+team in New York should see the same data on their own clock. This setting makes
+one clock authoritative for the whole workspace.
+
+### Behavior
+
+| Situation | Result |
+|---|---|
+| New workspace | Defaults to `Asia/Kolkata` (IST) and Monday week start. |
+| Creator changes the time zone | Every analytics range, heatmap, day key and timestamp follows it immediately. |
+| Creator changes the week start | Weekly totals and heatmap rows start on the chosen day. |
+| Data already stored | Untouched. Storage stays UTC; only interpretation changes. |
+| Public report | Uses the workspace time zone and shows it next to the generated time. |
+
+### Architecture / file map
+
+| File | Role |
+|---|---|
+| `supabase/migrations/20261127_workspace_timezone.sql` | Adds `workspaces.timezone` and `workspaces.week_starts_on` with defaults and a 0-6 check. |
+| `lib/timezone.ts` | Pure helpers: validation, zoned parts, day keys, UTC boundary conversion, week start, formatting. |
+| `lib/workspace-preferences.ts` | Loads preferences; `getWorkspaceTimeZone` caches for 60s on hot paths. |
+| `lib/analytics-range.ts` | Preset ranges anchor to the workspace's today. |
+| `lib/heatmap.ts` | `buildCommentHeatmapInTimeZone` buckets by the workspace clock. |
+| `lib/comment-analytics.ts`, `lib/share-analytics.ts`, `lib/public-report.ts` | Day keys use the workspace time zone. |
+| `lib/metrics.ts` | `recordMetricEvent` accepts `timeZone` and writes the workspace-local day. |
+| `components/settings/workspace-preferences-settings.tsx` | Accessible time zone + week start editor. |
+| `app/dashboard/settings/actions.ts` | `saveWorkspacePreferences` (owner-only, validated). |
+
+### UX and accessibility
+
+- Native labelled `<select>` controls with visible labels and helper text.
+- The save button is disabled until something changes; a status message confirms the save.
+- Errors use `role="alert"`; success uses `role="status"`.
+- The time zone list comes from `Intl.supportedValuesOf("timeZone")` with a curated fallback for older browsers.
+
+### Tests and verification
+
+- `tests/timezone.test.ts` - validation, day keys, weekday, UTC boundaries, week start, formatting.
+- `tests/analytics-range.test.ts` - preset ranges anchor to the workspace's today.
+- `npm test`, `npm run lint`, `npx tsc --noEmit` - clean.

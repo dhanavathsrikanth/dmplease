@@ -21,6 +21,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { getCurrentProfile } from "@/lib/profile";
+import { getWorkspacePreferences } from "@/lib/workspace-preferences";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata = {
@@ -63,13 +64,14 @@ export default function ContactsPage(props: ContactsPageProps) {
   );
 }
 
-function formatDate(value: string): string {
+function formatDate(value: string, timeZone: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
   return date.toLocaleDateString([], {
     year: "numeric",
     month: "short",
     day: "numeric",
+    timeZone,
   });
 }
 
@@ -93,6 +95,9 @@ async function ContactsContent({ searchParams }: ContactsPageProps) {
   const profile = await getCurrentProfile();
   const supabase = await createClient();
   const workspaceIds = (profile?.ownedWorkspaces || []).map((workspace) => workspace.id);
+  const preferences = workspaceIds[0]
+    ? await getWorkspacePreferences(workspaceIds[0])
+    : { timezone: "Asia/Kolkata", weekStartsOn: 1 };
 
   let contacts: ContactRow[] = [];
   let loadError = false;
@@ -375,7 +380,7 @@ async function ContactsContent({ searchParams }: ContactsPageProps) {
                       {formatProperties(contact.properties)}
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-[11px] text-muted-foreground">
-                      {formatDate(contact.created_at)}
+                      {formatDate(contact.created_at, preferences.timezone)}
                     </TableCell>
                   </TableRow>
                 );

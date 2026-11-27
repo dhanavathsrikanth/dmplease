@@ -88,6 +88,8 @@ export interface FollowGateReportData {
   follower: number;
   notFollower: number;
   unavailable: number;
+  /** People who already messaged in the last 24h, so the tap was skipped. */
+  skipped: number;
   topReasons: Array<{ reason: string; count: number }>;
   /** Campaign ID used for the test-verification endpoint. */
   campaignId?: string;
@@ -126,7 +128,7 @@ export function FollowGateReport({
         </Badge>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
         {[
           {
             label: "Checks",
@@ -151,6 +153,12 @@ export function FollowGateReport({
             value: data.unavailable,
             icon: CloudOff,
             tone: "text-rose-600 dark:text-rose-400",
+          },
+          {
+            label: "Skipped (recent)",
+            value: data.skipped,
+            icon: Activity,
+            tone: "text-[#4262ff] dark:text-[#8b9eff]",
           },
         ].map((stat) => (
           <div

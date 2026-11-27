@@ -133,6 +133,10 @@ export async function POST(request: NextRequest) {
       count: found.candidates.length,
       sample: found.sample,
       days,
+      total: found.total,
+      alreadyContacted: found.alreadyContacted,
+      optedOut: found.optedOut,
+      accountUnavailable: found.accountUnavailable,
     });
   }
 
@@ -143,6 +147,28 @@ export async function POST(request: NextRequest) {
       count: 0,
       message: "No eligible comments found for this window.",
     });
+  }
+
+  // One active re-run per automation. A second concurrent job would create a
+  // separate item set and could double-send before the live dedupe catches it.
+  const { data: activeJob } = await db
+    .from("rerun_jobs")
+    .select("id, status")
+    .eq("automation_id", campaignId)
+    .in("status", ["queued", "running"])
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (activeJob) {
+    return NextResponse.json(
+      {
+        error:
+          "A re-run is already in progress for this campaign. Wait for it to finish or stop it first.",
+        jobId: String(activeJob.id),
+        status: String(activeJob.status),
+      },
+      { status: 409 }
+    );
   }
 
   const { data: job, error: jobError } = await db

@@ -73,7 +73,7 @@ function cacheKey(accountId: string, userIgsid: string): string {
 function ttlFor(status: FollowCheckStatus): number {
   // A new follow can happen at any moment, so "not a follower" expires fast.
   return status === "follower"
-    ? FOLLOW_GATE_LIMITS.verificationCacheMinutes * 60
+    ? FOLLOW_GATE_LIMITS.reverificationMinutes * 60
     : 120;
 }
 
@@ -216,26 +216,32 @@ export async function verifyFollowership(
   accessToken: string,
   accountId: string,
   userIgsid: string,
-  expectedUsername?: string | null
+  expectedUsername?: string | null,
+  options?: { force?: boolean }
 ): Promise<FollowVerification> {
   if (!accessToken || !userIgsid) {
     return unavailable("missing_identity");
   }
 
   const key = cacheKey(accountId, userIgsid);
-  const cached = await readCache(key);
-  if (cached) {
-    // If an expected username was supplied, verify the cached identity still
-    // matches — a spoofed or stale cache entry must not grant access.
-    if (
-      expectedUsername &&
-      cached.username &&
-      cached.username.toLowerCase() !== expectedUsername.toLowerCase().trim()
-    ) {
-      await clearFollowCache(accountId, userIgsid);
-      // Fall through to a fresh verification.
-    } else {
-      return cached;
+  // `force` is used by the live gate: every new request must ask Meta again so
+  // an unfollow is caught immediately. The cache remains for other callers
+  // (e.g. the diagnostics test endpoint).
+  if (!options?.force) {
+    const cached = await readCache(key);
+    if (cached) {
+      // If an expected username was supplied, verify the cached identity still
+      // matches — a spoofed or stale cache entry must not grant access.
+      if (
+        expectedUsername &&
+        cached.username &&
+        cached.username.toLowerCase() !== expectedUsername.toLowerCase().trim()
+      ) {
+        await clearFollowCache(accountId, userIgsid);
+        // Fall through to a fresh verification.
+      } else {
+        return cached;
+      }
     }
   }
 

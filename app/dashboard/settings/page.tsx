@@ -12,9 +12,13 @@ import {
 import { getCurrentProfile, getCurrentUser } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
 import { DisconnectButton } from "@/components/settings/disconnect-button";
-import { BulkConnect } from "@/components/settings/bulk-connect";
 import { VerifiedBadgeToggle } from "@/components/settings/verified-badge-toggle";
 import { ConversionToken } from "@/components/settings/conversion-token";
+import { ReportLinkSettings } from "@/components/settings/report-link-settings";
+import { WorkspacePreferencesSettings } from "@/components/settings/workspace-preferences-settings";
+import { getWorkspacePreferences } from "@/lib/workspace-preferences";
+import { AccountSelection } from "@/components/onboarding/account-selection";
+import { getReportLink } from "@/app/dashboard/settings/report-actions";
 import { createWorkspaceToken } from "@/lib/conversions";
 import { normalizeFallbackReply } from "@/lib/dm-rules";
 import { FallbackReplySettings } from "@/components/settings/fallback-reply-settings";
@@ -43,7 +47,12 @@ function SettingsSkeleton() {
 export default function SettingsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string; error?: string; account?: string }>;
+  searchParams: Promise<{
+    status?: string;
+    error?: string;
+    account?: string;
+    pending?: string;
+  }>;
 }) {
   return (
     <Suspense fallback={<SettingsSkeleton />}>
@@ -55,10 +64,15 @@ export default function SettingsPage({
 async function SettingsContent({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string; error?: string; account?: string }>;
+  searchParams: Promise<{
+    status?: string;
+    error?: string;
+    account?: string;
+    pending?: string;
+  }>;
 }) {
   await connection();
-  const { status, error } = await searchParams;
+  const { status, error, pending } = await searchParams;
   const user = await getCurrentUser();
   const profile = await getCurrentProfile();
   const supabase = await createClient();
@@ -72,6 +86,13 @@ async function SettingsContent({
   if (workspace.id && !workspaceIds.includes(workspace.id)) {
     workspaceIds.push(workspace.id);
   }
+
+  const reportLink = workspace.id
+    ? await getReportLink(String(workspace.id))
+    : null;
+  const preferences = workspace.id
+    ? await getWorkspacePreferences(String(workspace.id))
+    : { timezone: "Asia/Kolkata", weekStartsOn: 1 };
 
   // Check actual Instagram connection in database
   let connectedAccount: {
@@ -136,6 +157,13 @@ async function SettingsContent({
           Manage your connected Instagram creator account, team members, and webhook permissions.
         </p>
       </div>
+
+      {pending && (
+        <AccountSelection
+          pendingId={pending}
+          redirectTo="/dashboard/settings"
+        />
+      )}
 
       {status === "connected" && (
         <div className="p-4 rounded-2xl border border-[#0fbcb0]/30 bg-[#c3faf5]/40 text-foreground text-xs font-medium flex items-center gap-2">
@@ -266,7 +294,42 @@ async function SettingsContent({
           </Card>
         )}
 
-        <BulkConnect enabled={isConnected} />
+        {workspace.id && (
+          <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 shadow-subtle bg-card">
+            <CardHeader className="pb-3 border-b border-[#e0e2e8] dark:border-border/60">
+              <CardTitle className="text-sm font-semibold">
+                Time zone &amp; calendar
+              </CardTitle>
+              <CardDescription className="text-xs text-[#555a6a] dark:text-muted-foreground">
+                The clock behind every analytics range, heatmap, and timestamp.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="pt-5">
+              <WorkspacePreferencesSettings
+                workspaceId={String(workspace.id)}
+                initialTimezone={preferences.timezone}
+                initialWeekStartsOn={preferences.weekStartsOn}
+              />
+            </CardContent>
+          </Card>
+        )}
+
+        {workspace.id && (
+          <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 shadow-subtle bg-card">
+            <CardHeader className="pb-3 border-b border-[#e0e2e8] dark:border-border/60">
+              <CardTitle className="text-sm font-semibold">Public report link</CardTitle>
+              <CardDescription className="text-xs text-[#555a6a] dark:text-muted-foreground">
+                Share a read-only performance report with a client or teammate.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="pt-5">
+              <ReportLinkSettings
+                workspaceId={String(workspace.id)}
+                initialLink={reportLink}
+              />
+            </CardContent>
+          </Card>
+        )}
 
         {/* ── Workspace Settings Card ── */}
         <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 shadow-subtle bg-card">

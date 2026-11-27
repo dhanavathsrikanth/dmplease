@@ -18,6 +18,10 @@ import {
 import type { WebhookCommentEvent } from "@/lib/meta/webhook";
 
 export const RERUN_BATCH_SIZE = 20;
+/** After this many attempts an item is marked failed instead of retried. */
+export const RERUN_MAX_ITEM_ATTEMPTS = 3;
+/** A claimed item older than this is assumed abandoned by a crashed worker. */
+const STUCK_ITEM_MS = 5 * 60 * 1000;
 
 export interface RerunJobRow {
   id: string;
@@ -104,6 +108,65 @@ export async function runRerunBatch(
   return result;
 }
 
+/**
+ * A worker can crash after claiming an item but before writing its result.
+ * Reset those abandoned claims so the job can finish instead of hanging.
+ */
+async function recoverStuckItems(db: SupabaseClient, jobId: string): Promise<void> {
+  const cutoff = new Date(Date.now() - STUCK_ITEM_MS).toISOString();
+  const { data: stuck } = await db
+    .from("rerun_job_items")
+    .select("id, attempts")
+    .eq("job_id", jobId)
+    .eq("status", "processing")
+    .lt("created_at", cutoff)
+    .limit(100);
+  for (const item of stuck ?? []) {
+    const attempts = Number(item.attempts ?? 0);
+    await db
+      .from("rerun_job_items")
+      .update(
+        attempts >= RERUN_MAX_ITEM_ATTEMPTS
+          ? {
+              status: "failed",
+              error_message: "Worker stopped before this item finished",
+              processed_at: new Date().toISOString(),
+            }
+          : { status: "pending" }
+      )
+      .eq("id", item.id)
+      .eq("status", "processing");
+  }
+}
+
+/** Recomputes job counters from the item ledger so retries cannot drift. */
+async function syncJobCounters(
+  db: SupabaseClient,
+  jobId: string
+): Promise<{
+  sent: number;
+  skipped: number;
+  failed: number;
+  pending: number;
+  processing: number;
+}> {
+  const counts = { sent: 0, skipped: 0, failed: 0, pending: 0, processing: 0 };
+  const statuses = ["sent", "skipped", "failed", "pending", "processing"] as const;
+  const results = await Promise.all(
+    statuses.map((status) =>
+      db
+        .from("rerun_job_items")
+        .select("id", { count: "exact", head: true })
+        .eq("job_id", jobId)
+        .eq("status", status)
+    )
+  );
+  statuses.forEach((status, index) => {
+    counts[status] = results[index].count ?? 0;
+  });
+  return counts;
+}
+
 async function processBatch(
   db: SupabaseClient,
   jobId: string
@@ -161,6 +224,8 @@ async function processBatch(
     .eq("id", jobId)
     .eq("status", "queued");
 
+  await recoverStuckItems(db, jobId);
+
   const { data: pending } = await db
     .from("rerun_job_items")
     .select(
@@ -172,6 +237,21 @@ async function processBatch(
     .limit(RERUN_BATCH_SIZE);
 
   for (const raw of (pending ?? []) as RerunItemRow[]) {
+    if (raw.attempts >= RERUN_MAX_ITEM_ATTEMPTS) {
+      await db
+        .from("rerun_job_items")
+        .update({
+          status: "failed",
+          error_message: "Retry limit reached",
+          processed_at: new Date().toISOString(),
+        })
+        .eq("id", raw.id)
+        .eq("status", "pending");
+      result.failed++;
+      result.processed++;
+      continue;
+    }
+
     // Compare-and-set claim: a duplicate QStash delivery cannot send twice.
     const { data: claimed } = await db
       .from("rerun_job_items")
@@ -219,19 +299,15 @@ async function processBatch(
     else result.failed++;
   }
 
-  const { count: remaining } = await db
-    .from("rerun_job_items")
-    .select("id", { count: "exact", head: true })
-    .eq("job_id", jobId)
-    .eq("status", "pending");
-  result.remaining = remaining ?? 0;
+  const counts = await syncJobCounters(db, jobId);
+  result.remaining = counts.pending + counts.processing;
 
   await db
     .from("rerun_jobs")
     .update({
-      sent: job.sent + result.sent,
-      skipped: job.skipped + result.skipped,
-      failed: job.failed + result.failed,
+      sent: counts.sent,
+      skipped: counts.skipped,
+      failed: counts.failed,
       ...(result.remaining > 0
         ? {}
         : { status: "completed", finished_at: new Date().toISOString() }),

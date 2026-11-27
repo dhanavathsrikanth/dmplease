@@ -1,7 +1,8 @@
-import { Suspense } from "react";
+﻿import { Suspense } from "react";
 import { connection } from "next/server";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getCurrentProfile } from "@/lib/profile";
+import { getWorkspacePreferences } from "@/lib/workspace-preferences";
 import { createClient } from "@/lib/supabase/server";
 import {
   InboxInteractiveChat,
@@ -55,10 +56,14 @@ function InboxSkeleton() {
   );
 }
 
-function formatTime(value: string): string {
+function formatTime(value: string, timeZone: string): string {
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (Number.isNaN(date.getTime())) return "â€”";
+  return date.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone,
+  });
 }
 
 function messageText(content: unknown): string {
@@ -91,6 +96,9 @@ async function InboxContent() {
   const supabase = await createClient();
 
   const workspaceIds = (profile?.ownedWorkspaces || []).map((workspace) => workspace.id);
+  const preferences = workspaceIds[0]
+    ? await getWorkspacePreferences(workspaceIds[0])
+    : { timezone: "Asia/Kolkata", weekStartsOn: 1 };
   const conversations: ConversationItem[] = [];
 
   if (workspaceIds.length > 0) {
@@ -134,7 +142,7 @@ async function InboxContent() {
               ? row.sender_type
               : "bot",
           text: messageText(row.content),
-          time: formatTime(row.created_at),
+          time: formatTime(row.created_at, preferences.timezone),
           status: row.delivery_status,
         };
         if (!messagesByConversation[row.conversation_id]) {
@@ -159,7 +167,7 @@ async function InboxContent() {
           username,
           initials: username.slice(0, 2).toUpperCase(),
           lastMessage: lastMessage?.text || "No messages in this thread yet.",
-          time: formatTime(row.last_message_at),
+          time: formatTime(row.last_message_at, preferences.timezone),
           keyword: (row.status || "open").toUpperCase(),
           keywordLabel: "Status",
           status: row.status || "open",
@@ -193,6 +201,7 @@ async function InboxContent() {
             time: new Date(log.sent_at).toLocaleTimeString([], {
               hour: "2-digit",
               minute: "2-digit",
+              timeZone: preferences.timezone,
             }),
             keyword: log.trigger_keyword || "KEYWORD",
             status: log.status || "Delivered",
@@ -226,7 +235,10 @@ async function InboxContent() {
       </div>
 
       <FollowGrowthCard stats={followStats} />
-      <InboxInteractiveChat conversations={conversations} />
+      <InboxInteractiveChat
+        conversations={conversations}
+        timeZone={preferences.timezone}
+      />
     </div>
   );
 }

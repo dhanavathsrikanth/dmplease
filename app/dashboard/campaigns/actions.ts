@@ -15,6 +15,7 @@ import {
 export interface CreateCampaignPayload {
   name: string;
   goal?: string;
+  triggerType?: "COMMENT" | "SHARE_TO_DM";
   postScope: "ANY_POST" | "SPECIFIC_POST" | "NEXT_POST";
   postId?: string | null;
   postThumbnailUrl?: string | null;
@@ -127,7 +128,13 @@ export async function createCampaign(payload: CreateCampaignPayload) {
         post_id: values.postId || null,
         post_thumbnail_url: values.postThumbnailUrl || null,
         post_caption: values.postCaption || null,
-        trigger_keywords: cleanKeywords.length > 0 ? cleanKeywords : ["START"],
+        trigger_type: values.triggerType,
+        trigger_keywords:
+          values.triggerType === "SHARE_TO_DM"
+            ? []
+            : cleanKeywords.length > 0
+              ? cleanKeywords
+              : ["START"],
         dm_message: values.dmMessage,
         dm_variants: values.dmVariants,
         button_text: values.buttonText || null,

@@ -14,6 +14,7 @@ import {
   Activity,
 } from "lucide-react";
 import { getCurrentProfile, getCurrentUser } from "@/lib/profile";
+import { getWorkspacePreferences } from "@/lib/workspace-preferences";
 import { createClient } from "@/lib/supabase/server";
 import { getWebhookHealth } from "@/lib/meta/webhook-events";
 import { Card } from "@/components/ui/card";
@@ -76,6 +77,9 @@ async function DashboardContent() {
   );
 
   const workspaceIds = (profile?.ownedWorkspaces || []).map((w) => w.id);
+  const preferences = workspaceIds[0]
+    ? await getWorkspacePreferences(workspaceIds[0])
+    : { timezone: "Asia/Kolkata", weekStartsOn: 1 };
 
   let connectedUsername: string | null = null;
   let ruleCount = 0;
@@ -145,6 +149,7 @@ async function DashboardContent() {
         time: new Date(l.sent_at).toLocaleTimeString([], {
           hour: "2-digit",
           minute: "2-digit",
+          timeZone: preferences.timezone,
         }),
         status: l.status || "Delivered",
       }));

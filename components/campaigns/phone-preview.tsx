@@ -26,6 +26,7 @@ import {
 } from "@/lib/lead-capture";
 
 interface PhonePreviewProps {
+  triggerType?: "COMMENT" | "SHARE_TO_DM";
   postScope: "ANY_POST" | "SPECIFIC_POST" | "NEXT_POST";
   postThumbnailUrl?: string | null;
   postCaption?: string | null;
@@ -115,6 +116,7 @@ function Avatar({
 }
 
 export function PhonePreview({
+  triggerType = "COMMENT",
   postScope,
   postThumbnailUrl,
   postCaption,
@@ -253,7 +255,9 @@ export function PhonePreview({
                 <div className="flex items-center gap-2 my-1">
                   <div className="h-px flex-1 bg-[#dbdbdb] dark:bg-[#262626]" />
                   <span className="text-[10px] text-[#8e8e8e] whitespace-nowrap">
-                    Commented “{triggerKeyword || "START"}”
+                    {triggerType === "SHARE_TO_DM"
+                      ? "Shared a reel to your DM"
+                      : `Commented “${triggerKeyword || "START"}”`}
                   </span>
                   <div className="h-px flex-1 bg-[#dbdbdb] dark:bg-[#262626]" />
                 </div>
@@ -263,9 +267,25 @@ export function PhonePreview({
                   <div className="size-6 rounded-full bg-[#efefef] dark:bg-[#363636] grid place-items-center text-[9px] font-semibold text-[#8e8e8e] shrink-0">
                     F
                   </div>
-                  <div className="max-w-[210px] rounded-[20px] rounded-bl-sm bg-[#efefef] dark:bg-[#262626] px-3 py-2 text-[12px] leading-[1.45] break-words whitespace-pre-wrap">
-                    {triggerKeyword || "START"}
-                  </div>
+                  {triggerType === "SHARE_TO_DM" ? (
+                    <div className="max-w-[210px] rounded-[20px] rounded-bl-sm bg-[#efefef] dark:bg-[#262626] px-3 py-2 text-[12px] leading-[1.45] space-y-1.5">
+                      <div className="flex items-center gap-2">
+                        <span className="grid size-7 place-items-center rounded-lg bg-white/70 dark:bg-white/10 shrink-0">
+                          <Instagram className="size-3.5" />
+                        </span>
+                        <div className="min-w-0">
+                          <p className="font-semibold text-[11px] truncate">Reel shared</p>
+                          <p className="text-[10px] text-[#8e8e8e] truncate">
+                            Sent to your DM
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="max-w-[210px] rounded-[20px] rounded-bl-sm bg-[#efefef] dark:bg-[#262626] px-3 py-2 text-[12px] leading-[1.45] break-words whitespace-pre-wrap">
+                      {triggerKeyword || "START"}
+                    </div>
+                  )}
                 </div>
 
                 {followGateEnabled && (

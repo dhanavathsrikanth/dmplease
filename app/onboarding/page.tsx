@@ -13,7 +13,13 @@ export const metadata = {
 async function OnboardingContent({
   searchParams,
 }: {
-  searchParams?: Promise<{ status?: string; error?: string; account?: string; step?: string }>;
+  searchParams?: Promise<{
+    status?: string;
+    error?: string;
+    account?: string;
+    step?: string;
+    pending?: string;
+  }>;
 }) {
   await connection();
   const user = await getCurrentUser();
@@ -84,6 +90,7 @@ async function OnboardingContent({
       connectionStatus={params?.status}
       connectionError={params?.error}
       initialAccountParam={params?.account}
+      pendingId={params?.pending}
     />
   );
 }

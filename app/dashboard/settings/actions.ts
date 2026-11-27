@@ -9,6 +9,7 @@ import {
   openingMessageSchema,
 } from "@/lib/validation/follow-gate";
 import { dmVariantsSchema } from "@/lib/validation/dm-variants";
+import { isValidTimeZone, normalizeWeekStart } from "@/lib/timezone";
 
 const fallbackSchema = z.object({
   workspaceId: z.string().uuid("Invalid workspace."),
@@ -108,5 +109,59 @@ export async function saveFallbackReply(
 
   revalidatePath("/dashboard/settings");
   revalidatePath("/dashboard/inbox-automations");
+  return { success: true };
+}
+
+const preferencesSchema = z.object({
+  workspaceId: z.string().uuid("Invalid workspace."),
+  timezone: z
+    .string()
+    .trim()
+    .refine((value) => isValidTimeZone(value), "Choose a valid time zone."),
+  weekStartsOn: z.coerce.number().int().min(0).max(6),
+});
+
+export type WorkspacePreferencesInput = z.input<typeof preferencesSchema>;
+
+/**
+ * Persists the workspace clock. Every analytics range, heatmap and timestamp
+ * reads these values, so only the workspace owner may change them.
+ */
+export async function saveWorkspacePreferences(
+  payload: WorkspacePreferencesInput
+): Promise<FallbackActionResult> {
+  const parsed = preferencesSchema.safeParse(payload);
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message || "Invalid preferences",
+    };
+  }
+  const values = parsed.data;
+
+  const profile = await getCurrentProfile();
+  const owned = (profile?.ownedWorkspaces || []).map((workspace) => workspace.id);
+  if (!owned.includes(values.workspaceId)) {
+    return { success: false, error: "Workspace not found or access denied." };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("workspaces")
+    .update({
+      timezone: values.timezone,
+      week_starts_on: normalizeWeekStart(values.weekStartsOn),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", values.workspaceId);
+
+  if (error) {
+    console.error("[workspace-preferences] save failed:", error.message);
+    return { success: false, error: error.message };
+  }
+
+  revalidatePath("/dashboard/settings");
+  revalidatePath("/dashboard/overview");
+  revalidatePath("/dashboard");
   return { success: true };
 }

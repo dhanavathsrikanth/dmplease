@@ -16,6 +16,7 @@ import {
   verifyFollowership,
   type FollowVerification,
 } from "@/lib/meta/follow-gate";
+import { isRecentInbound } from "@/lib/follow-gate-constants";
 
 function okFetch(body: Record<string, unknown>) {
   return vi.fn(async (...args: unknown[]) => {
@@ -197,3 +198,22 @@ describe("Ask for Follow — Meta verification", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+describe("isRecentInbound", () => {
+  const now = new Date("2026-11-27T12:00:00.000Z").getTime();
+
+  it("returns true for a message inside the 24h window", () => {
+    expect(isRecentInbound("2026-11-27T06:00:00.000Z", 24, now)).toBe(true);
+  });
+
+  it("returns false for a message older than 24h", () => {
+    expect(isRecentInbound("2026-11-25T06:00:00.000Z", 24, now)).toBe(false);
+  });
+
+  it("returns false for missing or invalid timestamps", () => {
+    expect(isRecentInbound(null, 24, now)).toBe(false);
+    expect(isRecentInbound("not-a-date", 24, now)).toBe(false);
+  });
+});
+
+

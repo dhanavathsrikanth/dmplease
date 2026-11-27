@@ -36,6 +36,7 @@ export interface AutomationItem {
   id: string;
   name: string;
   goal?: string | null;
+  triggerType?: string | null;
   postScope?: string | null;
   postId?: string | null;
   postThumbnailUrl?: string | null;
@@ -293,17 +294,28 @@ export function CampaignsList({
                     </div>
 
                     <div className="flex items-center gap-2 text-xs text-[#555a6a] dark:text-muted-foreground">
-                      <span className="font-medium text-foreground text-xs">Keywords:</span>
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        {(auto.triggerKeywords || []).map((kw, i) => (
-                          <span
-                            key={i}
-                            className="px-2.5 py-0.5 rounded-full bg-[#1c1c1e] text-white font-mono font-medium text-xs dark:bg-white dark:text-[#1c1c1e]"
-                          >
-                            {kw}
+                      {auto.triggerType === "SHARE_TO_DM" ? (
+                        <>
+                          <span className="font-medium text-foreground text-xs">Trigger:</span>
+                          <span className="px-2.5 py-0.5 rounded-full bg-[#f5f3ff] text-[#4262ff] dark:bg-[#4262ff]/20 dark:text-[#8b9eff] font-medium text-xs">
+                            Share to DM
                           </span>
-                        ))}
-                      </div>
+                        </>
+                      ) : (
+                        <>
+                          <span className="font-medium text-foreground text-xs">Keywords:</span>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {(auto.triggerKeywords || []).map((kw, i) => (
+                              <span
+                                key={i}
+                                className="px-2.5 py-0.5 rounded-full bg-[#1c1c1e] text-white font-mono font-medium text-xs dark:bg-white dark:text-[#1c1c1e]"
+                              >
+                                {kw}
+                              </span>
+                            ))}
+                          </div>
+                        </>
+                      )}
                     </div>
 
                     <div className="p-3 rounded-xl bg-[#f7f8fa] dark:bg-muted/40 border border-[#e0e2e8] dark:border-border/60 text-xs text-foreground font-sans flex items-center gap-2">

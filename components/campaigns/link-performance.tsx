@@ -19,7 +19,13 @@ function hostOf(url: string): string {
   }
 }
 
-export function LinkPerformance({ rows }: { rows: LinkPerformanceRow[] }) {
+export function LinkPerformance({
+  rows,
+  timeZone = "Asia/Kolkata",
+}: {
+  rows: LinkPerformanceRow[];
+  timeZone?: string;
+}) {
   const total = rows.reduce((sum, row) => sum + row.clicks, 0);
   return (
     <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 shadow-subtle">
@@ -74,6 +80,7 @@ export function LinkPerformance({ rows }: { rows: LinkPerformanceRow[] }) {
                         ? new Date(row.lastClickedAt).toLocaleDateString("en-IN", {
                             day: "numeric",
                             month: "short",
+                            timeZone,
                           })
                         : "—"}
                     </p>

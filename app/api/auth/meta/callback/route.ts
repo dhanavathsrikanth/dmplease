@@ -6,12 +6,10 @@ import {
   getLongLivedToken,
   fetchInstagramAccountsForToken,
   fetchMetaUserEmail,
-  subscribeInstagramAccountToWebhooks,
 } from "@/lib/meta/client";
 import { encryptToken } from "@/lib/meta/vault";
 import { createClient } from "@/lib/supabase/server";
-import { prisma } from "@/lib/prisma";
-import { cleanEnv, hasDatabaseUrl } from "@/lib/config";
+import { cleanEnv } from "@/lib/config";
 import { captureServerEvent } from "@/lib/posthog-server";
 
 export async function GET(request: NextRequest) {
@@ -127,180 +125,50 @@ export async function GET(request: NextRequest) {
       })
       .eq("id", userId);
 
-    // 5. Ensure EVERY connected account gets its own dedicated workspace
-    const { data: userWorkspaces } = await supabase
-      .from("workspaces")
-      .select("id, name")
-      .eq("owner_id", userId)
-      .order("created_at", { ascending: true });
+    // 5. Store the OAuth result and let the creator choose which accounts to
+    //    connect. No workspace is created until they confirm the checklist.
+    const pendingAccounts = accounts.map((account) => ({
+      instagramBusinessId: account.instagramBusinessId,
+      facebookPageId: account.facebookPageId ?? null,
+      username: account.username,
+      displayName: account.displayName ?? null,
+      profilePictureUrl: account.profilePictureUrl ?? null,
+      followersCount: account.followersCount ?? 0,
+      isVerified: account.isVerified ?? false,
+      pageToken: account.pageToken ? encryptToken(account.pageToken) : null,
+    }));
 
-    const ownedWorkspaceIds = (userWorkspaces || []).map((w) => w.id);
+    const { data: pending, error: pendingError } = await supabase
+      .from("pending_connections")
+      .insert({
+        user_id: userId,
+        provider: authProvider,
+        access_token: encryptToken(longLivedToken),
+        token_expires_at: tokenExpiresAt.toISOString(),
+        accounts: pendingAccounts,
+      })
+      .select("id")
+      .single();
 
-    // Map existing Instagram accounts already linked to any of this user's workspaces
-    const existingAccountWorkspaceByIgId = new Map<string, string>();
-    const occupiedWorkspaceIds = new Set<string>();
-
-    if (ownedWorkspaceIds.length > 0) {
-      const { data: existingIgAccounts } = await supabase
-        .from("instagram_accounts")
-        .select("instagram_id, workspace_id")
-        .in("workspace_id", ownedWorkspaceIds);
-
-      for (const row of existingIgAccounts || []) {
-        existingAccountWorkspaceByIgId.set(row.instagram_id, row.workspace_id);
-        occupiedWorkspaceIds.add(row.workspace_id);
-      }
-    }
-
-    const hasDb = hasDatabaseUrl();
-    let primaryWorkspaceId: string | undefined;
-
-    for (const account of accounts) {
-      const accountWorkspaceLabel = `@${account.username}`;
-      let workspaceId = existingAccountWorkspaceByIgId.get(
-        account.instagramBusinessId
+    if (pendingError || !pending?.id) {
+      targetUrl.searchParams.set(
+        "error",
+        "Could not prepare the account selection. Please try again."
       );
-
-      // Check if an empty placeholder workspace (e.g., created on initial signup) can be claimed
-      if (!workspaceId) {
-        const emptyWorkspace = (userWorkspaces || []).find(
-          (w) => !occupiedWorkspaceIds.has(w.id)
-        );
-        if (emptyWorkspace) {
-          const matchedWsId = emptyWorkspace.id;
-          workspaceId = matchedWsId;
-          occupiedWorkspaceIds.add(matchedWsId);
-          await supabase
-            .from("workspaces")
-            .update({
-              name: accountWorkspaceLabel,
-              updated_at: new Date().toISOString(),
-            })
-            .eq("id", matchedWsId);
-        }
-      }
-
-      // Otherwise create a brand new workspace for this Instagram account
-      if (!workspaceId) {
-        const { data: newWs } = await supabase
-          .from("workspaces")
-          .insert({
-            name: accountWorkspaceLabel,
-            owner_id: userId,
-          })
-          .select("id")
-          .single();
-
-        if (newWs?.id) {
-          const createdWsId = newWs.id;
-          workspaceId = createdWsId;
-          occupiedWorkspaceIds.add(createdWsId);
-          await supabase.from("workspace_members").upsert(
-            {
-              workspace_id: createdWsId,
-              user_id: userId,
-              role: "OWNER",
-            },
-            { onConflict: "workspace_id,user_id" }
-          );
-        }
-      }
-
-      if (!workspaceId) continue;
-      if (!primaryWorkspaceId) {
-        primaryWorkspaceId = workspaceId;
-      }
-
-      const rawAccountToken = account.pageToken || longLivedToken;
-      const encryptedToken = encryptToken(rawAccountToken);
-      // Without a Page token Meta will reject /messages with error 190. Mark
-      // the account so the dashboard can ask the creator to reconnect.
-      const tokenStatus = account.pageToken ? "active" : "needs_attention";
-
-      await supabase.from("instagram_accounts").upsert(
-        {
-          workspace_id: workspaceId,
-          instagram_id: account.instagramBusinessId,
-          username: account.username,
-          name: account.displayName || account.username,
-          profile_picture_url: account.profilePictureUrl ?? null,
-          followers_count: account.followersCount ?? null,
-          is_verified: account.isVerified ?? null,
-          access_token: encryptedToken,
-          token_status: tokenStatus,
-          token_last_error: account.pageToken
-            ? null
-            : "No Facebook Page access token available; DM sending requires a Page token.",
-          token_checked_at: new Date().toISOString(),
-          token_expires_at: tokenExpiresAt.toISOString(),
-          webhook_subscribed: true,
-          fallback_reply_enabled: false,
-          connected_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "instagram_id" }
-      );
-
-      if (hasDb) {
-        try {
-          await prisma.instagramAccount.upsert({
-            where: { instagramId: account.instagramBusinessId },
-            create: {
-              workspaceId,
-              instagramId: account.instagramBusinessId,
-              username: account.username,
-              name: account.displayName || account.username,
-              accessToken: encryptedToken,
-              tokenExpiresAt,
-              webhookSubscribed: true,
-            },
-            update: {
-              workspaceId,
-              username: account.username,
-              name: account.displayName || account.username,
-              accessToken: encryptedToken,
-              tokenExpiresAt,
-              webhookSubscribed: true,
-              updatedAt: new Date(),
-            },
-          });
-        } catch (e) {
-          console.warn("[OAuth] Prisma upsert fallback:", e);
-        }
-      }
-
-      // 6. Auto-subscribe either Facebook Page or direct Instagram Account to Webhooks
-      const subscribeTargetId = account.facebookPageId || account.instagramBusinessId;
-      if (subscribeTargetId && rawAccountToken) {
-        await subscribeInstagramAccountToWebhooks(subscribeTargetId, rawAccountToken);
-      }
+      return NextResponse.redirect(targetUrl);
     }
 
     captureServerEvent({
-      event: "instagram_account_connected",
+      event: "instagram_oauth_completed",
       distinctId: userId,
       properties: {
         provider: authProvider,
-        accounts_connected: accounts.length,
-        workspaces_created: primaryWorkspaceId ? 1 : 0,
+        accounts_available: accounts.length,
       },
     });
 
-    targetUrl.searchParams.set("status", "connected");
-    targetUrl.searchParams.set("account", primaryAccount.username);
-    if (primaryWorkspaceId) {
-      targetUrl.searchParams.set("workspace", primaryWorkspaceId);
-    }
-
-    const response = NextResponse.redirect(targetUrl);
-    if (primaryWorkspaceId) {
-      response.cookies.set("active_workspace_id", primaryWorkspaceId, {
-        path: "/",
-        maxAge: 60 * 60 * 24 * 365,
-        sameSite: "lax",
-      });
-    }
-    return response;
+    targetUrl.searchParams.set("pending", String(pending.id));
+    return NextResponse.redirect(targetUrl);
   } catch (err: unknown) {
     console.error("[Meta OAuth Callback Error]:", err);
     targetUrl.searchParams.set(

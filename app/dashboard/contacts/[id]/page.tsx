@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ContactEditor } from "@/components/contacts/contact-editor";
 import { getCurrentProfile } from "@/lib/profile";
+import { getWorkspacePreferences } from "@/lib/workspace-preferences";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata = { title: "Contact - dmplease" };
@@ -68,7 +69,7 @@ function ContactSkeleton() {
   );
 }
 
-function formatDate(value: string | null): string {
+function formatDate(value: string | null, timeZone: string): string {
   if (!value) return "—";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
@@ -78,6 +79,7 @@ function formatDate(value: string | null): string {
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
+    timeZone,
   });
 }
 
@@ -96,6 +98,7 @@ async function ContactContent({ params }: { params: Promise<{ id: string }> }) {
   if (!profile) notFound();
   const workspaceIds = (profile.ownedWorkspaces || []).map((workspace) => workspace.id);
   if (workspaceIds.length === 0) notFound();
+  const preferences = await getWorkspacePreferences(workspaceIds[0]);
 
   const supabase = await createClient();
   const { data: contact } = await supabase
@@ -211,7 +214,7 @@ async function ContactContent({ params }: { params: Promise<{ id: string }> }) {
                             : message.sender_type === "bot"
                               ? "Auto · "
                               : ""}
-                          {formatDate(message.created_at)}
+                          {formatDate(message.created_at, preferences.timezone)}
                           {message.delivery_status ? ` · ${message.delivery_status}` : ""}
                         </p>
                       </div>
@@ -262,7 +265,7 @@ async function ContactContent({ params }: { params: Promise<{ id: string }> }) {
                         </span>
                       </div>
                       <span className="text-[10px] text-muted-foreground shrink-0">
-                        {formatDate(event.created_at)}
+                        {formatDate(event.created_at, preferences.timezone)}
                       </span>
                     </li>
                   ))}
@@ -294,12 +297,12 @@ async function ContactContent({ params }: { params: Promise<{ id: string }> }) {
               </div>
               <div className="flex items-center gap-2">
                 <CalendarDays className="size-3.5 text-muted-foreground" aria-hidden="true" />
-                <span className="text-foreground">Joined {formatDate(row.created_at)}</span>
+                <span className="text-foreground">Joined {formatDate(row.created_at, preferences.timezone)}</span>
               </div>
               <div className="flex items-center gap-2">
                 <Tag className="size-3.5 text-muted-foreground" aria-hidden="true" />
                 <span className="text-foreground">
-                  Last interaction {formatDate(row.last_interaction_at)}
+                  Last interaction {formatDate(row.last_interaction_at, preferences.timezone)}
                 </span>
               </div>
             </CardContent>

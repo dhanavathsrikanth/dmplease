@@ -12,6 +12,7 @@ import {
 import { ensureContact } from "@/lib/meta/webhook-processor";
 import { recordSendOutcome } from "@/lib/meta/account-health";
 import { recordMetricEvent } from "@/lib/metrics";
+import { getWorkspaceTimeZone } from "@/lib/workspace-preferences";
 
 /**
  * POST /api/instagram/send-dm
@@ -210,6 +211,7 @@ export async function POST(request: NextRequest) {
         kind: "dm_sent",
         creatorId: workspaceId,
         targetId: "manual",
+        timeZone: await getWorkspaceTimeZone(workspaceId),
       });
     }
     await recordSendOutcome({

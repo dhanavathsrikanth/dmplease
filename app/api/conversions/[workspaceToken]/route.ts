@@ -23,6 +23,35 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Resolves a UTM campaign value to a real automation id.
+ *
+ * New links carry the full UUID. Older links carried an 8-character prefix, so
+ * we resolve that prefix within the workspace instead of writing an invalid
+ * UUID into the conversions table.
+ */
+async function resolveAutomationId(
+  db: ReturnType<typeof getAdminDb>,
+  workspaceId: string,
+  value: string | null
+): Promise<string | null> {
+  const raw = (value ?? "").trim();
+  if (!raw) return null;
+  if (UUID_RE.test(raw)) return raw;
+  if (!/^[0-9a-f]{6,12}$/i.test(raw)) return null;
+  const { data } = await db
+    .from("automations")
+    .select("id")
+    .eq("workspace_id", workspaceId)
+    .ilike("id", `${raw}%`)
+    .limit(1)
+    .maybeSingle();
+  return data?.id ? String(data.id) : null;
+}
+
 export async function OPTIONS() {
   return NextResponse.json({ ok: true }, { headers: CORS_HEADERS });
 }
@@ -119,7 +148,11 @@ export async function POST(
   if (body.url) {
     try {
       const url = new URL(body.url);
-      automationId = url.searchParams.get("utm_campaign");
+      automationId = await resolveAutomationId(
+        db,
+        workspaceId,
+        url.searchParams.get("utm_campaign")
+      );
       postId = postId ?? url.searchParams.get("utm_content");
       keyword = keyword ?? url.searchParams.get("utm_term");
     } catch {

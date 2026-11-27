@@ -92,6 +92,7 @@ const RECIPES = [
 interface CampaignInitialData {
   id: string;
   name: string;
+  triggerType?: string | null;
   postScope?: string | null;
   postId?: string | null;
   postThumbnailUrl?: string | null;
@@ -149,6 +150,9 @@ export function CampaignBuilder({
   // Campaign State
   const [name, setName] = useState(
     initialCampaign?.name ?? "Instagram Auto-DM Campaign"
+  );
+  const [triggerType, setTriggerType] = useState<"COMMENT" | "SHARE_TO_DM">(
+    initialCampaign?.triggerType === "SHARE_TO_DM" ? "SHARE_TO_DM" : "COMMENT"
   );
   const [postScope, setPostScope] = useState<"ANY_POST" | "SPECIFIC_POST" | "NEXT_POST">(
     (initialCampaign?.postScope as "ANY_POST" | "SPECIFIC_POST" | "NEXT_POST") ?? "ANY_POST"
@@ -286,7 +290,7 @@ export function CampaignBuilder({
   // Validation
   const isMissingPost = postScope === "SPECIFIC_POST" && !selectedPost;
   const canPublish =
-    keywords.length > 0 &&
+    (triggerType === "SHARE_TO_DM" || keywords.length > 0) &&
     dmMessage.trim().length > 0 &&
     !isMissingPost &&
     publishStatus === "idle";
@@ -358,6 +362,7 @@ export function CampaignBuilder({
 
   const applyRecipe = (recipe: typeof RECIPES[0]) => {
     setName(recipe.title);
+    setTriggerType("COMMENT");
     setKeywords([recipe.keyword]);
     setDmMessage(recipe.dm);
     setButtonText(recipe.buttonText);
@@ -376,7 +381,8 @@ export function CampaignBuilder({
 
     const payload = {
       name: name.trim() || "Instagram Auto-DM Campaign",
-      goal: "comment_to_dm",
+      goal: triggerType === "SHARE_TO_DM" ? "share_to_dm" : "comment_to_dm",
+      triggerType,
       postScope,
       postId: selectedPost?.id,
       postThumbnailUrl: selectedPost?.thumbnailUrl,
@@ -578,12 +584,67 @@ export function CampaignBuilder({
         {/* Left Column: Configuration */}
         <div className="lg:col-span-7 space-y-4">
           
+          {/* STEP 0: Trigger type */}
+          <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 p-5 shadow-subtle space-y-3">
+            <div>
+              <h3 className="font-semibold text-sm text-foreground flex items-center gap-2">
+                <span className="size-5 rounded-full bg-[#1c1c1e] text-white dark:bg-white dark:text-[#1c1c1e] flex items-center justify-center text-[10px] font-bold">
+                  1
+                </span>
+                What should trigger this campaign?
+              </h3>
+              <p className="text-xs text-[#555a6a] dark:text-muted-foreground mt-0.5">
+                Pick one trigger. You can change it later.
+              </p>
+            </div>
+            <div className="grid sm:grid-cols-2 gap-2" role="radiogroup" aria-label="Campaign trigger">
+              <button
+                type="button"
+                role="radio"
+                aria-checked={triggerType === "COMMENT"}
+                onClick={() => setTriggerType("COMMENT")}
+                className={`p-3 rounded-2xl border text-left transition-all ${
+                  triggerType === "COMMENT"
+                    ? "border-[#4262ff] bg-[#f5f3ff] dark:bg-[#4262ff]/10"
+                    : "border-[#e0e2e8] dark:border-border hover:bg-[#f7f8fa]"
+                }`}
+              >
+                <p className="font-semibold text-xs text-foreground">Comment keyword</p>
+                <p className="text-[10px] text-[#555a6a] dark:text-muted-foreground mt-0.5">
+                  Someone comments a word on your post or reel.
+                </p>
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={triggerType === "SHARE_TO_DM"}
+                onClick={() => setTriggerType("SHARE_TO_DM")}
+                className={`p-3 rounded-2xl border text-left transition-all ${
+                  triggerType === "SHARE_TO_DM"
+                    ? "border-[#4262ff] bg-[#f5f3ff] dark:bg-[#4262ff]/10"
+                    : "border-[#e0e2e8] dark:border-border hover:bg-[#f7f8fa]"
+                }`}
+              >
+                <p className="font-semibold text-xs text-foreground">Share to DM</p>
+                <p className="text-[10px] text-[#555a6a] dark:text-muted-foreground mt-0.5">
+                  Someone shares your reel or post into your DM.
+                </p>
+              </button>
+            </div>
+            {triggerType === "SHARE_TO_DM" && (
+              <p className="rounded-xl bg-[#fff8e0]/70 dark:bg-[#746019]/20 px-3 py-2 text-[11px] text-[#746019] dark:text-[#ffd02f]">
+                No keyword needed. We send your thank-you DM once per share, and
+                skip anyone already contacted in the last 30 days.
+              </p>
+            )}
+          </Card>
+
           {/* STEP 1: Select Target Post */}
           <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 p-5 shadow-subtle space-y-3.5">
             <div>
               <h3 className="font-semibold text-sm text-foreground flex items-center gap-2">
                 <span className="size-5 rounded-full bg-[#1c1c1e] text-white dark:bg-white dark:text-[#1c1c1e] flex items-center justify-center text-[10px] font-bold">
-                  1
+                  2
                 </span>
                 Target Content Scope
               </h3>
@@ -731,12 +792,13 @@ export function CampaignBuilder({
             )}
           </Card>
 
-          {/* STEP 2: Trigger Keywords */}
+          {/* STEP 2: Trigger Keywords (comment campaigns only) */}
+          {triggerType === "COMMENT" && (
           <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 p-5 shadow-subtle space-y-3.5">
             <div>
               <h3 className="font-semibold text-sm text-foreground flex items-center gap-2">
                 <span className="size-5 rounded-full bg-[#1c1c1c] text-white dark:bg-white dark:text-[#1c1c1e] flex items-center justify-center text-[10px] font-bold">
-                  2
+                  3
                 </span>
                 Keyword Trigger Pattern
               </h3>
@@ -792,6 +854,7 @@ export function CampaignBuilder({
               ))}
             </div>
           </Card>
+          )}
 
           {/* STEP 3: Automated Direct Message */}
           <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 p-5 shadow-subtle space-y-3.5">
@@ -799,7 +862,7 @@ export function CampaignBuilder({
               <div>
                 <h3 className="font-semibold text-sm text-foreground flex items-center gap-2">
                   <span className="size-5 rounded-full bg-[#1c1c1c] text-white dark:bg-white dark:text-[#1c1c1e] flex items-center justify-center text-[10px] font-bold">
-                    3
+                    4
                   </span>
                   Automated Direct Message Payload
                 </h3>
@@ -1176,6 +1239,7 @@ export function CampaignBuilder({
         {/* Right Column: Phone Simulator */}
         <div className="lg:col-span-5 sticky top-20 flex justify-center">
           <PhonePreview
+            triggerType={triggerType}
             postScope={postScope}
             postThumbnailUrl={selectedPost?.thumbnailUrl}
             postCaption={selectedPost?.caption}

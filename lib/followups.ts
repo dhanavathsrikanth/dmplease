@@ -28,6 +28,7 @@ import {
 import { FOLLOWUP_LIMITS, type FollowupAction } from "@/lib/followup-constants";
 import { withCronLock } from "@/lib/redis-lock";
 import { recordMetricEvent } from "@/lib/metrics";
+import { getWorkspaceTimeZone } from "@/lib/workspace-preferences";
 
 export function isCronAuthorized(header: string): boolean {
   try {
@@ -376,6 +377,7 @@ async function processStep(
       kind: "dm_sent",
       creatorId: step.workspace_id,
       targetId: String(automation.id),
+      timeZone: await getWorkspaceTimeZone(step.workspace_id),
     });
     summary.sent++;
   }
