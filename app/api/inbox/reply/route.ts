@@ -104,13 +104,35 @@ export async function POST(request: NextRequest) {
     token = account.access_token;
   }
 
+  // Meta's standard messaging window is 24 hours from the person's last
+  // message. A human agent may reply for up to 7 days using the HUMAN_AGENT
+  // tag. Detect the window so manual replies outside 24h still deliver.
+  let outsideStandardWindow = false;
+  if (input.conversationId) {
+    const { data: lastInbound } = await supabase
+      .from("messages")
+      .select("created_at")
+      .eq("conversation_id", input.conversationId)
+      .eq("direction", "inbound")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (lastInbound?.created_at) {
+      const ageMs = Date.now() - new Date(lastInbound.created_at).getTime();
+      outsideStandardWindow = ageMs > 24 * 60 * 60 * 1000;
+    }
+  }
+
   let result: { recipient_id?: string; message_id?: string; error?: { message?: string } };
   try {
     result = await sendDirectMessage(
       token,
       account.instagram_id,
       input.recipientId,
-      input.message
+      input.message,
+      outsideStandardWindow
+        ? { messagingType: "MESSAGE_TAG", tag: "HUMAN_AGENT" }
+        : { messagingType: "RESPONSE" }
     );
   } catch (error) {
     console.error("[inbox/reply] Meta request failed:", error);

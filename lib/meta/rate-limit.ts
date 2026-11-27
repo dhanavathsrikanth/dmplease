@@ -98,6 +98,7 @@ export function validateAutomationInput(input: {
   message: string;
   keywords: string[];
   buttonUrl?: string | null;
+  variants?: string[];
 }): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   const normalized = input.keywords.map((keyword) => keyword.trim().toUpperCase());
@@ -116,6 +117,31 @@ export function validateAutomationInput(input: {
   }
   if (input.buttonUrl && !/^https?:\/\//i.test(input.buttonUrl)) {
     issues.push({ field: "buttonUrl", message: "Button URL must start with http:// or https://." });
+  }
+
+  // Spam-pattern screening. Meta's platform policy treats repetitive,
+  // all-caps and character-flood messages as spam signals.
+  if (/(.)\1{5,}/u.test(input.message)) {
+    issues.push({
+      field: "message",
+      message: "Avoid long runs of the same character (e.g. !!!!!!).",
+    });
+  }
+  const letters = input.message.replace(/[^a-z]/gi, "");
+  if (letters.length >= 20) {
+    const upper = input.message.replace(/[^A-Z]/g, "").length;
+    if (upper / letters.length > 0.7) {
+      issues.push({
+        field: "message",
+        message: "Too many capital letters can look like spam. Use sentence case.",
+      });
+    }
+  }
+  if (input.variants && input.variants.length > 0) {
+    const cleaned = input.variants.map((variant) => variant.trim()).filter(Boolean);
+    if (new Set(cleaned).size !== cleaned.length) {
+      issues.push({ field: "dmVariants", message: "Remove duplicate message variants." });
+    }
   }
 
   return issues;

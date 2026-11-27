@@ -4,6 +4,7 @@ import { getCurrentProfile } from "@/lib/profile";
 import { getAdminDb, hasAdminDb } from "@/lib/db-admin";
 import { getQueueStats } from "@/lib/dm-queue";
 import { computeSafetyScore } from "@/lib/meta/safety-score";
+import { META_PRIVATE_REPLIES_PER_HOUR } from "@/lib/meta/limits";
 import { explainSafetyEvent } from "@/lib/safety-event-explanations";
 import {
   ShieldCheck,
@@ -128,7 +129,7 @@ export default async function SafetyPage() {
       : false,
   });
 
-  const META_HOURLY_LIMIT = 200;
+  const META_HOURLY_LIMIT = META_PRIVATE_REPLIES_PER_HOUR;
   const sendsPerMinute = Math.round(sentLastHour / 60);
   const metaLimitPerMinute = Math.round(META_HOURLY_LIMIT / 60);
 
@@ -277,9 +278,9 @@ export default async function SafetyPage() {
               throttled or blocked.
             </p>
           ) : (
-            <div className="space-y-2">
+            <ul className="space-y-2" aria-label="Recent safety events">
               {recentEvents.map((event) => (
-                <div
+                <li
                   key={event.id}
                   className="flex items-center justify-between gap-3 rounded-xl border border-[#e0e2e8] dark:border-border px-3 py-2 text-xs"
                 >
@@ -309,9 +310,9 @@ export default async function SafetyPage() {
                       </p>
                     </div>
                   </div>
-                </div>
+                </li>
               ))}
-            </div>
+            </ul>
           )}
         </CardContent>
       </Card>

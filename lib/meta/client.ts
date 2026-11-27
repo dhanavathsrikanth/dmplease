@@ -887,7 +887,8 @@ export async function sendDirectMessage(
   accessToken: string,
   instagramAccountId: string,
   recipientUserId: string,
-  text: string
+  text: string,
+  options?: { messagingType?: "RESPONSE" | "UPDATE" | "MESSAGE_TAG"; tag?: "HUMAN_AGENT" }
 ): Promise<{ recipient_id?: string; message_id?: string; error?: MetaApiError }> {
   const url = `${instagramApiBase(accessToken)}/${instagramAccountId}/messages`;
   try {
@@ -899,6 +900,8 @@ export async function sendDirectMessage(
       },
       body: JSON.stringify({
         recipient: { id: recipientUserId },
+        messaging_type: options?.messagingType ?? "RESPONSE",
+        ...(options?.tag ? { tag: options.tag } : {}),
         message: { text },
       }),
     });

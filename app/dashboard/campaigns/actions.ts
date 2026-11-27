@@ -67,6 +67,7 @@ export async function createCampaign(payload: CreateCampaignPayload) {
     message: values.dmMessage,
     keywords: values.triggerKeywords,
     buttonUrl: values.buttonUrl,
+    variants: values.dmVariants,
   });
   if (safetyIssues.length > 0) {
     const fieldErrors: Record<string, string[]> = {};
@@ -193,6 +194,7 @@ export async function updateCampaign(
     message: values.dmMessage,
     keywords: values.triggerKeywords,
     buttonUrl: values.buttonUrl,
+    variants: values.dmVariants,
   });
   if (safetyIssues.length > 0) {
     const fieldErrors: Record<string, string[]> = {};

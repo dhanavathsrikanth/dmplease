@@ -20,6 +20,7 @@ import {
   markReplied,
   randomizedDelay,
 } from "@/lib/meta/rate-limit";
+import { ACCOUNT_HOURLY_CEILING } from "@/lib/meta/limits";
 import { getQstash, getQstashWorkerUrl, getRedis, hasQstash, hasUpstashRedis } from "@/lib/upstash";
 import {
   decideFollowGateAction,
@@ -1998,6 +1999,37 @@ async function sendCommentDm(input: {
   attempts?: number;
 }): Promise<{ sent: boolean; error?: MetaApiError }> {
   const { auto } = input;
+
+  // Account-level ceiling: Meta allows 750 private replies/hour per Instagram
+  // account. Enforce a shared ceiling across every automation so multiple
+  // campaigns cannot collectively exceed it.
+  const accountSlot = await acquireSendSlot(
+    `${input.accountId}:account`,
+    ACCOUNT_HOURLY_CEILING
+  );
+  if (!accountSlot.allowed) {
+    await enqueueQueuedDm({
+      workspaceId: input.workspaceId,
+      automationId: auto.id,
+      instagramAccountId: input.accountDbId,
+      recipientId: input.recipientId,
+      commentId: input.commentId,
+      message: auto.dmMessage,
+      buttonText: auto.buttonText,
+      buttonUrl: auto.buttonUrl,
+    });
+    await recordSafety({
+      workspaceId: input.workspaceId,
+      instagramAccountId: input.accountDbId,
+      recipientId: input.recipientId,
+      kind: "rate_limit_breach",
+    });
+    console.warn(
+      `[safety] Account ceiling (${ACCOUNT_HOURLY_CEILING}/h) reached; message queued`
+    );
+    return { sent: false };
+  }
+
   const cap = auto.hourlyCap ?? 0;
   const limit = await acquireSendSlot(`${input.accountId}:${auto.id}`, cap);
   if (!limit.allowed) {
@@ -2710,7 +2742,9 @@ export async function processWebhookPayload(
         .select("id", { count: "exact", head: true })
         .eq("workspace_id", account.workspace_id)
         .gte("received_at", fiveMinutesAgo);
-      await recordCommentVelocity(event.instagramAccountId, recentCount ?? 0);
+      // Count this event once in the 60-second velocity window. The 5-minute
+      // count is only used for spike detection, not for the bucket itself.
+      await recordCommentVelocity(event.instagramAccountId, 1);
       if (isViralSpike(recentCount ?? 0)) {
         console.warn("[safety] Viral spike detected — throttling delivery");
         await recordSafety({

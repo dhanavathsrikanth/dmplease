@@ -14,8 +14,11 @@
 import { getRedis, hasUpstashRedis } from "@/lib/upstash";
 
 const WINDOW_MS = 60_000;
-const ELEVATED_THRESHOLD = 25;
-const CRITICAL_THRESHOLD = 100;
+// Meta allows 750 private replies/hour per Instagram account (~12.5/min).
+// Elevated starts below that sustainable rate; critical is well above it so
+// the durable queue absorbs the burst before Meta ever sees a 429.
+const ELEVATED_THRESHOLD = 10;
+const CRITICAL_THRESHOLD = 20;
 const ELEVATED_DELAY_MS = 3_000;
 const CRITICAL_DELAY_MS = 10_000;
 const MEMORY_TTL_MS = 2 * 60_000;

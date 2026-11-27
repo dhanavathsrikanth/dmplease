@@ -772,12 +772,28 @@ LinkPlease markets a "Safety Engine" with a live dashboard showing 100% delivere
 - Recent events list shows kind + timestamp; empty state reassures ("nothing has been throttled").
 - All live counters use `aria-live` and text + icon, never colour alone.
 
-## 75. Tests and verification
+## 75. Meta platform limits (source of truth)
+
+The engine is calibrated to Meta's documented ceilings, not guesses. Constants live in `lib/meta/limits.ts`.
+
+| Meta limit | Documented value | How we stay under it |
+|---|---|---|
+| Private replies to post/reel comments | 750 / hour / Instagram account | Account-level ceiling of 700/hour shared across every automation; overflow is queued. |
+| Send API (text, links, reactions, stickers) | 300 / second / account | Randomized pre-send delay + token bucket. |
+| Send API (audio/video) | 10 / second / account | Same delay + bucket; media sends are naturally slower. |
+| Conversations API (reading threads) | 2 / second / account | Inbox reads are paginated and cached. |
+| High-volume inbox block | 72,000 messages sent+received | Proactive throttle + queue depth alerts. |
+| Standard messaging window | 24 hours from the person's last message | Automated replies run inside the window; manual replies outside it use the `HUMAN_AGENT` tag (7 days). |
+
+**Permissions used:** `instagram_basic`, `instagram_manage_messages`, `instagram_manage_comments`, `instagram_manage_insights`, `pages_show_list`, `pages_read_engagement`, `pages_manage_metadata`, `business_management`. The Human Agent escalation path is the Inbox: a human reply pauses the bot and, outside 24h, is sent with `messaging_type=MESSAGE_TAG` + `tag=HUMAN_AGENT`.
+
+## 76. Tests and verification
 
 - `tests/safety-score.test.ts` — 100 baseline, deductions, clamping, summary.
+- `tests/safety-limits.test.ts` — Meta limit constants, 30-day reply-once memory, spam screening.
 - `npm test`, `npm run lint`, `npx tsc --noEmit` — clean.
 
-## 76. Part 11 takeaway
+## 77. Part 11 takeaway
 
 **Safety is now measured, not mocked:** every throttle, breach, opt-out and failure is recorded, scored and visible, with proactive protection during spikes and reversible auto-pause.
 
