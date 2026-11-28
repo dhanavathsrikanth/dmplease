@@ -102,6 +102,7 @@ The folders are numbered so they sort in a sensible reading order, like a deskto
 | Doc | What it covers |
 | --- | --- |
 | [Feature & Codebase Implementation Audit](FEATURE_IMPLEMENTATION_AUDIT.md) | Source-verified verdict on 16 capabilities (2 complete, 12 partial, 2 missing), per-file contribution map, and the blockers to feature parity. |
+| [Feature Inventory, Competitor Comparison & UI Test Guide](FEATURE_INVENTORY_AND_COMPETITOR_GUIDE.md) | All 60 shipped capabilities by family, a 65-row capability matrix vs Zorcha and LinkPlease, per-feature "how to use / how to test in the UI" steps, and an end-to-end smoke test. |
 
 ---
 
