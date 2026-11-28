@@ -6,7 +6,25 @@
  * the live DM can never disagree about what counts as a valid email or phone.
  */
 
-export type CollectFieldKind = "email" | "phone" | "name" | "custom";
+export type CollectFieldKind =
+  | "email"
+  | "phone"
+  | "name"
+  | "gender"
+  | "age_group"
+  | "custom";
+
+export const GENDER_OPTIONS = ["Male", "Female", "Others"] as const;
+
+export const AGE_GROUP_OPTIONS = [
+  "Under 18",
+  "18-24",
+  "25-34",
+  "35-44",
+  "45-54",
+  "55-64",
+  "65+",
+] as const;
 
 export interface CollectField {
   kind: CollectFieldKind;
@@ -17,11 +35,20 @@ export interface CollectField {
 }
 
 export interface CollectConfig {
+  /** Optional custom question shown to the follower. */
+  question?: string;
   retryMessage: string;
   skipMessage: string;
   successMessage: string;
   skipKeywords: string[];
   maxAttempts: number;
+  /** When false, the follower cannot skip the question. */
+  allowSkip: boolean;
+  /** Definition for a custom property (options, yes/no, or free text). */
+  customProperty?: {
+    type: "options" | "yes_no" | "text";
+    options: string[];
+  };
 }
 
 export const DEFAULT_COLLECT_CONFIG: CollectConfig = {
@@ -31,6 +58,7 @@ export const DEFAULT_COLLECT_CONFIG: CollectConfig = {
   successMessage: "Got it, thank you! ✅",
   skipKeywords: ["skip", "later", "no thanks", "not now"],
   maxAttempts: 3,
+  allowSkip: true,
 };
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/;
@@ -42,7 +70,13 @@ export function parseCollectField(
 ): CollectField | null {
   const value = (raw ?? "").trim();
   if (!value || value === "none") return null;
-  if (value === "email" || value === "phone" || value === "name") {
+  if (
+    value === "email" ||
+    value === "phone" ||
+    value === "name" ||
+    value === "gender" ||
+    value === "age_group"
+  ) {
     return { kind: value, key: null, raw: value };
   }
   if (value.startsWith("custom:")) {
@@ -59,6 +93,8 @@ export function collectFieldLabel(field: CollectField | null): string {
   if (field.kind === "email") return "Email address";
   if (field.kind === "phone") return "Phone number";
   if (field.kind === "name") return "Name";
+  if (field.kind === "gender") return "Gender";
+  if (field.kind === "age_group") return "Age group";
   return field.key ? `Custom: ${field.key}` : "Custom property";
 }
 
@@ -71,7 +107,8 @@ export interface LeadValidation {
 /** Validates and normalizes a follower's reply for the requested field. */
 export function validateLeadValue(
   kind: CollectFieldKind,
-  value: string
+  value: string,
+  customProperty?: CollectConfig["customProperty"]
 ): LeadValidation {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -113,7 +150,67 @@ export function validateLeadValue(
     return { valid: true, normalized: trimmed, error: null };
   }
 
-  // Custom property: accept any non-empty value up to 200 characters.
+  if (kind === "gender") {
+    const normalized = trimmed.toLowerCase();
+    const match = GENDER_OPTIONS.find(
+      (option) => option.toLowerCase() === normalized
+    );
+    if (!match) {
+      return {
+        valid: false,
+        normalized: trimmed,
+        error: "Please reply with Male, Female, or Others.",
+      };
+    }
+    return { valid: true, normalized: match, error: null };
+  }
+
+  if (kind === "age_group") {
+    const normalized = trimmed.replace(/\s+/g, " ").toLowerCase();
+    const match = AGE_GROUP_OPTIONS.find(
+      (option) => option.toLowerCase() === normalized
+    );
+    if (!match) {
+      return {
+        valid: false,
+        normalized: trimmed,
+        error: `Please reply with one of: ${AGE_GROUP_OPTIONS.join(", ")}.`,
+      };
+    }
+    return { valid: true, normalized: match, error: null };
+  }
+
+  // Custom property: validate against the configured answer type.
+  if (customProperty?.type === "yes_no") {
+    const normalized = trimmed.toLowerCase();
+    if (normalized === "yes" || normalized === "y") {
+      return { valid: true, normalized: "Yes", error: null };
+    }
+    if (normalized === "no" || normalized === "n") {
+      return { valid: true, normalized: "No", error: null };
+    }
+    return {
+      valid: false,
+      normalized: trimmed,
+      error: "Please reply with Yes or No.",
+    };
+  }
+
+  if (customProperty?.type === "options" && customProperty.options.length > 0) {
+    const normalized = trimmed.toLowerCase();
+    const match = customProperty.options.find(
+      (option) => option.toLowerCase() === normalized
+    );
+    if (!match) {
+      return {
+        valid: false,
+        normalized: trimmed,
+        error: `Please reply with one of: ${customProperty.options.join(", ")}.`,
+      };
+    }
+    return { valid: true, normalized: match, error: null };
+  }
+
   if (trimmed.length > 200) {
     return {
       valid: false,
@@ -127,8 +224,10 @@ export function validateLeadValue(
 /** True when the reply is an explicit opt-out from the collect step. */
 export function isSkipKeyword(
   text: string,
-  keywords: string[] = DEFAULT_COLLECT_CONFIG.skipKeywords
+  keywords: string[] = DEFAULT_COLLECT_CONFIG.skipKeywords,
+  allowSkip = true
 ): boolean {
+  if (!allowSkip) return false;
   const normalized = text.trim().toLowerCase().replace(/[.!?]+$/, "");
   if (!normalized) return false;
   return keywords.some((keyword) => {
@@ -143,6 +242,8 @@ export function renderCollectPrompt(
   field: CollectField,
   config: CollectConfig = DEFAULT_COLLECT_CONFIG
 ): string {
+  const custom = config.question?.trim();
+  if (custom) return custom;
   const label =
     field.kind === "email"
       ? "email address"
@@ -150,23 +251,33 @@ export function renderCollectPrompt(
         ? "phone number"
         : field.kind === "name"
           ? "name"
-          : field.key ?? "detail";
+          : field.kind === "gender"
+            ? "gender (Male, Female, or Others)"
+            : field.kind === "age_group"
+              ? `age group (${AGE_GROUP_OPTIONS.join(", ")})`
+              : field.key ?? "detail";
   const skip = config.skipKeywords[0] ?? "skip";
-  return `Reply with your ${label} to finish. Reply ${skip.toUpperCase()} to skip.`;
+  return config.allowSkip
+    ? `Reply with your ${label} to finish. Reply ${skip.toUpperCase()} to skip.`
+    : `Reply with your ${label} to finish.`;
 }
 
 /** Merges stored values with defaults and clamps the attempt count. */
 export function normalizeCollectConfig(input: {
+  question?: string | null;
   retryMessage?: string | null;
   skipMessage?: string | null;
   successMessage?: string | null;
   skipKeywords?: string[] | null;
   maxAttempts?: number | null;
+  allowSkip?: boolean | null;
+  customProperty?: CollectConfig["customProperty"] | null;
 }): CollectConfig {
   const keywords = (input.skipKeywords ?? [])
     .map((keyword) => keyword.trim())
     .filter(Boolean);
   return {
+    question: input.question?.trim() || undefined,
     retryMessage: input.retryMessage?.trim() || DEFAULT_COLLECT_CONFIG.retryMessage,
     skipMessage: input.skipMessage?.trim() || DEFAULT_COLLECT_CONFIG.skipMessage,
     successMessage:
@@ -177,5 +288,7 @@ export function normalizeCollectConfig(input: {
       10,
       Math.max(1, Math.round(input.maxAttempts ?? DEFAULT_COLLECT_CONFIG.maxAttempts))
     ),
+    allowSkip: input.allowSkip ?? DEFAULT_COLLECT_CONFIG.allowSkip,
+    customProperty: input.customProperty ?? undefined,
   };
 }

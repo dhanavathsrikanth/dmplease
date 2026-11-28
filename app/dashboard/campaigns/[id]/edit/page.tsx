@@ -260,6 +260,8 @@ async function EditCampaignContent({
     <CampaignBuilder
       mode="edit"
       initialHandle={connectedHandle}
+      draftKey={`edit:${id}`}
+      initialUpdatedAt={campaign.updated_at as string | null}
       initialCampaign={{
         id: String(campaign.id),
         name: String(campaign.name ?? "Instagram Auto-DM Campaign"),
@@ -273,7 +275,20 @@ async function EditCampaignContent({
         dmVariants: (campaign.dm_variants as string[] | null) ?? [],
         messageFormat: campaign.message_format as string | null,
         messageAssets: campaign.message_assets as
-          | { asset?: { url: string; mimeType?: string; filename?: string } | null; cards?: Array<{ title: string; subtitle?: string; imageUrl?: string }> | null }
+          | {
+              asset?: { url: string; mimeType?: string; filename?: string } | null;
+              cards?: Array<{ title: string; subtitle?: string; imageUrl?: string }> | null;
+              links?: Array<{ title: string; url: string }> | null;
+              publicReplyLimit?: number | null;
+              collectQuestion?: string | null;
+              collectAllowSkip?: boolean | null;
+              collectCustomProperty?: {
+                key: string;
+                question: string;
+                type: "options" | "yes_no" | "text";
+                options: string[];
+              } | null;
+            }
           | null,
         buttonText: campaign.button_text as string | null,
         buttonUrl: campaign.button_url as string | null,

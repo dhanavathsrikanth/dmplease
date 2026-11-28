@@ -54,6 +54,12 @@
       "sourceType": "github",
       "skillPath": "skills/troubleshoot-ngrok/SKILL.md",
       "computedHash": "1b694971a8c73558286af40054a226f3ed53b9fa93f67866a4d5ab0e0fff297f"
+    },
+    "web-design-guidelines": {
+      "source": "vercel-labs/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/web-design-guidelines/SKILL.md",
+      "computedHash": "c0a42a031832ef356aa550855ab608eb36f919d0e6460bbca6958f516b022424"
     }
   }
 }

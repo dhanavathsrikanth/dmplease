@@ -55,32 +55,25 @@ export function WorkspaceSwitcher({
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger className="w-full flex items-center justify-between p-2 rounded-xl hover:bg-[#f7f8fa] dark:hover:bg-muted/60 transition-colors text-left outline-none group border border-transparent hover:border-[#e0e2e8]">
-        <div className="flex items-center gap-2.5 truncate">
-          <Avatar className="size-7 rounded-lg bg-[#fff8e0] text-[#746019] border border-[#ffd02f]/40 dark:bg-[#746019]/30 dark:text-[#ffd02f]">
-            <AvatarFallback className="text-[10px] font-bold">
-              {getWorkspaceInitials(currentWorkspace?.name || "My Workspace")}
-            </AvatarFallback>
-          </Avatar>
-          <div className="truncate group-data-[collapsed=true]/sidebar:hidden">
-            <p className="text-xs font-semibold text-foreground truncate">
-              {currentWorkspace?.name || "Personal Workspace"}
-            </p>
-            <p className="text-[10px] text-[#6b6f7e] dark:text-[#9aa0ad] truncate capitalize font-medium">
-              {currentWorkspace?.role?.toLowerCase() || "Owner"}
-            </p>
-          </div>
-        </div>
+      <DropdownMenuTrigger className="group flex w-full items-center gap-2 rounded-lg px-1.5 py-1 text-left outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring">
+        <Avatar className="size-6 shrink-0 rounded-md border border-brand/40 bg-brand text-brand-foreground">
+          <AvatarFallback className="text-[10px] font-bold">
+            {getWorkspaceInitials(currentWorkspace?.name || "My Workspace")}
+          </AvatarFallback>
+        </Avatar>
+        <span className="truncate text-sm font-semibold text-foreground group-data-[collapsed=true]/sidebar:hidden">
+          {currentWorkspace?.name || "Personal Workspace"}
+        </span>
         <IconSelector
           stroke={1.8}
-          className="size-3.5 text-muted-foreground shrink-0 ml-1 group-hover:text-foreground group-data-[collapsed=true]/sidebar:hidden"
+          className="ml-auto size-3 shrink-0 text-muted-foreground group-hover:text-foreground group-data-[collapsed=true]/sidebar:hidden"
         />
       </DropdownMenuTrigger>
 
       <DropdownMenuContent
         align="start"
-        side="top"
-        className="w-56 rounded-2xl border border-[#e0e2e8] dark:border-border shadow-modal p-1.5 bg-card"
+        side="bottom"
+        className="w-56 rounded-2xl border border-border bg-card p-1.5 shadow-modal"
       >
         <DropdownMenuLabel className="text-[10px] font-semibold text-[#6b6f7e] px-2 py-1 uppercase tracking-wider">
           Workspaces ({workspaces.length})
@@ -117,17 +110,12 @@ export function WorkspaceSwitcher({
   );
 }
 
-/** Matches the footer switcher footprint so the sidebar does not shift. */
+/** Matches the header switcher footprint so the sidebar does not shift. */
 export function WorkspaceSwitcherSkeleton() {
   return (
-    <div className="w-full flex items-center justify-between p-2 rounded-xl border border-transparent overflow-hidden">
-      <div className="flex items-center gap-2.5 truncate">
-        <div className="size-7 rounded-lg bg-muted animate-pulse shrink-0" />
-        <div className="space-y-1.5 group-data-[collapsed=true]/sidebar:hidden">
-          <div className="h-3 w-24 rounded bg-muted animate-pulse" />
-          <div className="h-2.5 w-14 rounded bg-muted animate-pulse" />
-        </div>
-      </div>
+    <div className="flex w-full items-center gap-2 overflow-hidden rounded-lg px-1.5 py-1">
+      <div className="size-6 shrink-0 animate-pulse rounded-md bg-muted" />
+      <div className="h-3 w-24 animate-pulse rounded bg-muted group-data-[collapsed=true]/sidebar:hidden" />
     </div>
   );
 }

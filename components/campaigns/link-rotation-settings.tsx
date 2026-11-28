@@ -9,7 +9,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import {
-  deleteLinkRotator,
   saveLinkRotator,
   type LinkRotatorView,
 } from "@/app/dashboard/campaigns/link-actions";
@@ -27,7 +26,6 @@ interface LinkRotationSettingsProps {
 interface DraftTarget {
   destinationUrl: string;
   label: string;
-  enabled: boolean;
 }
 
 export function LinkRotationSettings({
@@ -39,77 +37,63 @@ export function LinkRotationSettings({
   disabled,
 }: LinkRotationSettingsProps) {
   const baseId = useId();
-  const [items, setItems] = useState<LinkRotatorView[]>(rotators);
-  const [editing, setEditing] = useState(false);
-  const [name, setName] = useState("");
-  const [mode, setMode] = useState<"sticky" | "round_robin">("sticky");
-  const [targets, setTargets] = useState<DraftTarget[]>([
-    { destinationUrl: "", label: "", enabled: true },
-  ]);
+  const selected = rotators.find((item) => item.id === rotatorId) ?? null;
+  const [targets, setTargets] = useState<DraftTarget[]>(() =>
+    selected && selected.targets.length > 0
+      ? selected.targets.map((target) => ({
+          destinationUrl: target.destinationUrl,
+          label: target.label ?? "",
+        }))
+      : [{ destinationUrl: "", label: "" }]
+  );
   const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const updateTarget = (index: number, patch: Partial<DraftTarget>) => {
+    setSaved(false);
     setTargets((current) =>
       current.map((target, i) => (i === index ? { ...target, ...patch } : target))
     );
   };
 
+  const addTarget = () => {
+    setSaved(false);
+    setTargets((current) => [...current, { destinationUrl: "", label: "" }]);
+  };
+
+  const removeTarget = (index: number) => {
+    setSaved(false);
+    setTargets((current) => current.filter((_, i) => i !== index));
+  };
+
   const save = async () => {
+    const validTargets = targets.filter((target) => target.destinationUrl.trim());
+    if (validTargets.length === 0) {
+      setError("Add at least one destination link.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
       const result = await saveLinkRotator({
-        name,
-        mode,
-        targets: targets.map((target) => ({
-          destinationUrl: target.destinationUrl,
-          label: target.label,
-          enabled: target.enabled,
+        id: rotatorId ?? undefined,
+        name: selected?.name ?? "Tracked links",
+        mode: selected?.mode ?? "sticky",
+        targets: validTargets.map((target) => ({
+          destinationUrl: target.destinationUrl.trim(),
+          label: target.label.trim(),
+          enabled: true,
         })),
       });
       if (!result.success || !result.rotatorId) {
-        setError(result.error ?? "Could not save the link group.");
+        setError(result.error ?? "Could not save your links.");
         return;
       }
-      setItems((current) => [
-        {
-          id: result.rotatorId!,
-          name,
-          mode,
-          targets: targets.map((target, index) => ({
-            id: `draft-${index}`,
-            destinationUrl: target.destinationUrl,
-            label: target.label || null,
-            enabled: target.enabled,
-          })),
-        },
-        ...current,
-      ]);
       onRotatorIdChange(result.rotatorId);
-      setEditing(false);
-      setName("");
-      setTargets([{ destinationUrl: "", label: "", enabled: true }]);
+      setSaved(true);
     } catch {
-      setError("Network error while saving the link group.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const remove = async (id: string) => {
-    setBusy(true);
-    setError(null);
-    try {
-      const result = await deleteLinkRotator(id);
-      if (!result.success) {
-        setError(result.error ?? "Could not delete the link group.");
-        return;
-      }
-      setItems((current) => current.filter((item) => item.id !== id));
-      if (rotatorId === id) onRotatorIdChange(null);
-    } catch {
-      setError("Network error while deleting the link group.");
+      setError("Network error while saving your links.");
     } finally {
       setBusy(false);
     }
@@ -124,8 +108,8 @@ export function LinkRotationSettings({
             Smart tracked links
           </h3>
           <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground max-w-lg">
-            Send a short, clickable link instead of a long URL. Every click is tracked, and
-            you can split followers across several destinations.
+            We shorten your link and track every click. Add one or more destinations —
+            we&apos;ll split followers across them automatically.
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -144,187 +128,91 @@ export function LinkRotationSettings({
       {enabled && (
         <div className="space-y-3 border-t border-[#e0e2e8] dark:border-border/60 pt-3.5">
           <div className="rounded-xl bg-[#f5f3ff] dark:bg-[#4262ff]/10 px-3 py-2.5 text-[11px] leading-relaxed text-[#555a6a] dark:text-muted-foreground">
-            Your followers will see{" "}
+            Your followers see{" "}
             <code className="font-mono font-semibold text-foreground">
               {shortLinkPreview()}
             </code>{" "}
-            — short enough for Instagram to make it clickable, with attribution recorded
-            automatically.
+            — a short, clickable link. Clicks are tracked automatically.
           </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor={`${baseId}-rotator`} className="text-[11px]">
-              Destination group
-            </Label>
-            <select
-              id={`${baseId}-rotator`}
-              value={rotatorId ?? ""}
-              onChange={(event) => onRotatorIdChange(event.target.value || null)}
-              disabled={disabled || busy}
-              className="h-9 w-full rounded-lg border border-[#c7cad5] dark:border-border bg-background px-3 text-xs outline-none focus:border-[#4262ff] focus:ring-2 focus:ring-[#4262ff]/20"
-            >
-              <option value="">Single destination (no rotation)</option>
-              {items.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name} · {item.targets.filter((t) => t.enabled).length} destinations
-                </option>
-              ))}
-            </select>
-            {rotatorId && (
-              <p className="text-[10px] text-muted-foreground">
-                {items.find((item) => item.id === rotatorId)?.mode === "round_robin"
-                  ? "Rotating evenly: each new follower gets the next destination in order."
-                  : "Sticky per person: each follower always gets the same destination, so attribution stays clean."}
-              </p>
-            )}
-          </div>
-
-          {rotatorId && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              disabled={disabled || busy}
-              onClick={() => void remove(rotatorId)}
-              className="text-[11px] text-destructive hover:text-destructive"
-            >
-              <Trash2 className="size-3 mr-1.5" aria-hidden="true" />
-              Delete this group
-            </Button>
-          )}
-
-          {!editing ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={disabled}
-              onClick={() => setEditing(true)}
-              className="rounded-full text-[11px] h-8 px-3"
-            >
-              <Plus className="size-3.5 mr-1.5" aria-hidden="true" />
-              {items.length ? "Create another group" : "Create a rotation group"}
-            </Button>
-          ) : (
-            <div className="rounded-xl border border-[#e0e2e8] dark:border-border p-3 space-y-3">
-              <div className="space-y-1.5">
-                <Label htmlFor={`${baseId}-name`} className="text-[11px]">
-                  Group name
-                </Label>
+          <div className="space-y-2">
+            <p className="text-[11px] font-medium text-foreground">
+              Where should the link go?
+            </p>
+            {targets.map((target, index) => (
+              <div
+                key={index}
+                className="space-y-2 rounded-xl border border-[#e0e2e8] p-2.5 dark:border-border"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="grid size-5 shrink-0 place-items-center rounded-full bg-[#4262ff]/10 text-[10px] font-bold text-[#4262ff]">
+                    {index + 1}
+                  </span>
+                  <Input
+                    aria-label={`Destination ${index + 1} URL`}
+                    placeholder="https://yourbrand.com/offer"
+                    value={target.destinationUrl}
+                    onChange={(event) =>
+                      updateTarget(index, { destinationUrl: event.target.value })
+                    }
+                    disabled={busy}
+                    className="h-9 text-xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeTarget(index)}
+                    disabled={busy || targets.length === 1}
+                    aria-label={`Remove destination ${index + 1}`}
+                    className="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-destructive disabled:opacity-40"
+                  >
+                    <Trash2 className="size-3.5" aria-hidden="true" />
+                  </button>
+                </div>
                 <Input
-                  id={`${baseId}-name`}
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  placeholder="e.g. Offer split test"
-                  maxLength={80}
+                  aria-label={`Destination ${index + 1} label`}
+                  placeholder="Label (optional) — e.g. Instagram offer"
+                  value={target.label}
+                  onChange={(event) => updateTarget(index, { label: event.target.value })}
                   disabled={busy}
                   className="h-8 text-xs"
                 />
               </div>
+            ))}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={busy || targets.length >= 10}
+              onClick={addTarget}
+              className="rounded-full text-[11px] h-8 px-3"
+            >
+              <Plus className="size-3.5 mr-1.5" aria-hidden="true" />
+              Add destination
+            </Button>
+          </div>
 
-              <fieldset className="space-y-1.5">
-                <legend className="text-[11px] font-medium">Rotation style</legend>
-                <div className="flex flex-wrap gap-3">
-                  {(["sticky", "round_robin"] as const).map((value) => (
-                    <label key={value} className="flex items-center gap-1.5 text-[11px]">
-                      <input
-                        type="radio"
-                        name={`${baseId}-mode`}
-                        checked={mode === value}
-                        onChange={() => setMode(value)}
-                        disabled={busy}
-                        className="accent-[#4262ff]"
-                      />
-                      {value === "sticky" ? "Same link per person" : "Rotate evenly"}
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
-
-              <div className="space-y-2">
-                <p className="text-[11px] font-medium">Destinations</p>
-                {targets.map((target, index) => (
-                  <div key={index} className="grid grid-cols-[1fr,120px,auto] gap-2 items-center">
-                    <Input
-                      aria-label={`Destination ${index + 1} URL`}
-                      placeholder="https://yourbrand.com/offer"
-                      value={target.destinationUrl}
-                      onChange={(event) => updateTarget(index, { destinationUrl: event.target.value })}
-                      disabled={busy}
-                      className="h-8 text-xs"
-                    />
-                    <Input
-                      aria-label={`Destination ${index + 1} label`}
-                      placeholder="Label"
-                      value={target.label}
-                      onChange={(event) => updateTarget(index, { label: event.target.value })}
-                      disabled={busy}
-                      className="h-8 text-xs"
-                    />
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setTargets((current) => current.filter((_, i) => i !== index))
-                      }
-                      disabled={busy || targets.length === 1}
-                      aria-label={`Remove destination ${index + 1}`}
-                      className="text-muted-foreground hover:text-destructive disabled:opacity-40"
-                    >
-                      <Trash2 className="size-3.5" aria-hidden="true" />
-                    </button>
-                  </div>
-                ))}
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={busy || targets.length >= 10}
-                  onClick={() =>
-                    setTargets((current) => [
-                      ...current,
-                      { destinationUrl: "", label: "", enabled: true },
-                    ])
-                  }
-                  className="rounded-full text-[10px] h-7 px-3"
-                >
-                  <Plus className="size-3 mr-1" aria-hidden="true" />
-                  Add destination
-                </Button>
-              </div>
-
-              <div className="flex justify-end gap-2">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  disabled={busy}
-                  onClick={() => setEditing(false)}
-                  className="text-[11px]"
-                >
-                  Cancel
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={busy}
-                  onClick={() => void save()}
-                  className="text-[11px] h-8"
-                >
-                  {busy ? "Saving…" : "Save group"}
-                </Button>
-              </div>
-            </div>
-          )}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-[10px] text-muted-foreground flex items-center gap-1.5">
+              <Check className="size-3" aria-hidden="true" />
+              Followers are split across your destinations. Each person always gets the
+              same one, so you can see which offer converts.
+            </p>
+            <Button
+              type="button"
+              size="sm"
+              disabled={busy}
+              onClick={() => void save()}
+              className="text-[11px] h-8"
+            >
+              {busy ? "Saving…" : saved ? "Saved" : "Save links"}
+            </Button>
+          </div>
 
           {error && (
             <p role="alert" className="text-[11px] font-medium text-destructive">
               {error}
             </p>
           )}
-          <p className="text-[10px] text-muted-foreground flex items-center gap-1.5">
-            <Check className="size-3" aria-hidden="true" />
-            Clicks are recorded per destination, so you can see which offer actually converts.
-          </p>
         </div>
       )}
     </Card>

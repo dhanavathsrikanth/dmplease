@@ -5,6 +5,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { listLinkRotators } from "@/app/dashboard/campaigns/link-actions";
 import { getCurrentProfile } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
+import { getCampaignTemplate } from "@/lib/campaign-templates";
 
 export const metadata = {
   title: "New Campaign - dmplease",
@@ -31,15 +32,24 @@ function BuilderSkeleton() {
   );
 }
 
-export default function NewCampaignPage() {
+export default function NewCampaignPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ template?: string }>;
+}) {
   return (
     <Suspense fallback={<BuilderSkeleton />}>
-      <NewCampaignContent />
+      <NewCampaignContent searchParams={searchParams} />
     </Suspense>
   );
 }
 
-async function NewCampaignContent() {
+async function NewCampaignContent({
+  searchParams,
+}: {
+  searchParams: Promise<{ template?: string }>;
+}) {
+  const { template } = await searchParams;
   await connection();
   const profile = await getCurrentProfile();
   const supabase = await createClient();
@@ -58,10 +68,28 @@ async function NewCampaignContent() {
   }
 
   const linkRotators = await listLinkRotators();
+  const templateDefaults = getCampaignTemplate(template)?.defaults;
+
   return (
     <CampaignBuilder
       initialHandle={connectedHandle}
       linkRotators={linkRotators}
+      draftKey={template ?? "blank"}
+      initialCampaign={
+        templateDefaults
+          ? {
+              id: "template",
+              name: templateDefaults.name,
+              triggerKeywords: templateDefaults.triggerKeywords,
+              dmMessage: templateDefaults.dmMessage,
+              buttonText: templateDefaults.buttonText,
+              buttonUrl: templateDefaults.buttonUrl,
+              followGateEnabled: templateDefaults.followGateEnabled,
+              publicReplyEnabled: templateDefaults.publicReplyEnabled,
+              collectField: templateDefaults.collectField,
+            }
+          : undefined
+      }
     />
   );
 }

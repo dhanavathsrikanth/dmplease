@@ -112,6 +112,33 @@ export default {
           "on-dark-muted": "#a5a8b5",
           "footer-bg": "#1c1c1e",
         },
+        brand: {
+          DEFAULT: "hsl(var(--brand) / <alpha-value>)",
+          foreground: "hsl(var(--brand-foreground) / <alpha-value>)",
+          soft: "hsl(var(--brand-soft) / <alpha-value>)",
+          "soft-foreground": "hsl(var(--brand-soft-foreground) / <alpha-value>)",
+        },
+        success: {
+          DEFAULT: "hsl(var(--success) / <alpha-value>)",
+          soft: "hsl(var(--success-soft) / <alpha-value>)",
+          "soft-foreground": "hsl(var(--success-soft-foreground) / <alpha-value>)",
+        },
+        rose: {
+          DEFAULT: "hsl(var(--rose) / <alpha-value>)",
+          soft: "hsl(var(--rose-soft) / <alpha-value>)",
+          "soft-foreground": "hsl(var(--rose-soft-foreground) / <alpha-value>)",
+        },
+        coral: {
+          DEFAULT: "hsl(var(--coral) / <alpha-value>)",
+          soft: "hsl(var(--coral-soft) / <alpha-value>)",
+          "soft-foreground": "hsl(var(--coral-soft-foreground) / <alpha-value>)",
+        },
+        info: {
+          DEFAULT: "hsl(var(--info) / <alpha-value>)",
+          soft: "hsl(var(--info-soft) / <alpha-value>)",
+          "soft-foreground": "hsl(var(--info-soft-foreground) / <alpha-value>)",
+        },
+        "border-strong": "hsl(var(--border-strong) / <alpha-value>)",
       },
       borderRadius: {
         lg: "var(--radius)",

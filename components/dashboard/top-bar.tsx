@@ -24,11 +24,11 @@ interface TopBarProps {
 }
 
 const pageTitles: Record<string, { title: string; category: string }> = {
-  "/dashboard": { title: "Dashboard", category: "Workspace" },
+  "/dashboard": { title: "Home", category: "Workspace" },
   "/dashboard/overview": { title: "Analytics", category: "Workspace" },
   "/dashboard/inbox": { title: "Inbox", category: "Workspace" },
   "/dashboard/contacts": { title: "Contacts", category: "Workspace" },
-  "/dashboard/campaigns": { title: "Campaigns", category: "Automations" },
+  "/dashboard/campaigns": { title: "Automations", category: "Automations" },
   "/dashboard/campaigns/new": { title: "New campaign", category: "Automations" },
   "/dashboard/inbox-automations": { title: "Auto-replies", category: "Automations" },
   "/dashboard/logs": { title: "Activity Log", category: "Automations" },

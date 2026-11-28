@@ -16,6 +16,8 @@ interface DmVariablePickerProps {
   onChange: (next: string) => void;
   /** Set when a contact variable is used but no lead field is collected. */
   uncollectedVariables?: DmVariableToken[];
+  /** Limit the picker to a subset of tokens. Defaults to every variable. */
+  tokens?: DmVariableToken[];
   disabled?: boolean;
 }
 
@@ -26,10 +28,17 @@ export function DmVariablePicker({
   value,
   onChange,
   uncollectedVariables = [],
+  tokens,
   disabled,
 }: DmVariablePickerProps) {
   const helpId = useId();
   const used = new Set(findDmVariables(value));
+  const available = tokens
+    ? DM_VARIABLES.filter((variable) =>
+        tokens.includes(variable.token as DmVariableToken)
+      )
+    : DM_VARIABLES;
+  const usernameOnly = tokens?.length === 1 && tokens[0] === "username";
 
   const insert = (token: DmVariableToken) => {
     const snippet = `{${token}}`;
@@ -58,7 +67,7 @@ export function DmVariablePicker({
       </div>
 
       <ul className="flex flex-wrap gap-1.5" aria-label="Available message variables">
-        {DM_VARIABLES.map((variable) => {
+        {available.map((variable) => {
           const token = variable.token as DmVariableToken;
           const isUsed = used.has(token);
           return (
@@ -66,7 +75,7 @@ export function DmVariablePicker({
               <button
                 type="button"
                 onClick={() => insert(token)}
-                disabled={disabled}
+                disabled={disabled || (token === "username" && isUsed)}
                 title={variable.description}
                 aria-label={`Insert ${variable.label} — ${variable.description}`}
                 aria-pressed={isUsed}
@@ -84,9 +93,19 @@ export function DmVariablePicker({
       </ul>
 
       <p id={helpId} className="text-[10px] leading-relaxed text-muted-foreground">
-        Click a token to insert it where your cursor is. Both <code>{"{name}"}</code> and{" "}
-        <code>{"{{name}}"}</code> work. <code>{"{voucher}"}</code> creates a unique code for
-        every person automatically — no setup needed.
+        {usernameOnly ? (
+          <>
+            Click <code>{"{username}"}</code> to insert the follower&apos;s Instagram
+            handle.
+          </>
+        ) : (
+          <>
+            Click a token to insert it where your cursor is. Both{" "}
+            <code>{"{name}"}</code> and <code>{"{{name}}"}</code> work.{" "}
+            <code>{"{voucher}"}</code> creates a unique code for every person
+            automatically — no setup needed.
+          </>
+        )}
       </p>
 
       {uncollectedVariables.length > 0 && (

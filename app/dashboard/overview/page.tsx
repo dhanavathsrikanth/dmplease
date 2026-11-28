@@ -21,6 +21,11 @@ import {
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { SpotlightCard } from "@/components/ui/spotlight-card";
+import { NumberTicker } from "@/components/ui/number-ticker";
+import { ShimmerButton } from "@/components/ui/shimmer-button";
+import { AnimatedGradientText } from "@/components/ui/animated-gradient-text";
+import { BentoGrid } from "@/components/ui/bento-grid";
 import { getQueueStats } from "@/lib/dm-queue";
 import { computeSafetyScore } from "@/lib/meta/safety-score";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -83,7 +88,7 @@ async function refreshInsightsAction() {
 
 function OverviewSkeleton() {
   return (
-    <div className="space-y-6 animate-pulse">
+    <div className="space-y-6 animate-pulse motion-reduce:animate-none">
       <Skeleton className="h-8 w-64 rounded-xl" />
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {[...Array(3)].map((_, i) => (
@@ -96,7 +101,7 @@ function OverviewSkeleton() {
 }
 
 interface PageProps {
-  searchParams?: Promise<{ range?: string }>;
+  searchParams?: Promise<{ range?: string; tab?: string }>;
 }
 
 export default function OverviewPage(props: PageProps) {
@@ -112,6 +117,17 @@ export default function OverviewPage(props: PageProps) {
 async function OverviewContent({ searchParams }: PageProps) {
   const resolvedParams = await searchParams;
   const range = resolvedParams?.range || "all";
+  const requestedTab = resolvedParams?.tab || "overview";
+  const activeTab = [
+    "overview",
+    "funnel",
+    "revenue",
+    "audience",
+    "campaigns",
+    "accounts",
+  ].includes(requestedTab)
+    ? requestedTab
+    : "overview";
 
   await connection();
   const profile = await getCurrentProfile();
@@ -193,7 +209,7 @@ async function OverviewContent({ searchParams }: PageProps) {
   const deliveryRate =
     totalDms > 0 ? Math.round((deliveredDms / totalDms) * 100) : null;
 
-  // â”€â”€ Phase A funnel signals â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Phase A funnel signals ──────────────────────────────────────────────
   const scopedInPeriod = <T,>(q: T) =>
     periodCutoff ? (q as { gte: (c: string, v: string) => T }).gte("created_at", periodCutoff) : q;
 
@@ -374,8 +390,8 @@ async function OverviewContent({ searchParams }: PageProps) {
   for (const row of conversionRows) {
     if (!row.post_id && !row.keyword) continue;
     const key = row.keyword
-      ? `${row.keyword}${row.post_id ? ` Â· ${row.post_id.slice(-6)}` : ""}`
-      : `Post Â· ${String(row.post_id).slice(-6)}`;
+      ? `${row.keyword}${row.post_id ? ` · ${row.post_id.slice(-6)}` : ""}`
+      : `Post · ${String(row.post_id).slice(-6)}`;
     const current = revenueByCreative.get(key) ?? { revenue: 0, count: 0 };
     current.revenue += Number(row.revenue_minor ?? 0);
     current.count += 1;
@@ -562,7 +578,7 @@ async function OverviewContent({ searchParams }: PageProps) {
     new Set(allAutomations.flatMap((a) => a.triggerKeywords || []))
   );
 
-  // â”€â”€ Meta insights snapshots (last 30 days) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Meta insights snapshots (last 30 days) ──────────────────────────────
   let insightRows: InsightRow[] = [];
   let insightsStatus: "unknown" | "ok" | "needs_access" | "error" = "unknown";
   let insightsLastSyncedAt: string | null = null;
@@ -610,7 +626,6 @@ async function OverviewContent({ searchParams }: PageProps) {
 
   const insightsSummary = summarizeInsights(insightRows);
   const insightTotals = insightsSummary.totals;
-  const snapshotCount = insightsSummary.hasData ? 1 : 0;
   const conversionRateValue = computeConversionRate(
     totalDms,
     insightTotals.impressions
@@ -637,686 +652,996 @@ async function OverviewContent({ searchParams }: PageProps) {
     dmCountsByAutomation
   ).slice(0, 5);
 
+  const tabs = [
+    { id: "overview", label: "Overview" },
+    { id: "funnel", label: "Funnel" },
+    { id: "revenue", label: "Revenue" },
+    { id: "audience", label: "Audience" },
+    { id: "campaigns", label: "Campaigns" },
+    { id: "accounts", label: "Accounts" },
+  ];
+
   return (
-    <div className="space-y-6 animate-in fade-in duration-300 antialiased selection:bg-[#ffd02f] selection:text-[#1c1c1e]">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-[#e0e2e8] dark:border-border/80">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-medium tracking-tight text-foreground flex items-center gap-2 font-rubik">
-            Analytics &amp; Performance
+    <div className="space-y-6 animate-in fade-in duration-300 antialiased selection:bg-brand selection:text-brand-foreground">
+      {/* ── Header ── */}
+      <header className="flex flex-col gap-4 border-b border-border pb-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="min-w-0">
+          <p className="font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+            Insights
+          </p>
+          <h1 className="mt-1 text-balance text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+            <AnimatedGradientText>Insights</AnimatedGradientText>
           </h1>
-          <p className="text-[#555a6a] dark:text-muted-foreground text-xs sm:text-sm mt-0.5">
-            Keyword triggers and delivery performance measured from your automations.
+          <p className="mt-1 max-w-2xl text-pretty text-sm text-muted-foreground">
+            Performance and AI insights for{" "}
+            {accountHealth[0]?.username
+              ? `@${accountHealth[0].username}`
+              : "your workspace"}
+            {insightsLastSyncedAt
+              ? ` · Updated ${new Date(insightsLastSyncedAt).toLocaleString(
+                  "en-IN",
+                  {
+                    day: "numeric",
+                    month: "short",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    timeZone,
+                  }
+                )}`
+              : ""}
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-        {/* Timeframe Filter Navigation */}
-        <div className="flex items-center gap-1.5 p-1 rounded-full bg-[#f0f2f5] dark:bg-muted/60 border border-[#e0e2e8] dark:border-border/60 w-fit">
-          <Link
-            href="/dashboard/overview?range=7d"
-            className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all ${
-              range === "7d"
-                ? "bg-white dark:bg-card text-foreground shadow-xs"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            7 Days
-          </Link>
-          <Link
-            href="/dashboard/overview?range=30d"
-            className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all ${
-              range === "30d"
-                ? "bg-white dark:bg-card text-foreground shadow-xs"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            30 Days
-          </Link>
-          <Link
-            href="/dashboard/overview?range=all"
-            className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all ${
-              range === "all"
-                ? "bg-white dark:bg-card text-foreground shadow-xs"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            All Time
-          </Link>
-        </div>
-        {reportLink?.enabled ? (
-          <Button
-            asChild
-            size="sm"
-            variant="outline"
-            className="rounded-full h-9 text-xs font-semibold gap-1.5"
-          >
-            <a
+          <div className="flex w-fit items-center gap-1.5 rounded-full border border-border bg-muted p-1">
+            {[
+              { id: "7d", label: "7 Days" },
+              { id: "30d", label: "30 Days" },
+              { id: "all", label: "All Time" },
+            ].map((option) => (
+              <Link
+                key={option.id}
+                href={`/dashboard/overview?range=${option.id}&tab=${activeTab}`}
+                className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition-[background-color,color,box-shadow] ${
+                  range === option.id
+                    ? "bg-card text-foreground shadow-xs"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {option.label}
+              </Link>
+            ))}
+          </div>
+          {reportLink?.enabled ? (
+            <ShimmerButton
               href={`/report/${reportLink.token}`}
               target="_blank"
               rel="noreferrer"
+              className="h-9 px-4 text-xs"
             >
               <ExternalLink className="size-3.5" aria-hidden="true" />
               Share report
-            </a>
-          </Button>
-        ) : (
-          <Button
-            asChild
-            size="sm"
-            variant="outline"
-            className="rounded-full h-9 text-xs font-semibold gap-1.5"
-          >
-            <Link href="/dashboard/settings">
+            </ShimmerButton>
+          ) : (
+            <ShimmerButton href="/dashboard/settings" className="h-9 px-4 text-xs">
               <ExternalLink className="size-3.5" aria-hidden="true" />
               Create report link
-            </Link>
-          </Button>
-        )}
-        </div>
-      </div>
-
-      {/* â”€â”€ Wins & Fixes: the three things a busy creator needs today â”€â”€ */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className="rounded-2xl border border-[#ffd02f]/40 bg-[#fff8e0]/40 dark:bg-[#746019]/10 shadow-subtle p-5 space-y-3">
-          <div className="flex items-center gap-2 text-xs font-semibold text-[#746019] dark:text-[#ffd02f]">
-            <Trophy className="size-4" /> Top performer
-          </div>
-          <p className="text-lg font-semibold tracking-tight text-foreground">
-            {topAutomation ? topAutomation.name : "No campaign data yet"}
-          </p>
-          <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground">
-            {topAutomation
-              ? `${topAutomation.count} DMs delivered in this period Â· Edit the winner`
-              : "Publish a campaign and comment your keyword to see results here."}
-          </p>
-          {topAutomation && (
-            <Button asChild variant="outline" size="sm" className="rounded-full text-[11px] h-8">
-              <Link href={`/dashboard/campaigns/${topAutomation.id}/edit`}>Duplicate flow</Link>
+            </ShimmerButton>
+          )}
+          <form action={refreshInsightsAction}>
+            <Button
+              type="submit"
+              size="sm"
+              variant="outline"
+              className="h-9 rounded-full px-4 text-xs font-semibold"
+            >
+              <RefreshCw className="size-3.5" aria-hidden="true" />
+              Refresh insights
             </Button>
-          )}
-        </Card>
+          </form>
+        </div>
+      </header>
 
-        <Card className="rounded-2xl border border-[#ff9999]/40 bg-[#ffe6cd]/40 dark:bg-[#804000]/10 shadow-subtle p-5 space-y-3">
-          <div className="flex items-center gap-2 text-xs font-semibold text-[#8a3b18] dark:text-[#ff9999]">
-            <TrendingDown className="size-4" /> Biggest leak
-          </div>
-          <p className="text-lg font-semibold tracking-tight text-foreground">
-            {biggestLeak.label}
-          </p>
-          <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground">
-            {worstDrop > 0
-              ? `${Math.round(worstDrop * 100)}% drop at this step. ${biggestLeak.detail}`
-              : biggestLeak.detail}
-          </p>
-          <Button asChild variant="outline" size="sm" className="rounded-full text-[11px] h-8">
-            <Link href={biggestLeak.href}>Fix it</Link>
-          </Button>
-        </Card>
-
-        <Card className="rounded-2xl border border-[#0fbcb0]/30 bg-[#c3faf5]/40 dark:bg-[#187574]/10 shadow-subtle p-5 space-y-3">
-          <div className="flex items-center gap-2 text-xs font-semibold text-[#187574] dark:text-[#c3faf5]">
-            <Sparkles className="size-4" /> This week
-          </div>
-          <p className="text-lg font-semibold tracking-tight text-foreground">
-            {revenueLabel ?? `${weeklySent} DMs Â· ${leadsCaptured} leads`}
-          </p>
-          <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground">
-            {revenueLabel
-              ? `${purchases} tracked purchases Â· ${repeatBuyers} repeat buyers`
-              : `${confirmedOptins} opt-ins Â· ${linkClicks} tracked clicks â€” add your conversion token in Settings to see revenue`}
-          </p>
-          <Button asChild variant="outline" size="sm" className="rounded-full text-[11px] h-8">
-            <Link href="/dashboard/campaigns">View campaigns</Link>
-          </Button>
-        </Card>
-      </div>
-
-      {/* â”€â”€ Conversion funnel v1 â”€â”€ */}
-      <Card className="rounded-2xl glass-card border border-[#e0e2e8] dark:border-border shadow-subtle">
-        <CardHeader className="pb-4 border-b border-[#e0e2e8] dark:border-border/60">
-          <CardTitle className="text-base font-semibold tracking-tight">
-            Conversion funnel
-          </CardTitle>
-          <CardDescription className="text-xs text-[#555a6a] dark:text-muted-foreground">
-            Every step uses real stored events. Instagram does not expose DM opens, so delivery and clicks are the measurable steps.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="pt-5">
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-            {funnelSteps.map((step, index) => {
-              const previous = index > 0 ? funnelSteps[index - 1].value : null;
-              const rate =
-                previous && previous > 0
-                  ? Math.round((step.value / previous) * 100)
-                  : null;
-              return (
-                <Link
-                  key={step.label}
-                  href={step.href}
-                  className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 bg-[#f7f8fa] dark:bg-muted/30 p-3.5 hover:border-[#4262ff]/50 transition-colors"
-                >
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-[#6b6f7e]">
-                    {step.label}
-                  </p>
-                  <p className="mt-1.5 text-2xl font-bold tracking-tight text-foreground">
-                    {step.value}
-                  </p>
-                  <p className="mt-1 text-[10px] text-[#555a6a] dark:text-muted-foreground">
-                    {rate === null
-                      ? index === 0
-                        ? "Entry step"
-                        : "No prior data"
-                      : `${rate}% of previous step`}
-                  </p>
-                </Link>
-              );
-            })}
-          </div>
-        </CardContent>
-      </Card>
-
-      <DmQueueCard
-        pending={queueStats.pending}
-        failed={queueStats.failed}
-        oldestPendingAt={queueStats.oldestPendingAt}
-        timeZone={timeZone}
-      />
-
-      <SafetyCard
-        stats={safetyStats}
-        accounts={accountHealth}
-        score={safetyResult.score}
-        band={safetyResult.label}
-      />
-
-      {/* â”€â”€ Follower growth from in-chat prompts â”€â”€ */}
-      <Card className="rounded-2xl glass-card border border-[#e0e2e8] dark:border-border shadow-subtle">
-        <CardHeader className="pb-4 border-b border-[#e0e2e8] dark:border-border/60">
-          <CardTitle className="text-base font-semibold tracking-tight flex items-center gap-2">
-            <UserPlus className="size-4 text-[#4262ff]" aria-hidden="true" />
-            Follower growth from in-chat prompts
-          </CardTitle>
-          <CardDescription className="text-xs text-[#555a6a] dark:text-muted-foreground">
-            Only people who were not following before the prompt and were verified afterwards count as growth.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="pt-5">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {[
-              { label: "New followers", value: followStats.newFollowers },
-              { label: "Prompts sent", value: followStats.sent },
-              {
-                label: "Tap rate",
-                value: followStats.tapRate === null ? "â€”" : `${followStats.tapRate}%`,
-              },
-              { label: "Content delivered", value: followStats.delivered },
-            ].map((item) => (
-              <div
-                key={item.label}
-                className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 bg-[#f7f8fa] dark:bg-muted/30 p-3.5"
-              >
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-[#6b6f7e]">
-                  {item.label}
-                </p>
-                <p className="mt-1.5 text-2xl font-bold tracking-tight text-foreground">
-                  {item.value}
-                </p>
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* â”€â”€ Revenue by creative â”€â”€ */}
-      <Card className="rounded-2xl glass-card border border-[#e0e2e8] dark:border-border shadow-subtle">
-        <CardHeader className="pb-4 border-b border-[#e0e2e8] dark:border-border/60">
-          <CardTitle className="text-base font-semibold tracking-tight">
-            Revenue by keyword &amp; creative
-          </CardTitle>
-          <CardDescription className="text-xs text-[#555a6a] dark:text-muted-foreground">
-            Server-verified conversions only. Connect your checkout with the token in Settings.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="pt-5">
-          {topCreatives.length > 0 ? (
-            <div className="space-y-3">
-              {topCreatives.map((creative) => (
-                <div
-                  key={creative.label}
-                  className="flex items-center justify-between gap-3 rounded-xl border border-[#e0e2e8] dark:border-border/80 px-3 py-2.5"
-                >
-                  <div className="min-w-0">
-                    <p className="text-xs font-semibold truncate">{creative.label}</p>
-                    <p className="text-[10px] text-muted-foreground">
-                      {creative.count} conversions
-                    </p>
-                  </div>
-                  <p className="text-sm font-bold shrink-0">
-                    {currency} {(creative.revenue / 100).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
-                  </p>
-                </div>
-              ))}
+      {insightsStatus === "needs_access" && (
+        <div
+          role="alert"
+          className="rounded-2xl border border-amber-400/50 bg-amber-50/70 p-4 dark:bg-amber-950/20"
+        >
+          <div className="flex items-start gap-3">
+            <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+              <BarChart3 className="size-4" aria-hidden="true" />
             </div>
-          ) : (
-            <div className="py-10 text-center space-y-2">
-              <BarChart3 className="size-8 mx-auto text-muted-foreground" />
+            <div className="space-y-1">
               <p className="text-sm font-semibold text-foreground">
-                No tracked revenue yet
+                Insights access needed
               </p>
-              <p className="text-[11px] text-muted-foreground max-w-md mx-auto">
-                Copy your conversion token from Settings and send a purchase event from your checkout. Revenue will appear against the keyword and post that started it.
+              <p className="max-w-2xl text-xs text-muted-foreground">
+                {insightsError ??
+                  "Meta did not grant instagram_manage_insights. Reconnect your Instagram account and approve Insights access to see reach, impressions and conversion rates."}
               </p>
             </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* â”€â”€ Key Conversion Stats in Miro Pastel Tints + Liquid Glass â”€â”€ */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Card className="rounded-2xl glass-card liquid-sheen border border-[#0fbcb0]/30 bg-[#c3faf5]/30 dark:bg-[#187574]/10 shadow-subtle p-5">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-[#187574] dark:text-[#c3faf5]">Delivery Success Rate</span>
-            <div className="size-8 rounded-full bg-[#0fbcb0] text-white flex items-center justify-center font-bold shadow-xs">
-              <TrendingUp className="size-4" />
-            </div>
           </div>
-          <div className="mt-4">
-            <div className="text-3xl font-bold tracking-tight text-foreground">
-              {deliveryRate === null ? "â€”" : `${deliveryRate}%`}
-            </div>
-            <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground mt-1 flex items-center gap-1 font-medium">
-              <CheckCircle2 className="size-3.5 text-[#00b473] inline" aria-hidden="true" />
-              <span>
-                {totalDms > 0
-                  ? `${deliveredDms} of ${totalDms} automated messages delivered`
-                  : "No deliveries in this period"}
-              </span>
-            </p>
-          </div>
-        </Card>
-
-        <Card className="rounded-2xl glass-card liquid-sheen border border-[#ffd02f]/30 bg-[#fff8e0]/40 dark:bg-[#746019]/10 shadow-subtle p-5">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-[#746019] dark:text-[#ffd02f]">Total Messages Sent</span>
-            <div className="size-8 rounded-full bg-[#ffd02f] text-[#1c1c1e] flex items-center justify-center font-bold shadow-xs">
-              <Send className="size-4" />
-            </div>
-          </div>
-          <div className="mt-4">
-            <div className="text-3xl font-bold tracking-tight text-foreground">{totalDms}</div>
-            <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground mt-1">
-              comment-triggered direct messages
-            </p>
-          </div>
-        </Card>
-
-        <Card className="rounded-2xl glass-card liquid-sheen border border-[#ffd8f4]/40 bg-[#fde0f0]/30 dark:bg-[#7d2663]/10 shadow-subtle p-5">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-[#7d2663] dark:text-[#ffd8f4]">Processing Time</span>
-            <div className="size-8 rounded-full bg-[#ffd8f4] text-[#7d2663] flex items-center justify-center font-bold shadow-xs">
-              <Zap className="size-4" aria-hidden="true" />
-            </div>
-          </div>
-          <div className="mt-4">
-            <div className="text-3xl font-bold tracking-tight text-foreground">
-              {health.available && health.avgDurationMs !== null
-                ? `${health.avgDurationMs} ms`
-                : "â€”"}
-            </div>
-            <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground mt-1 font-medium">
-              {health.available && health.total > 0
-                ? `From webhook to DM Â· ${health.successRate ?? 0}% success over ${health.total} jobs`
-                : "No deliveries measured in the last 7 days"}
-            </p>
-          </div>
-        </Card>
-      </div>
-
-      {/* â”€â”€ Top Keywords Performance (Miro Leaderboard with Progress) â”€â”€ */}
-      <Card className="rounded-2xl glass-card border border-[#e0e2e8] dark:border-border shadow-subtle">
-        <CardHeader className="pb-4 border-b border-[#e0e2e8] dark:border-border/60">
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="text-base font-semibold tracking-tight">Keyword Ingestion Leaderboard</CardTitle>
-              <CardDescription className="text-xs mt-0.5 text-[#555a6a] dark:text-muted-foreground">
-                Distribution of comment keywords generating automated direct message funnels
-              </CardDescription>
-            </div>
-            <Badge variant="outline" className="text-[10px] font-semibold rounded-full px-3">
-              {sortedKeywords.length} active triggers
-            </Badge>
-          </div>
-        </CardHeader>
-        <CardContent className="pt-5">
-          {sortedKeywords.length > 0 ? (
-            <div className="space-y-4">
-              {sortedKeywords.map((kw) => (
-                <div key={kw.keyword} className="space-y-1.5">
-                  <div className="flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-2">
-                      <span className="px-2.5 py-1 rounded-full bg-[#1c1c1e] text-white font-mono font-medium text-xs dark:bg-white dark:text-[#1c1c1e]">
-                        {kw.keyword}
-                      </span>
-                    </div>
-                    <span className="font-mono text-xs text-foreground font-semibold">
-                      {kw.count} triggers ({kw.share})
-                    </span>
-                  </div>
-                  <Progress value={parseInt(kw.share) || 0} className="h-2" />
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="py-12 text-center space-y-3">
-              <div className="size-11 rounded-2xl bg-[#fff8e0] text-[#746019] flex items-center justify-center mx-auto shadow-xs">
-                <Inbox className="size-5" />
-              </div>
-              <div>
-                <p className="font-semibold text-base text-foreground">No keyword data recorded yet</p>
-                <p className="text-xs text-[#555a6a] dark:text-muted-foreground max-w-sm mx-auto mt-1">
-                  {activeKeywords.length > 0 ? (
-                    <span>
-                      Active listening keywords:{" "}
-                      {activeKeywords.map((k) => (
-                        <span key={k} className="mx-1 px-2 py-0.5 rounded-full bg-[#1c1c1e] text-white font-mono text-xs">
-                          {k}
-                        </span>
-                      ))}
-                      . When followers comment these words on your posts, conversion statistics will appear here.
-                    </span>
-                  ) : (
-                    "Create your first comment-to-DM campaign to start tracking keyword performance."
-                  )}
-                </p>
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* â”€â”€ Instagram Insights (daily snapshots) â”€â”€ */}
-      <Card className="rounded-2xl glass-card border border-[#e0e2e8] dark:border-border shadow-subtle">
-        <CardHeader className="pb-4 border-b border-[#e0e2e8] dark:border-border/60">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div>
-              <CardTitle className="text-base font-semibold tracking-tight">
-                Instagram Insights
-              </CardTitle>
-              <CardDescription className="text-xs mt-0.5 text-[#555a6a] dark:text-muted-foreground">
-                Reach, impressions, profile views and story views from Meta, with per-campaign conversion.
-              </CardDescription>
-            </div>
-            <form action={refreshInsightsAction}>
-              <Button
-                type="submit"
-                size="sm"
-                variant="outline"
-                className="rounded-full h-9 px-4 text-xs font-semibold gap-1.5"
-              >
-                <RefreshCw className="size-3.5" />
-                Refresh insights
-              </Button>
-            </form>
-          </div>
-        </CardHeader>
-        <CardContent className="pt-5">
-          {insightsStatus === "needs_access" ? (
-            <div role="alert" className="rounded-2xl border border-amber-400/50 bg-amber-50/70 dark:bg-amber-950/20 p-5 space-y-3">
-              <div className="flex items-start gap-3">
-                <div className="size-10 rounded-xl bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 flex items-center justify-center shrink-0">
-                  <BarChart3 className="size-5" aria-hidden="true" />
-                </div>
-                <div className="space-y-1">
-                  <p className="font-semibold text-sm text-foreground">
-                    Insights access needed
-                  </p>
-                  <p className="text-xs text-[#555a6a] dark:text-muted-foreground max-w-lg">
-                    {insightsError ??
-                      "Meta did not grant instagram_manage_insights. Reconnect your Instagram account and approve Insights access to see reach, impressions and conversion rates."}
-                  </p>
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Button asChild size="sm" className="rounded-full h-8 text-xs font-semibold">
-                  <Link href="/dashboard/settings">Reconnect Instagram</Link>
-                </Button>
-                <Button asChild size="sm" variant="outline" className="rounded-full h-8 text-xs font-semibold">
-                  <Link href="/dashboard/diagnostics">Run diagnostics</Link>
-                </Button>
-              </div>
-            </div>
-          ) : snapshotCount === 0 ? (
-            <div role="status" className="py-10 text-center space-y-3">
-              <div className="size-11 rounded-2xl bg-[#fff8e0] text-[#746019] dark:bg-[#746019]/30 dark:text-[#ffd02f] flex items-center justify-center mx-auto shadow-xs">
-                <BarChart3 className="size-5" aria-hidden="true" />
-              </div>
-              <div>
-                <p className="font-semibold text-base text-foreground">
-                  Insights will appear after the daily refresh
-                </p>
-                <p className="text-xs text-[#555a6a] dark:text-muted-foreground max-w-sm mx-auto mt-1">
-                  Connect an Instagram account with insights access. Snapshots are recorded once a day and shown here automatically.
-                </p>
-              </div>
-            </div>
-          ) : (
-            <>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              <div className="rounded-2xl border border-[#4262ff]/25 bg-[#f5f3ff]/60 dark:bg-[#4262ff]/10 p-4 space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-semibold text-[#4262ff] dark:text-[#8b9eff]">Reach</span>
-                  <Users className="size-3.5 text-[#4262ff]" aria-hidden="true" />
-                </div>
-                <p className="text-2xl font-bold text-foreground">
-                  {insightTotals.reach.toLocaleString()}
-                </p>
-                <p className="text-[10px] text-[#6b6f7e]">Unique accounts reached</p>
-              </div>
-
-              <div className="rounded-2xl border border-[#0fbcb0]/30 bg-[#c3faf5]/30 dark:bg-[#187574]/10 p-4 space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-semibold text-[#187574] dark:text-[#c3faf5]">Impressions</span>
-                  <Eye className="size-3.5 text-[#0fbcb0]" aria-hidden="true" />
-                </div>
-                <p className="text-2xl font-bold text-foreground">
-                  {insightTotals.impressions.toLocaleString()}
-                </p>
-                <p className="text-[10px] text-[#6b6f7e]">Total views in the period</p>
-              </div>
-
-              <div className="rounded-2xl border border-[#ffd8f4]/50 bg-[#fde0f0]/30 dark:bg-[#7d2663]/10 p-4 space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-semibold text-[#7d2663] dark:text-[#ffd8f4]">Profile views</span>
-                  <BarChart3 className="size-3.5 text-[#7d2663]" aria-hidden="true" />
-                </div>
-                <p className="text-2xl font-bold text-foreground">
-                  {insightTotals.profileViews.toLocaleString()}
-                </p>
-                <p className="text-[10px] text-[#6b6f7e]">Visits to your profile</p>
-              </div>
-
-              <div className="rounded-2xl border border-[#8b5cf6]/30 bg-[#f5f3ff]/40 dark:bg-[#8b5cf6]/10 p-4 space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-semibold text-[#6d28d9] dark:text-[#c4b5fd]">Story views</span>
-                  <Eye className="size-3.5 text-[#8b5cf6]" aria-hidden="true" />
-                </div>
-                <p className="text-2xl font-bold text-foreground">
-                  {insightTotals.storyViews.toLocaleString()}
-                </p>
-                <p className="text-[10px] text-[#6b6f7e]">Views on your stories</p>
-              </div>
-
-              <div className="rounded-2xl border border-[#ffd02f]/40 bg-[#fff8e0]/50 dark:bg-[#746019]/10 p-4 space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-semibold text-[#746019] dark:text-[#ffd02f]">Conversion rate</span>
-                  <TrendingUp className="size-3.5 text-[#746019] dark:text-[#ffd02f]" aria-hidden="true" />
-                </div>
-                <p className="text-2xl font-bold text-foreground">
-                  {conversionRate === null ? "—" : `${conversionRate}%`}
-                </p>
-                <p className="text-[10px] text-[#6b6f7e]">
-                  {insightTotals.impressions > 0
-                    ? `${totalDms} DMs Ã· ${insightTotals.impressions.toLocaleString()} impressions`
-                    : "No impressions recorded yet"}
-                </p>
-              </div>
-            </div>
-
-            {insightsSummary.daily.length > 0 && (
-              <div className="mt-4 rounded-2xl border border-[#e0e2e8] dark:border-border p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <p className="text-xs font-semibold text-foreground">Reach trend (last 30 days)</p>
-                  {insightsLastSyncedAt && (
-                    <p className="text-[10px] text-[#6b6f7e]">
-                      Synced{" "}
-                      {new Date(insightsLastSyncedAt).toLocaleString("en-IN", {
-                        day: "numeric",
-                        month: "short",
-                        hour: "2-digit",
-                        minute: "2-digit",
-                        timeZone,
-                      })}
-                    </p>
-                  )}
-                </div>
-                <div
-                  className="flex items-end gap-1 h-20"
-                  role="img"
-                  aria-label={`Daily reach for the last ${insightsSummary.daily.length} days`}
-                >
-                  {insightsSummary.daily.map((point) => {
-                    const max = Math.max(
-                      ...insightsSummary.daily.map((p) => p.reach),
-                      1
-                    );
-                    const height = Math.max(4, Math.round((point.reach / max) * 100));
-                    return (
-                      <div
-                        key={point.day}
-                        className="flex-1 rounded-t bg-[#4262ff]/70 dark:bg-[#8b9eff]/70 min-w-[3px]"
-                        style={{ height: `${height}%` }}
-                        title={`${point.day}: ${point.reach.toLocaleString()} reach`}
-                      />
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {campaignInsights.length > 0 && (
-              <div className="mt-4 rounded-2xl border border-[#e0e2e8] dark:border-border overflow-hidden">
-                <div className="px-4 py-3 border-b border-[#e0e2e8] dark:border-border/60">
-                  <p className="text-xs font-semibold text-foreground">Conversion by campaign</p>
-                  <p className="text-[10px] text-[#6b6f7e] mt-0.5">
-                    Automated DMs Ã· impressions for each campaign&apos;s post.
-                  </p>
-                </div>
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="text-left text-[10px] uppercase tracking-wide text-[#6b6f7e]">
-                      <th scope="col" className="px-4 py-2 font-semibold">Campaign</th>
-                      <th scope="col" className="px-4 py-2 font-semibold text-right">DMs</th>
-                      <th scope="col" className="px-4 py-2 font-semibold text-right">Impressions</th>
-                      <th scope="col" className="px-4 py-2 font-semibold text-right">Conversion</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {campaignInsights.map((row) => (
-                      <tr key={row.automationId} className="border-t border-[#e0e2e8]/60 dark:border-border/40">
-                        <td className="px-4 py-2 font-medium text-foreground truncate max-w-[220px]">
-                          {row.name}
-                        </td>
-                        <td className="px-4 py-2 text-right font-mono">{row.dms.toLocaleString()}</td>
-                        <td className="px-4 py-2 text-right font-mono">
-                          {row.impressions.toLocaleString()}
-                        </td>
-                        <td className="px-4 py-2 text-right font-mono font-semibold">
-                          {row.conversionRate === null
-                            ? "â€”"
-                            : `${row.conversionRate.toFixed(1)}%`}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            </>
-          )}
-        </CardContent>
-      </Card>
-
-      {accountBreakdown.length > 0 && (
-        <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border shadow-subtle">
-          <CardHeader className="pb-3 border-b border-[#e0e2e8] dark:border-border/60">
-            <CardTitle className="text-base font-semibold tracking-tight">
-              Per-account breakdown
-            </CardTitle>
-            <CardDescription className="text-xs mt-0.5 text-[#555a6a] dark:text-muted-foreground">
-              DMs, delivery and conversions for each connected Instagram account.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="pt-5">
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs min-w-[420px]">
-                <thead>
-                  <tr className="text-left text-[10px] uppercase tracking-wide text-[#6b6f7e]">
-                    <th scope="col" className="py-2 font-semibold">Account</th>
-                    <th scope="col" className="py-2 font-semibold text-right">DMs</th>
-                    <th scope="col" className="py-2 font-semibold text-right">Delivery</th>
-                    <th scope="col" className="py-2 font-semibold text-right">Conversions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {accountBreakdown.map((row) => (
-                    <tr key={row.id} className="border-t border-[#e0e2e8]/60 dark:border-border/40">
-                      <td className="py-2 text-foreground truncate max-w-[200px]">
-                        {row.username ? `@${row.username}` : row.id.slice(0, 8)}
-                      </td>
-                      <td className="py-2 text-right font-mono">{row.dms.toLocaleString()}</td>
-                      <td className="py-2 text-right font-mono">
-                        {row.deliveryRate === null ? "—" : `${row.deliveryRate}%`}
-                      </td>
-                      <td className="py-2 text-right font-mono">{row.conversions}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
+        </div>
       )}
 
-      <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border shadow-subtle">
-        <CardHeader className="pb-3 border-b border-[#e0e2e8] dark:border-border/60">
-          <CardTitle className="text-base font-semibold tracking-tight">Conversion funnel</CardTitle>
-          <CardDescription className="text-xs mt-0.5 text-[#555a6a] dark:text-muted-foreground">
-            Daily rollups plus today&apos;s live counters from Redis â€” last {analyticsDays} days.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="pt-5">
-          {!analytics || analytics.summary.dmSent === 0 ? (
-            <p role="status" className="text-xs text-muted-foreground py-4 text-center">
-              No conversion events yet. They appear here as soon as a DM is sent or a tracked link is clicked.
-            </p>
-          ) : (
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-              {[
-                { label: "DMs sent", value: analytics.summary.dmSent.toLocaleString(), hint: "Automated deliveries" },
-                { label: "Link clicks", value: analytics.summary.dmLinkClicks.toLocaleString(), hint: `${analytics.summary.dmCtrPct}% click-through` },
-                { label: "Follower replies", value: analytics.summary.dmReplies.toLocaleString(), hint: `${analytics.summary.dmReplyRatePct}% reply rate` },
-                { label: "Bio clicks", value: analytics.summary.bioClicks.toLocaleString(), hint: "Link-in-bio clicks" },
-              ].map((item) => (
-                <div key={item.label} className="rounded-2xl border border-[#e0e2e8] dark:border-border p-4 space-y-1">
-                  <p className="text-[11px] font-semibold text-muted-foreground">{item.label}</p>
-                  <p className="text-2xl font-bold text-foreground">{item.value}</p>
-                  <p className="text-[10px] text-[#6b6f7e]">{item.hint}</p>
+      {/* ── Account summary metrics ── */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <SpotlightCard
+          className="border-info/30 bg-info-soft/40 p-5 dark:bg-info/10"
+          spotlightColor="hsl(var(--info) / 0.2)"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-semibold text-info-soft-foreground dark:text-info-soft-foreground">
+              Reach
+            </span>
+            <Users className="size-4 text-info" aria-hidden="true" />
+          </div>
+          <p className="mt-3 text-2xl font-bold tabular-nums text-foreground">
+            <NumberTicker value={insightTotals.reach} />
+          </p>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            Unique accounts reached
+          </p>
+        </SpotlightCard>
+
+        <SpotlightCard
+          className="border-success/30 bg-success-soft/30 p-5 dark:bg-success/10"
+          spotlightColor="hsl(var(--success) / 0.2)"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-semibold text-success-soft-foreground dark:text-success-soft-foreground">
+              Impressions
+            </span>
+            <Eye className="size-4 text-success" aria-hidden="true" />
+          </div>
+          <p className="mt-3 text-2xl font-bold tabular-nums text-foreground">
+            <NumberTicker value={insightTotals.impressions} />
+          </p>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            Total views in the period
+          </p>
+        </SpotlightCard>
+
+        <SpotlightCard
+          className="border-rose/40 bg-rose-soft/30 p-5 dark:bg-rose/10"
+          spotlightColor="hsl(var(--rose) / 0.24)"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-semibold text-rose-soft-foreground dark:text-rose">
+              Profile views
+            </span>
+            <BarChart3 className="size-4 text-rose-soft-foreground dark:text-rose" aria-hidden="true" />
+          </div>
+          <p className="mt-3 text-2xl font-bold tabular-nums text-foreground">
+            <NumberTicker value={insightTotals.profileViews} />
+          </p>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            Visits to your profile
+          </p>
+        </SpotlightCard>
+
+        <SpotlightCard
+          className="border-brand/30 bg-brand-soft/40 p-5 dark:bg-brand/10"
+          spotlightColor="hsl(var(--brand) / 0.22)"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-semibold text-brand-soft-foreground dark:text-brand">
+              Conversion rate
+            </span>
+            <TrendingUp className="size-4 text-brand-soft-foreground dark:text-brand" aria-hidden="true" />
+          </div>
+          <p className="mt-3 text-2xl font-bold tabular-nums text-foreground">
+            {conversionRate === null ? (
+              "—"
+            ) : (
+              <NumberTicker value={Number(conversionRate)} suffix="%" decimals={1} />
+            )}
+          </p>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            {insightTotals.impressions > 0
+              ? `${totalDms.toLocaleString("en-IN")} DMs ÷ ${insightTotals.impressions.toLocaleString("en-IN")} impressions`
+              : "No impressions recorded yet"}
+          </p>
+        </SpotlightCard>
+      </div>
+
+      {/* ── Section tabs ── */}
+      <nav
+        aria-label="Insights sections"
+        className="flex w-fit max-w-full flex-wrap items-center gap-1.5 rounded-full border border-border bg-muted p-1"
+      >
+        {tabs.map((item) => (
+          <Link
+            key={item.id}
+            href={`/dashboard/overview?range=${range}&tab=${item.id}`}
+            aria-current={activeTab === item.id ? "page" : undefined}
+            className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition-[background-color,color,box-shadow] ${
+              activeTab === item.id
+                ? "bg-card text-foreground shadow-xs"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {item.label}
+          </Link>
+        ))}
+      </nav>
+
+      {/* ── Overview ── */}
+      {activeTab === "overview" && (
+        <div className="space-y-5">
+          <BentoGrid className="grid-cols-1 md:grid-cols-3">
+            <SpotlightCard
+              className="space-y-3 border-brand/40 bg-brand-soft/40 p-5 dark:bg-brand/10"
+              spotlightColor="hsl(var(--brand) / 0.22)"
+            >
+              <div className="flex items-center gap-2 text-xs font-semibold text-brand-soft-foreground dark:text-brand">
+                <Trophy className="size-4" aria-hidden="true" /> Top performer
+              </div>
+              <p className="text-lg font-semibold tracking-tight text-foreground">
+                {topAutomation ? topAutomation.name : "No campaign data yet"}
+              </p>
+              <p className="text-[11px] text-muted-foreground">
+                {topAutomation
+                  ? `${topAutomation.count} DMs delivered in this period · Edit the winner`
+                  : "Publish a campaign and comment your keyword to see results here."}
+              </p>
+              {topAutomation && (
+                <Button asChild variant="outline" size="sm" className="h-8 rounded-full text-[11px]">
+                  <Link href={`/dashboard/campaigns/${topAutomation.id}/edit`}>
+                    Duplicate flow
+                  </Link>
+                </Button>
+              )}
+            </SpotlightCard>
+
+            <SpotlightCard
+              className="space-y-3 border-coral/40 bg-coral-soft/40 p-5 dark:bg-coral/10"
+              spotlightColor="hsl(var(--coral) / 0.22)"
+            >
+              <div className="flex items-center gap-2 text-xs font-semibold text-coral-soft-foreground dark:text-coral-soft">
+                <TrendingDown className="size-4" aria-hidden="true" /> Biggest leak
+              </div>
+              <p className="text-lg font-semibold tracking-tight text-foreground">
+                {biggestLeak.label}
+              </p>
+              <p className="text-[11px] text-muted-foreground">
+                {worstDrop > 0
+                  ? `${Math.round(worstDrop * 100)}% drop at this step. ${biggestLeak.detail}`
+                  : biggestLeak.detail}
+              </p>
+              <Button asChild variant="outline" size="sm" className="h-8 rounded-full text-[11px]">
+                <Link href={biggestLeak.href}>Fix it</Link>
+              </Button>
+            </SpotlightCard>
+
+            <SpotlightCard
+              className="space-y-3 border-success/30 bg-success-soft/40 p-5 dark:bg-success/10"
+              spotlightColor="hsl(var(--success) / 0.2)"
+            >
+              <div className="flex items-center gap-2 text-xs font-semibold text-success-soft-foreground dark:text-success-soft-foreground">
+                <Sparkles className="size-4" aria-hidden="true" /> This week
+              </div>
+              <p className="text-lg font-semibold tracking-tight text-foreground">
+                {revenueLabel ?? `${weeklySent} DMs · ${leadsCaptured} leads`}
+              </p>
+              <p className="text-[11px] text-muted-foreground">
+                {revenueLabel
+                  ? `${purchases} tracked purchases · ${repeatBuyers} repeat buyers`
+                  : `${confirmedOptins} opt-ins · ${linkClicks} tracked clicks — add your conversion token in Settings to see revenue`}
+              </p>
+              <Button asChild variant="outline" size="sm" className="h-8 rounded-full text-[11px]">
+                <Link href="/dashboard/campaigns">View campaigns</Link>
+              </Button>
+            </SpotlightCard>
+          </BentoGrid>
+
+          <BentoGrid className="grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+            <SpotlightCard
+              className="border-success/30 bg-success-soft/30 p-5 dark:bg-success/10"
+              spotlightColor="hsl(var(--success) / 0.2)"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-success-soft-foreground dark:text-success-soft-foreground">
+                  Delivery success
+                </span>
+                <CheckCircle2 className="size-4 text-success" aria-hidden="true" />
+              </div>
+              <p className="mt-3 text-2xl font-bold tabular-nums text-foreground">
+                {deliveryRate === null ? "—" : <NumberTicker value={deliveryRate} suffix="%" />}
+              </p>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                {totalDms > 0
+                  ? `${deliveredDms.toLocaleString("en-IN")} of ${totalDms.toLocaleString("en-IN")} delivered`
+                  : "No deliveries in this period"}
+              </p>
+            </SpotlightCard>
+
+            <SpotlightCard
+              className="border-brand/30 bg-brand-soft/40 p-5 dark:bg-brand/10"
+              spotlightColor="hsl(var(--brand) / 0.22)"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-brand-soft-foreground dark:text-brand">
+                  Total messages
+                </span>
+                <Send className="size-4 text-brand-soft-foreground dark:text-brand" aria-hidden="true" />
+              </div>
+              <p className="mt-3 text-2xl font-bold tabular-nums text-foreground">
+                <NumberTicker value={totalDms} />
+              </p>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Comment-triggered direct messages
+              </p>
+            </SpotlightCard>
+
+            <SpotlightCard
+              className="border-rose/40 bg-rose-soft/30 p-5 dark:bg-rose/10"
+              spotlightColor="hsl(var(--rose) / 0.24)"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-rose-soft-foreground dark:text-rose">
+                  Processing time
+                </span>
+                <Zap className="size-4 text-rose-soft-foreground dark:text-rose" aria-hidden="true" />
+              </div>
+              <p className="mt-3 text-2xl font-bold tabular-nums text-foreground">
+                {health.available && health.avgDurationMs !== null
+                  ? `${health.avgDurationMs} ms`
+                  : "—"}
+              </p>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                {health.available && health.total > 0
+                  ? `${health.successRate ?? 0}% success over ${health.total} jobs`
+                  : "No deliveries measured in the last 7 days"}
+              </p>
+            </SpotlightCard>
+
+            <SpotlightCard
+              className="border-coral/30 bg-coral-soft/30 p-5 dark:bg-coral/10"
+              spotlightColor="hsl(var(--coral) / 0.22)"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-coral-soft-foreground dark:text-coral-soft">
+                  Leads captured
+                </span>
+                <UserPlus className="size-4 text-coral-soft-foreground dark:text-coral-soft" aria-hidden="true" />
+              </div>
+              <p className="mt-3 text-2xl font-bold tabular-nums text-foreground">
+                <NumberTicker value={leadsCaptured} />
+              </p>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Contacts created from automations
+              </p>
+            </SpotlightCard>
+          </BentoGrid>
+
+          <div className="grid gap-5 lg:grid-cols-2">
+            <Card className="rounded-3xl">
+              <CardHeader className="border-b border-border pb-4">
+                <CardTitle className="text-base font-semibold tracking-tight">
+                  Reach trend
+                </CardTitle>
+                <CardDescription className="text-xs text-muted-foreground">
+                  Daily reach from Meta insights · last {analyticsDays} days
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="pt-5">
+                {insightsSummary.daily.length > 0 ? (
+                  <div
+                    className="flex h-32 items-end gap-1"
+                    role="img"
+                    aria-label={`Daily reach for the last ${insightsSummary.daily.length} days`}
+                  >
+                    {insightsSummary.daily.map((point) => {
+                      const max = Math.max(
+                        ...insightsSummary.daily.map((p) => p.reach),
+                        1
+                      );
+                      const height = Math.max(4, Math.round((point.reach / max) * 100));
+                      return (
+                        <div
+                          key={point.day}
+                          className="min-w-[3px] flex-1 rounded-t bg-info/70"
+                          style={{ height: `${height}%` }}
+                          title={`${point.day}: ${point.reach.toLocaleString("en-IN")} reach`}
+                        />
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="py-10 text-center">
+                    <BarChart3 className="mx-auto size-8 text-muted-foreground" aria-hidden="true" />
+                    <p className="mt-2 text-sm font-semibold text-foreground">
+                      Insights will appear after the daily refresh
+                    </p>
+                    <p className="mx-auto mt-1 max-w-sm text-xs text-muted-foreground">
+                      Connect an Instagram account with insights access. Snapshots are recorded once a day.
+                    </p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="rounded-3xl">
+              <CardHeader className="border-b border-border pb-4">
+                <CardTitle className="text-base font-semibold tracking-tight">
+                  Conversion funnel
+                </CardTitle>
+                <CardDescription className="text-xs text-muted-foreground">
+                  Every step uses real stored events, not estimates.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3 pt-5">
+                {funnelSteps.map((step, index) => {
+                  const previous = index > 0 ? funnelSteps[index - 1].value : null;
+                  const rate =
+                    previous && previous > 0
+                      ? Math.round((step.value / previous) * 100)
+                      : null;
+                  const width =
+                    funnelSteps[0].value > 0
+                      ? Math.max(4, (step.value / funnelSteps[0].value) * 100)
+                      : 4;
+                  return (
+                    <div key={step.label} className="space-y-1.5">
+                      <div className="flex items-center justify-between gap-3 text-xs">
+                        <Link
+                          href={step.href}
+                          className="font-semibold text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                        >
+                          {step.label}
+                        </Link>
+                        <span className="shrink-0 font-mono tabular-nums text-muted-foreground">
+                          {step.value.toLocaleString("en-IN")}
+                          {rate !== null ? ` · ${rate}%` : ""}
+                        </span>
+                      </div>
+                      <div className="h-2 overflow-hidden rounded-full bg-muted">
+                        <div
+                          className="h-full rounded-full bg-brand transition-[width] duration-500"
+                          style={{ width: `${width}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card className="rounded-3xl">
+            <CardHeader className="border-b border-border pb-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <CardTitle className="text-base font-semibold tracking-tight">
+                    Keyword ingestion leaderboard
+                  </CardTitle>
+                  <CardDescription className="mt-0.5 text-xs text-muted-foreground">
+                    Distribution of comment keywords generating automated DM funnels
+                  </CardDescription>
                 </div>
-              ))}
-            </div>
+                <Badge variant="outline" className="rounded-full px-3 text-[10px] font-semibold">
+                  {sortedKeywords.length} active triggers
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-5">
+              {sortedKeywords.length > 0 ? (
+                <div className="space-y-4">
+                  {sortedKeywords.map((kw) => (
+                    <div key={kw.keyword} className="space-y-1.5">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="rounded-full bg-primary px-2.5 py-1 font-mono text-xs font-medium text-primary-foreground">
+                          {kw.keyword}
+                        </span>
+                        <span className="font-mono text-xs font-semibold tabular-nums text-foreground">
+                          {kw.count} triggers ({kw.share})
+                        </span>
+                      </div>
+                      <Progress value={parseInt(kw.share) || 0} className="h-2" />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="py-10 text-center">
+                  <Inbox className="mx-auto size-8 text-muted-foreground" aria-hidden="true" />
+                  <p className="mt-2 text-sm font-semibold text-foreground">
+                    No keyword data recorded yet
+                  </p>
+                  <p className="mx-auto mt-1 max-w-sm text-xs text-muted-foreground">
+                    {activeKeywords.length > 0
+                      ? `Active listening keywords: ${activeKeywords.join(", ")}. When followers comment these words, statistics appear here.`
+                      : "Create your first comment-to-DM campaign to start tracking keyword performance."}
+                  </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* ── Funnel ── */}
+      {activeTab === "funnel" && (
+        <div className="space-y-5">
+          <Card className="rounded-3xl">
+            <CardHeader className="border-b border-border pb-4">
+              <CardTitle className="text-base font-semibold tracking-tight">
+                Full conversion funnel
+              </CardTitle>
+              <CardDescription className="text-xs text-muted-foreground">
+                Comments → DMs → opt-ins → clicks → leads. Instagram does not expose DM opens, so delivery and clicks are the measurable steps.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4 pt-5">
+              {funnelSteps.map((step, index) => {
+                const previous = index > 0 ? funnelSteps[index - 1].value : null;
+                const rate =
+                  previous && previous > 0
+                    ? Math.round((step.value / previous) * 100)
+                    : null;
+                const width =
+                  funnelSteps[0].value > 0
+                    ? Math.max(4, (step.value / funnelSteps[0].value) * 100)
+                    : 4;
+                return (
+                  <div key={step.label} className="space-y-1.5">
+                    <div className="flex items-center justify-between gap-3 text-xs">
+                      <Link
+                        href={step.href}
+                        className="font-semibold text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                      >
+                        {step.label}
+                      </Link>
+                      <span className="shrink-0 font-mono tabular-nums text-muted-foreground">
+                        {step.value.toLocaleString("en-IN")}
+                        {rate !== null ? ` · ${rate}% of previous` : ""}
+                      </span>
+                    </div>
+                    <div className="h-3 overflow-hidden rounded-full bg-muted">
+                      <div
+                        className="h-full rounded-full bg-brand transition-[width] duration-500"
+                        style={{ width: `${width}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </CardContent>
+          </Card>
+
+          <div className="grid gap-5 lg:grid-cols-2">
+            <Card className="rounded-3xl border-coral/40 bg-coral-soft/30 dark:bg-coral/10">
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-base font-semibold tracking-tight">
+                  <TrendingDown className="size-4 text-coral-soft-foreground dark:text-coral-soft" aria-hidden="true" />
+                  Biggest leak
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                <p className="text-lg font-semibold text-foreground">
+                  {biggestLeak.label}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {worstDrop > 0
+                    ? `${Math.round(worstDrop * 100)}% drop at this step. ${biggestLeak.detail}`
+                    : biggestLeak.detail}
+                </p>
+                <Button asChild variant="outline" size="sm" className="h-8 rounded-full text-[11px]">
+                  <Link href={biggestLeak.href}>Fix it</Link>
+                </Button>
+              </CardContent>
+            </Card>
+
+            <Card className="rounded-3xl">
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-base font-semibold tracking-tight">
+                  <UserPlus className="size-4 text-info" aria-hidden="true" />
+                  Follower growth from in-chat prompts
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 gap-3">
+                  {[
+                    { label: "New followers", value: followStats.newFollowers },
+                    { label: "Prompts sent", value: followStats.sent },
+                    {
+                      label: "Tap rate",
+                      value: followStats.tapRate === null ? "—" : `${followStats.tapRate}%`,
+                    },
+                    { label: "Content delivered", value: followStats.delivered },
+                  ].map((item) => (
+                    <div
+                      key={item.label}
+                      className="rounded-2xl border border-border bg-muted/40 p-3.5"
+                    >
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        {item.label}
+                      </p>
+                      <p className="mt-1.5 text-2xl font-bold tabular-nums text-foreground">
+                        {item.value}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card className="rounded-3xl">
+            <CardHeader className="border-b border-border pb-4">
+              <CardTitle className="text-base font-semibold tracking-tight">
+                Daily conversion rollup
+              </CardTitle>
+              <CardDescription className="text-xs text-muted-foreground">
+                Daily rollups plus today&apos;s live counters from Redis — last {analyticsDays} days.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="pt-5">
+              {!analytics || analytics.summary.dmSent === 0 ? (
+                <p role="status" className="py-4 text-center text-xs text-muted-foreground">
+                  No conversion events yet. They appear here as soon as a DM is sent or a tracked link is clicked.
+                </p>
+              ) : (
+                <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                  {[
+                    { label: "DMs sent", value: analytics.summary.dmSent.toLocaleString("en-IN"), hint: "Automated deliveries" },
+                    { label: "Link clicks", value: analytics.summary.dmLinkClicks.toLocaleString("en-IN"), hint: `${analytics.summary.dmCtrPct}% click-through` },
+                    { label: "Follower replies", value: analytics.summary.dmReplies.toLocaleString("en-IN"), hint: `${analytics.summary.dmReplyRatePct}% reply rate` },
+                    { label: "Bio clicks", value: analytics.summary.bioClicks.toLocaleString("en-IN"), hint: "Link-in-bio clicks" },
+                  ].map((item) => (
+                    <div key={item.label} className="space-y-1 rounded-2xl border border-border p-4">
+                      <p className="text-[11px] font-semibold text-muted-foreground">{item.label}</p>
+                      <p className="text-2xl font-bold tabular-nums text-foreground">{item.value}</p>
+                      <p className="text-[10px] text-muted-foreground">{item.hint}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* ── Revenue ── */}
+      {activeTab === "revenue" && (
+        <div className="space-y-5">
+          <BentoGrid className="grid-cols-1 sm:grid-cols-3">
+            <SpotlightCard
+              className="border-brand/30 bg-brand-soft/40 p-5 dark:bg-brand/10"
+              spotlightColor="hsl(var(--brand) / 0.22)"
+            >
+              <p className="text-xs font-semibold text-brand-soft-foreground dark:text-brand">
+                Tracked revenue
+              </p>
+              <p className="mt-3 text-2xl font-bold tabular-nums text-foreground">
+                {revenueLabel ?? "—"}
+              </p>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Server-verified conversions only
+              </p>
+            </SpotlightCard>
+            <SpotlightCard
+              className="border-success/30 bg-success-soft/30 p-5 dark:bg-success/10"
+              spotlightColor="hsl(var(--success) / 0.2)"
+            >
+              <p className="text-xs font-semibold text-success-soft-foreground dark:text-success-soft-foreground">
+                Purchases
+              </p>
+              <p className="mt-3 text-2xl font-bold tabular-nums text-foreground">
+                <NumberTicker value={purchases} />
+              </p>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Checkout and purchase events
+              </p>
+            </SpotlightCard>
+            <SpotlightCard
+              className="border-info/30 bg-info-soft/40 p-5 dark:bg-info/10"
+              spotlightColor="hsl(var(--info) / 0.2)"
+            >
+              <p className="text-xs font-semibold text-info-soft-foreground dark:text-info-soft-foreground">
+                Repeat buyers
+              </p>
+              <p className="mt-3 text-2xl font-bold tabular-nums text-foreground">
+                <NumberTicker value={repeatBuyers} />
+              </p>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Contacts with more than one conversion
+              </p>
+            </SpotlightCard>
+          </BentoGrid>
+
+          <Card className="rounded-3xl">
+            <CardHeader className="border-b border-border pb-4">
+              <CardTitle className="text-base font-semibold tracking-tight">
+                Revenue by keyword &amp; creative
+              </CardTitle>
+              <CardDescription className="text-xs text-muted-foreground">
+                Server-verified conversions only. Connect your checkout with the token in Settings.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="pt-5">
+              {topCreatives.length > 0 ? (
+                <div className="space-y-3">
+                  {topCreatives.map((creative) => (
+                    <div
+                      key={creative.label}
+                      className="flex items-center justify-between gap-3 rounded-xl border border-border px-3 py-2.5"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-semibold">{creative.label}</p>
+                        <p className="text-[10px] text-muted-foreground">
+                          {creative.count} conversions
+                        </p>
+                      </div>
+                      <p className="shrink-0 text-sm font-bold tabular-nums">
+                        {currency}{" "}
+                        {(creative.revenue / 100).toLocaleString("en-IN", {
+                          maximumFractionDigits: 0,
+                        })}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="py-10 text-center">
+                  <BarChart3 className="mx-auto size-8 text-muted-foreground" aria-hidden="true" />
+                  <p className="mt-2 text-sm font-semibold text-foreground">
+                    No tracked revenue yet
+                  </p>
+                  <p className="mx-auto mt-1 max-w-md text-[11px] text-muted-foreground">
+                    Copy your conversion token from Settings and send a purchase event from your checkout. Revenue will appear against the keyword and post that started it.
+                  </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* ── Audience ── */}
+      {activeTab === "audience" && (
+        <div className="space-y-5">
+          <Card className="rounded-3xl">
+            <CardHeader className="border-b border-border pb-4">
+              <CardTitle className="flex items-center gap-2 text-base font-semibold tracking-tight">
+                <UserPlus className="size-4 text-info" aria-hidden="true" />
+                Follower growth from in-chat prompts
+              </CardTitle>
+              <CardDescription className="text-xs text-muted-foreground">
+                Only people who were not following before the prompt and were verified afterwards count as growth.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="pt-5">
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                {[
+                  { label: "New followers", value: followStats.newFollowers },
+                  { label: "Prompts sent", value: followStats.sent },
+                  {
+                    label: "Tap rate",
+                    value: followStats.tapRate === null ? "—" : `${followStats.tapRate}%`,
+                  },
+                  { label: "Content delivered", value: followStats.delivered },
+                ].map((item) => (
+                  <div
+                    key={item.label}
+                    className="rounded-2xl border border-border bg-muted/40 p-3.5"
+                  >
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      {item.label}
+                    </p>
+                    <p className="mt-1.5 text-2xl font-bold tabular-nums text-foreground">
+                      {item.value}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="rounded-3xl">
+            <CardHeader className="border-b border-border pb-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <CardTitle className="text-base font-semibold tracking-tight">
+                    Keyword ingestion leaderboard
+                  </CardTitle>
+                  <CardDescription className="mt-0.5 text-xs text-muted-foreground">
+                    Distribution of comment keywords generating automated DM funnels
+                  </CardDescription>
+                </div>
+                <Badge variant="outline" className="rounded-full px-3 text-[10px] font-semibold">
+                  {sortedKeywords.length} active triggers
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-5">
+              {sortedKeywords.length > 0 ? (
+                <div className="space-y-4">
+                  {sortedKeywords.map((kw) => (
+                    <div key={kw.keyword} className="space-y-1.5">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="rounded-full bg-primary px-2.5 py-1 font-mono text-xs font-medium text-primary-foreground">
+                          {kw.keyword}
+                        </span>
+                        <span className="font-mono text-xs font-semibold tabular-nums text-foreground">
+                          {kw.count} triggers ({kw.share})
+                        </span>
+                      </div>
+                      <Progress value={parseInt(kw.share) || 0} className="h-2" />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="py-10 text-center">
+                  <Inbox className="mx-auto size-8 text-muted-foreground" aria-hidden="true" />
+                  <p className="mt-2 text-sm font-semibold text-foreground">
+                    No keyword data recorded yet
+                  </p>
+                  <p className="mx-auto mt-1 max-w-sm text-xs text-muted-foreground">
+                    {activeKeywords.length > 0
+                      ? `Active listening keywords: ${activeKeywords.join(", ")}. When followers comment these words, statistics appear here.`
+                      : "Create your first comment-to-DM campaign to start tracking keyword performance."}
+                  </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* ── Campaigns ── */}
+      {activeTab === "campaigns" && (
+        <div className="space-y-5">
+          <Card className="rounded-3xl">
+            <CardHeader className="border-b border-border pb-4">
+              <CardTitle className="text-base font-semibold tracking-tight">
+                Campaign performance
+              </CardTitle>
+              <CardDescription className="text-xs text-muted-foreground">
+                Automated DMs ÷ impressions for each campaign&apos;s post.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="pt-5">
+              {campaignInsights.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[520px] text-xs">
+                    <thead>
+                      <tr className="text-left text-[10px] uppercase tracking-wide text-muted-foreground">
+                        <th scope="col" className="px-3 py-2 font-semibold">Campaign</th>
+                        <th scope="col" className="px-3 py-2 text-right font-semibold">DMs</th>
+                        <th scope="col" className="px-3 py-2 text-right font-semibold">Impressions</th>
+                        <th scope="col" className="px-3 py-2 text-right font-semibold">Conversion</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {campaignInsights.map((row) => (
+                        <tr key={row.automationId} className="border-t border-border/60">
+                          <td className="max-w-[240px] truncate px-3 py-2 font-medium text-foreground">
+                            {row.name}
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono tabular-nums">
+                            {row.dms.toLocaleString("en-IN")}
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono tabular-nums">
+                            {row.impressions.toLocaleString("en-IN")}
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono font-semibold tabular-nums">
+                            {row.conversionRate === null
+                              ? "—"
+                              : `${row.conversionRate.toFixed(1)}%`}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p role="status" className="py-4 text-center text-xs text-muted-foreground">
+                  No campaign insights yet. Publish a campaign and connect an Instagram account with insights access.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="rounded-3xl">
+            <CardHeader className="border-b border-border pb-4">
+              <CardTitle className="text-base font-semibold tracking-tight">
+                Top performer
+              </CardTitle>
+              <CardDescription className="text-xs text-muted-foreground">
+                The campaign delivering the most DMs in this period.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="pt-5">
+              {topAutomation ? (
+                <div className="flex flex-col gap-3 rounded-2xl border border-border bg-muted/40 p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-foreground">
+                      {topAutomation.name}
+                    </p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {topAutomation.count.toLocaleString("en-IN")} DMs delivered
+                    </p>
+                  </div>
+                  <Button asChild variant="outline" size="sm" className="h-8 w-fit rounded-full text-[11px]">
+                    <Link href={`/dashboard/campaigns/${topAutomation.id}/edit`}>
+                      Edit campaign
+                    </Link>
+                  </Button>
+                </div>
+              ) : (
+                <p role="status" className="py-4 text-center text-xs text-muted-foreground">
+                  No campaign data yet.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* ── Accounts ── */}
+      {activeTab === "accounts" && (
+        <div className="space-y-5">
+          {accountBreakdown.length > 0 && (
+            <Card className="rounded-3xl">
+              <CardHeader className="border-b border-border pb-4">
+                <CardTitle className="text-base font-semibold tracking-tight">
+                  Per-account breakdown
+                </CardTitle>
+                <CardDescription className="text-xs text-muted-foreground">
+                  DMs, delivery and conversions for each connected Instagram account.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="pt-5">
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[420px] text-xs">
+                    <thead>
+                      <tr className="text-left text-[10px] uppercase tracking-wide text-muted-foreground">
+                        <th scope="col" className="py-2 font-semibold">Account</th>
+                        <th scope="col" className="py-2 text-right font-semibold">DMs</th>
+                        <th scope="col" className="py-2 text-right font-semibold">Delivery</th>
+                        <th scope="col" className="py-2 text-right font-semibold">Conversions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {accountBreakdown.map((row) => (
+                        <tr key={row.id} className="border-t border-border/60">
+                          <td className="max-w-[200px] truncate py-2 text-foreground">
+                            {row.username ? `@${row.username}` : row.id.slice(0, 8)}
+                          </td>
+                          <td className="py-2 text-right font-mono tabular-nums">
+                            {row.dms.toLocaleString("en-IN")}
+                          </td>
+                          <td className="py-2 text-right font-mono tabular-nums">
+                            {row.deliveryRate === null ? "—" : `${row.deliveryRate}%`}
+                          </td>
+                          <td className="py-2 text-right font-mono tabular-nums">
+                            {row.conversions}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
           )}
-        </CardContent>
-      </Card>
+
+          <DmQueueCard
+            pending={queueStats.pending}
+            failed={queueStats.failed}
+            oldestPendingAt={queueStats.oldestPendingAt}
+            timeZone={timeZone}
+          />
+
+          <SafetyCard
+            stats={safetyStats}
+            accounts={accountHealth}
+            score={safetyResult.score}
+            band={safetyResult.label}
+          />
+        </div>
+      )}
     </div>
   );
 }

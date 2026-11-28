@@ -130,11 +130,7 @@ export async function createCampaign(payload: CreateCampaignPayload) {
         post_caption: values.postCaption || null,
         trigger_type: values.triggerType,
         trigger_keywords:
-          values.triggerType === "SHARE_TO_DM"
-            ? []
-            : cleanKeywords.length > 0
-              ? cleanKeywords
-              : ["START"],
+          values.triggerType === "SHARE_TO_DM" ? [] : cleanKeywords,
         dm_message: values.dmMessage,
         dm_variants: values.dmVariants,
         button_text: values.buttonText || null,
@@ -261,7 +257,7 @@ export async function updateCampaign(
         post_thumbnail_url: values.postThumbnailUrl || null,
         post_caption: values.postCaption || null,
         trigger_keywords:
-          cleanKeywords.length > 0 ? cleanKeywords : ["START"],
+          values.triggerType === "SHARE_TO_DM" ? [] : cleanKeywords,
         dm_message: values.dmMessage,
         dm_variants: values.dmVariants,
         button_text: values.buttonText || null,

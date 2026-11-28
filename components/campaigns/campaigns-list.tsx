@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/dialog";
 import { toggleCampaignActive, deleteCampaign } from "@/app/dashboard/campaigns/actions";
 import { RerunDialog } from "@/components/campaigns/rerun-dialog";
+import { NewAutomationDialog } from "@/components/campaigns/new-automation-dialog";
 
 export interface AutomationItem {
   id: string;
@@ -171,48 +172,48 @@ export function CampaignsList({
         </div>
       )}
 
-      {/* Controls Bar: Tabs & Search */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div className="flex items-center gap-1.5 p-1 rounded-full bg-[#f0f2f5] dark:bg-muted/60 border border-[#e0e2e8] dark:border-border/60 w-fit">
-          <button
-            onClick={() => setActiveTab("all")}
-            className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all ${
-              activeTab === "all"
-                ? "bg-white dark:bg-card text-foreground shadow-xs"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            All ({automations.length})
-          </button>
-          <button
-            onClick={() => setActiveTab("active")}
-            className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all ${
-              activeTab === "active"
-                ? "bg-white dark:bg-card text-foreground shadow-xs"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            Active ({activeCount})
-          </button>
-          <button
-            onClick={() => setActiveTab("paused")}
-            className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all ${
-              activeTab === "paused"
-                ? "bg-white dark:bg-card text-foreground shadow-xs"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            Paused ({pausedCount})
-          </button>
+      {/* Controls Bar: Tabs, count & search */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex w-fit items-center gap-1.5 rounded-full border border-border bg-muted p-1">
+            {[
+              { id: "all", label: "All Triggers", count: automations.length },
+              { id: "active", label: "Active", count: activeCount },
+              { id: "paused", label: "Archived", count: pausedCount },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() =>
+                  setActiveTab(tab.id as "all" | "active" | "paused")
+                }
+                aria-pressed={activeTab === tab.id}
+                className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition-[background-color,color,box-shadow] ${
+                  activeTab === tab.id
+                    ? "bg-card text-foreground shadow-xs"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {tab.label} ({tab.count})
+              </button>
+            ))}
+          </div>
+          <span className="rounded-full border border-border bg-card px-3 py-1.5 text-[11px] font-semibold text-muted-foreground">
+            {automations.length} / Unlimited
+          </span>
         </div>
 
         <div className="relative w-full sm:w-64">
-          <Search className="size-3.5 absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <Search
+            className="absolute left-3.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+            aria-hidden="true"
+          />
           <Input
-            placeholder="Search campaigns & keywords..."
+            placeholder="Search automations by name…"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-9 h-9 text-xs rounded-full bg-[#f7f8fa] dark:bg-muted/40 border-[#e0e2e8] dark:border-border"
+            aria-label="Search automations by name"
+            className="h-9 rounded-full border-border bg-muted/40 pl-9 text-xs"
           />
         </div>
       </div>
@@ -388,24 +389,26 @@ export function CampaignsList({
           ))}
         </div>
       ) : (
-        <Card className="rounded-3xl border-dashed p-10 text-center space-y-4">
-          <div className="size-11 rounded-2xl bg-[#fff8e0] text-[#746019] flex items-center justify-center mx-auto shadow-xs">
-            <Megaphone className="size-5" />
+        <Card className="rounded-3xl border-dashed p-10 text-center">
+          <div className="mx-auto flex size-11 items-center justify-center rounded-2xl bg-brand-soft text-brand-soft-foreground shadow-xs">
+            <Megaphone className="size-5" aria-hidden="true" />
           </div>
-          <div>
-            <h3 className="font-semibold text-base text-foreground">
-              {searchQuery ? "No matching campaigns found" : "No campaigns found"}
-            </h3>
-            <p className="text-xs text-[#555a6a] dark:text-muted-foreground max-w-md mx-auto mt-1">
+          <div className="mt-4">
+            <h3 className="text-base font-semibold text-foreground">
               {searchQuery
-                ? `No campaigns matched your search "${searchQuery}". Try a different keyword.`
-                : "Create a campaign to automatically dispatch direct messages when followers comment on your posts."}
+                ? "No matching automations found"
+                : "Launch your first automation"}
+            </h3>
+            <p className="mx-auto mt-1 max-w-md text-xs text-muted-foreground">
+              {searchQuery
+                ? `No automations matched your search "${searchQuery}". Try a different keyword.`
+                : "Automate conversations and watch your DMs do the work for you."}
             </p>
           </div>
           {!searchQuery && (
-            <Button asChild size="sm" className="rounded-full font-semibold text-xs mt-2 bg-[#1c1c1e] hover:bg-[#2c2c34] text-white px-6 h-9">
-              <Link href="/dashboard/campaigns/new">Create Your First Campaign</Link>
-            </Button>
+            <div className="mt-4 flex justify-center">
+              <NewAutomationDialog label="Start Automating" />
+            </div>
           )}
         </Card>
       )}

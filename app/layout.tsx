@@ -1,5 +1,5 @@
-import type { Metadata } from "next";
-import { Roboto, Rubik } from "next/font/google";
+import type { Metadata, Viewport } from "next";
+import { Plus_Jakarta_Sans, Roboto, Rubik } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import { PostHogAuth } from "@/components/theme-switcher";
 import "./globals.css";
@@ -12,6 +12,13 @@ export const metadata: Metadata = {
   metadataBase: new URL(defaultUrl),
   title: "dmplease - Instagram Comment-to-DM Automation",
   description: "Automate Instagram comments into high-converting direct messages instantly with Meta Graph API.",
+};
+
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
+    { media: "(prefers-color-scheme: dark)", color: "#1c1c1e" },
+  ],
 };
 
 const roboto = Roboto({
@@ -28,13 +35,20 @@ const rubik = Rubik({
   display: "swap",
 });
 
+const plusJakarta = Plus_Jakarta_Sans({
+  weight: ["400", "500", "600", "700", "800"],
+  subsets: ["latin"],
+  variable: "--font-plus-jakarta",
+  display: "swap",
+});
+
 export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning className={`${roboto.variable} ${rubik.variable}`}>
+    <html lang="en" suppressHydrationWarning className={`${roboto.variable} ${rubik.variable} ${plusJakarta.variable}`}>
       <body className="font-sans antialiased">
         <ThemeProvider
           attribute="class"

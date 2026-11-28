@@ -127,6 +127,17 @@ export interface MessageFormatConfig {
   text?: string;
   asset?: StoredAsset | null;
   cards?: CardElement[];
+  /** Lead-capture question shown before the promise is delivered. */
+  collectQuestion?: string;
+  /** Whether the follower may skip the lead-capture question. */
+  collectAllowSkip?: boolean;
+  /** Custom property definition (options, yes/no, or free text). */
+  collectCustomProperty?: {
+    key: string;
+    question: string;
+    type: "options" | "yes_no" | "text";
+    options: string[];
+  };
 }
 
 export interface AssetValidation {

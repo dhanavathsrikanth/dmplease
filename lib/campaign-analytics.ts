@@ -34,6 +34,13 @@ import {
   zonedTimeToUtc,
 } from "@/lib/timezone";
 
+export interface LeadBreakdown {
+  field: string;
+  label: string;
+  total: number;
+  values: Array<{ value: string; count: number }>;
+}
+
 export interface CampaignAnalytics {
   dmSent: number;
   dmFailed: number;
@@ -58,6 +65,7 @@ export interface CampaignAnalytics {
   leadsCaptured: number;
   leadsSkipped: number;
   leadCaptureRate: number | null;
+  leadBreakdowns: LeadBreakdown[];
   shareTriggers: number;
   share: ShareSummary;
   comment: CommentSummary;
@@ -97,6 +105,38 @@ const EMPTY_INPUT: ComparisonInput = {
 
 const EMPTY_COMPARISON = buildCampaignComparison(EMPTY_INPUT, EMPTY_INPUT);
 
+const LEAD_FIELD_LABELS: Record<string, string> = {
+  email: "Email",
+  phone: "Phone",
+  name: "Name",
+  gender: "Gender",
+  age_group: "Age group",
+};
+
+function summarizeLeadBreakdowns(
+  events: Array<{ kind: string; field: string | null; value: string | null }>
+): LeadBreakdown[] {
+  const map = new Map<string, Map<string, number>>();
+  for (const event of events) {
+    if (event.kind !== "captured" || !event.field) continue;
+    const field = event.field;
+    const value = (event.value ?? "").trim() || "Unknown";
+    const values = map.get(field) ?? new Map<string, number>();
+    values.set(value, (values.get(value) ?? 0) + 1);
+    map.set(field, values);
+  }
+  return [...map.entries()]
+    .map(([field, values]) => ({
+      field,
+      label: LEAD_FIELD_LABELS[field] ?? field,
+      total: [...values.values()].reduce((sum, count) => sum + count, 0),
+      values: [...values.entries()]
+        .map(([value, count]) => ({ value, count }))
+        .sort((a, b) => b.count - a.count),
+    }))
+    .sort((a, b) => b.total - a.total);
+}
+
 const EMPTY: CampaignAnalytics = {
   dmSent: 0,
   dmFailed: 0,
@@ -121,6 +161,7 @@ const EMPTY: CampaignAnalytics = {
   leadsCaptured: 0,
   leadsSkipped: 0,
   leadCaptureRate: null,
+  leadBreakdowns: [],
   shareTriggers: 0,
   share: {
     sharesReceived: 0,
@@ -205,7 +246,7 @@ async function loadPreviousPeriodInput(
       .limit(5000),
     db
       .from("lead_events")
-      .select("kind")
+      .select("kind, field, value")
       .eq("automation_id", automationId)
       .gte("created_at", since)
       .lt("created_at", until)
@@ -389,7 +430,7 @@ export async function loadCampaignAnalytics(
       .limit(5000),
     db
       .from("lead_events")
-      .select("kind")
+      .select("kind, field, value")
       .eq("automation_id", automationId)
       .gte("created_at", since)
       .lte("created_at", until)
@@ -579,6 +620,7 @@ export async function loadCampaignAnalytics(
     leadsCaptured,
     leadsSkipped,
     leadCaptureRate,
+    leadBreakdowns: summarizeLeadBreakdowns(leadEvents),
     shareTriggers,
     share,
     comment,

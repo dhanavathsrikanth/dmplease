@@ -251,6 +251,57 @@ export function CampaignAnalyticsCard({ data }: CampaignAnalyticsCardProps) {
             </div>
           )}
 
+          {data.leadBreakdowns.length > 0 && (
+            <div className="rounded-xl border border-[#e0e2e8] dark:border-border px-3.5 py-3 space-y-3">
+              <div className="flex items-center gap-2">
+                <UserPlus className="size-3.5 text-[#4262ff]" aria-hidden="true" />
+                <span className="text-xs font-semibold">Contact insights</span>
+              </div>
+              {data.leadBreakdowns.map((breakdown) => {
+                const max = Math.max(
+                  ...breakdown.values.map((value) => value.count),
+                  1
+                );
+                return (
+                  <div key={breakdown.field} className="space-y-1.5">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="font-semibold text-foreground">
+                        {breakdown.label}
+                      </span>
+                      <span className="text-muted-foreground">
+                        {breakdown.total} response
+                        {breakdown.total === 1 ? "" : "s"}
+                      </span>
+                    </div>
+                    <div className="space-y-1">
+                      {breakdown.values.map((value) => (
+                        <div
+                          key={value.value}
+                          className="flex items-center gap-2 text-[11px]"
+                        >
+                          <span className="w-24 truncate text-muted-foreground">
+                            {value.value}
+                          </span>
+                          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+                            <div
+                              className="h-full rounded-full bg-[#4262ff]"
+                              style={{
+                                width: `${Math.round((value.count / max) * 100)}%`,
+                              }}
+                            />
+                          </div>
+                          <span className="w-8 text-right font-semibold text-foreground">
+                            {value.count}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           {data.dmSent === 0 && (
             <p className="text-[11px] text-muted-foreground rounded-xl bg-[#f7f8fa] dark:bg-muted/30 px-3.5 py-2.5">
               No DMs sent yet for this campaign. Analytics appear here once

@@ -15,6 +15,8 @@ import {
   IconAddressBook,
   IconShieldCheck,
   IconSparkles,
+  IconLayoutSidebar,
+  IconArrowUpRight,
 } from "@tabler/icons-react";
 import { cn } from "@/lib/utils";
 
@@ -22,17 +24,25 @@ interface AppSidebarProps {
   collapsed: boolean;
   mobileOpen: boolean;
   onCloseMobile: () => void;
-  /** Streamed slot: workspace switcher in the sidebar footer. */
+  onToggleCollapse?: () => void;
+  /** Streamed slot: workspace switcher in the sidebar header. */
   workspaceSwitcher: React.ReactNode;
   /** Streamed slot: admin-only nav entry. */
   adminNavItem?: React.ReactNode;
 }
 
-const NAV_SECTIONS = [
+interface NavItem {
+  label: string;
+  href: string;
+  icon: React.ComponentType<{ stroke?: number; className?: string }>;
+  badge?: string;
+}
+
+const NAV_SECTIONS: Array<{ label: string; items: NavItem[] }> = [
   {
     label: "Workspace",
     items: [
-      { label: "Dashboard", href: "/dashboard", icon: IconLayoutDashboard },
+      { label: "Home", href: "/dashboard", icon: IconLayoutDashboard },
       { label: "Analytics", href: "/dashboard/overview", icon: IconDeviceAnalytics },
       { label: "Safety", href: "/dashboard/safety", icon: IconShieldCheck },
       { label: "Inbox", href: "/dashboard/inbox", icon: IconMessages },
@@ -42,9 +52,14 @@ const NAV_SECTIONS = [
   {
     label: "Automation",
     items: [
-      { label: "Campaigns", href: "/dashboard/campaigns", icon: IconSpeakerphone },
+      { label: "Automations", href: "/dashboard/campaigns", icon: IconSpeakerphone },
       { label: "Auto-replies", href: "/dashboard/inbox-automations", icon: IconRobot },
-      { label: "Story to DM", href: "/dashboard/story-automations", icon: IconSparkles },
+      {
+        label: "Story to DM",
+        href: "/dashboard/story-automations",
+        icon: IconSparkles,
+        badge: "NEW",
+      },
       { label: "Activity Log", href: "/dashboard/logs", icon: IconTimeline },
     ],
   },
@@ -76,14 +91,17 @@ function NavSections({
 }: NavSectionsProps) {
   return (
     <>
-      {NAV_SECTIONS.map((section) => (
+      {NAV_SECTIONS.map((section, sectionIndex) => (
         <div key={section.label} className="space-y-1">
+          {sectionIndex > 0 && (
+            <div className="mx-1 my-3 h-px bg-border" aria-hidden="true" />
+          )}
           {!collapsed && (
-            <p className="px-2.5 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-wider mb-1.5">
+            <p className="px-3.5 pb-1 text-[10px] font-mono font-medium uppercase tracking-wider text-muted-foreground">
               {section.label}
             </p>
           )}
-          <div className="space-y-0.5">
+          <div className="space-y-1">
             {section.items.map((item) => {
               const isActive =
                 activeHref !== null &&
@@ -97,23 +115,29 @@ function NavSections({
                   href={item.href}
                   onClick={onCloseMobile}
                   title={collapsed ? item.label : undefined}
+                  aria-current={isActive ? "page" : undefined}
                   className={cn(
-                    "flex items-center gap-2.5 px-3 py-2 rounded-full text-xs font-medium transition-all group relative",
+                    "group relative flex h-10 w-full items-center gap-2.5 rounded-xl px-3.5 text-sm font-semibold transition-[background-color,color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
                     isActive
-                      ? "bg-[#1c1c1e] text-white font-semibold shadow-xs liquid-sheen dark:bg-white dark:text-[#1c1c1e]"
-                      : "text-[#555a6a] dark:text-muted-foreground hover:text-foreground hover:bg-[#f7f8fa] dark:hover:bg-muted/50"
+                      ? "bg-[linear-gradient(272.1deg,rgba(255,255,255,0.85)_-1.82%,rgba(255,255,255,0.45)_107.89%)] text-brand-soft-foreground shadow-xs dark:bg-white/10 dark:text-brand"
+                      : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
                   )}
                 >
                   <Icon
                     stroke={1.8}
                     className={cn(
-                      "size-4 shrink-0 transition-colors",
+                      "size-[18px] shrink-0 transition-colors",
                       isActive
-                        ? "text-[#ffd02f] dark:text-[#1c1c1e]"
-                        : "text-[#6b6f7e] dark:text-muted-foreground group-hover:text-foreground"
+                        ? "text-brand-soft-foreground dark:text-brand"
+                        : "text-muted-foreground group-hover:text-foreground"
                     )}
                   />
                   {!collapsed && <span className="truncate">{item.label}</span>}
+                  {!collapsed && item.badge && (
+                    <span className="ml-auto rounded-md bg-brand px-1.5 py-0.5 text-[9px] font-extrabold tracking-widest text-brand-foreground">
+                      {item.badge}
+                    </span>
+                  )}
                 </Link>
               );
             })}
@@ -140,6 +164,7 @@ export function AppSidebar({
   collapsed,
   mobileOpen,
   onCloseMobile,
+  onToggleCollapse,
   workspaceSwitcher,
   adminNavItem,
 }: AppSidebarProps) {
@@ -148,31 +173,27 @@ export function AppSidebar({
       data-collapsed={collapsed}
       className="group/sidebar flex h-full flex-col justify-between bg-card text-card-foreground border-r border-border/80 select-none antialiased overflow-x-hidden"
     >
-      {/* ── Miro Chrome Brand Header ── */}
-      <div className="h-14 flex items-center px-4 border-b border-[#e0e2e8] dark:border-border/80">
-        <Link
-          href="/dashboard"
-          className="flex items-center gap-2.5 group overflow-hidden w-full"
-        >
-          <div className="size-8 rounded-lg bg-[#ffd02f] text-[#1c1c1e] flex items-center justify-center font-bold text-xs shrink-0 shadow-xs">
-            dm
-          </div>
-          {!collapsed && (
-            <div className="flex items-center gap-2 truncate">
-              <span className="font-semibold text-sm tracking-tight text-foreground truncate flex items-center">
-                dmplease
-                <span className="inline-block size-1.5 rounded-full bg-[#ffd02f] ml-1.5" />
-              </span>
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#fff8e0] text-[#746019] font-semibold border border-[#ffd02f]/40 dark:bg-[#746019]/30 dark:text-[#ffd02f]">
-                CANVAS
-              </span>
-            </div>
-          )}
-        </Link>
+      {/* ── Workspace header (Zorcha-style) ── */}
+      <div className="flex h-14 items-center gap-1.5 border-b border-border px-3">
+        <div className="min-w-0 flex-1">{workspaceSwitcher}</div>
+        {!collapsed && onToggleCollapse && (
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            aria-label="Hide sidebar"
+            className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <IconLayoutSidebar
+              className="size-[18px]"
+              stroke={1.8}
+              aria-hidden="true"
+            />
+          </button>
+        )}
       </div>
 
-      {/* ── Navigation Sections ── */}
-      <div className="flex-1 overflow-y-auto py-3 px-2 space-y-5">
+      {/* ── Navigation sections ── */}
+      <div className="flex-1 overflow-y-auto px-2 py-3">
         <Suspense
           fallback={
             <NavSections
@@ -191,9 +212,19 @@ export function AppSidebar({
         </Suspense>
       </div>
 
-      {/* ── Workspace Switcher Footer (Miro Style) ── */}
-      <div className="p-3 border-t border-[#e0e2e8] dark:border-border/80">
-        {workspaceSwitcher}
+      {/* ── Upgrade CTA (Zorcha-style) ── */}
+      <div className="border-t border-border p-3">
+        <Link
+          href="/dashboard/settings"
+          className="group relative flex w-full items-center justify-center gap-2 overflow-hidden rounded-[13px] border border-border bg-primary px-3.5 py-2 text-sm font-bold text-primary-foreground transition-[background-color,box-shadow,transform] hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+        >
+          <IconArrowUpRight
+            className="size-4 shrink-0"
+            stroke={2}
+            aria-hidden="true"
+          />
+          {!collapsed && <span className="truncate">Upgrade Plan</span>}
+        </Link>
       </div>
     </div>
   );

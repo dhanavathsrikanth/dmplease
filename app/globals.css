@@ -4,6 +4,7 @@
 
 @layer base {
   :root {
+    color-scheme: light;
     --background: 0 0% 100%;
     --foreground: 240 5.9% 11%;
     --card: 0 0% 100%;
@@ -29,8 +30,28 @@
     --chart-4: 0 100% 80%;
     --chart-5: 312 85% 92%;
     --radius: 0.75rem;
+
+    /* ── Semantic brand + status tokens (Sarvam-style, mapped to dmplease) ── */
+    --brand: 46 100% 59%;
+    --brand-foreground: 240 5.9% 11%;
+    --brand-soft: 46 100% 94%;
+    --brand-soft-foreground: 46 70% 28%;
+    --success: 168 85% 40%;
+    --success-soft: 168 100% 87%;
+    --success-soft-foreground: 176 65% 27%;
+    --rose: 312 100% 90%;
+    --rose-soft: 312 100% 94%;
+    --rose-soft-foreground: 312 53% 32%;
+    --coral: 0 100% 80%;
+    --coral-soft: 28 100% 90%;
+    --coral-soft-foreground: 0 100% 19%;
+    --info: 228 100% 63%;
+    --info-soft: 240 100% 97%;
+    --info-soft-foreground: 228 100% 63%;
+    --border-strong: 227 12% 81%;
   }
   .dark {
+    color-scheme: dark;
     --background: 240 5.9% 11%;
     --foreground: 0 0% 98%;
     --card: 240 8% 14%;
@@ -55,6 +76,25 @@
     --chart-3: 176 85% 40%;
     --chart-4: 0 100% 80%;
     --chart-5: 312 85% 92%;
+
+    /* ── Semantic brand + status tokens (dark) ── */
+    --brand: 46 100% 59%;
+    --brand-foreground: 240 5.9% 11%;
+    --brand-soft: 46 70% 20%;
+    --brand-soft-foreground: 46 100% 59%;
+    --success: 168 85% 40%;
+    --success-soft: 176 65% 20%;
+    --success-soft-foreground: 168 100% 87%;
+    --rose: 312 100% 90%;
+    --rose-soft: 312 53% 20%;
+    --rose-soft-foreground: 312 100% 90%;
+    --coral: 0 100% 80%;
+    --coral-soft: 28 70% 20%;
+    --coral-soft-foreground: 28 100% 90%;
+    --info: 228 100% 63%;
+    --info-soft: 228 60% 20%;
+    --info-soft-foreground: 228 100% 80%;
+    --border-strong: 240 6% 30%;
   }
 }
 
@@ -70,6 +110,11 @@
   :where(a, button, input, textarea, select, summary, [tabindex]:not([tabindex="-1"])):focus-visible {
     outline: 2px solid hsl(var(--ring));
     outline-offset: 2px;
+  }
+
+  /* Remove the 300ms double-tap delay on touch devices. */
+  :where(a, button, [role="button"], input, select, textarea, summary) {
+    touch-action: manipulation;
   }
 }
 
@@ -196,4 +241,98 @@
 
 .liquid-sheen:hover::after {
   transform: translateX(50%);
+}
+
+/* -- Aceternity-inspired motion utilities -- */
+@keyframes gradient-x {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+.animate-gradient-x {
+  animation: gradient-x 8s ease infinite;
+}
+
+/* -- Zorcha automations UI (exact Figma replica) -- */
+.zorcha-ui {
+  --z-primary: oklch(48% 0.2674 290.95);
+  --z-primary-light: oklch(69% 0.1892 296.45);
+  --z-line: oklch(94% 0.0043 197.08);
+  --z-line-dark: oklch(88% 0.0054 197.06);
+  --z-bg: oklch(98.51% 0 0);
+  --z-bg-light: oklch(99.52% 0.0025 165.08);
+  --z-black: oklch(28% 0.0505 265.86);
+  --z-black-light: oklch(65.7% 0.022 270.09);
+  --z-black-dark: oklch(19% 0.048 261.06);
+  --z-positive: oklch(69% 0.1288 175.68);
+  --z-negative: oklch(61% 0.156963 51.6981);
+  font-family: var(--font-plus-jakarta), ui-sans-serif, system-ui, sans-serif;
+  color: var(--z-black);
+}
+
+.zorcha-ui .z-page {
+  background: #ebebeb;
+}
+
+.zorcha-ui .z-card {
+  background: var(--z-bg-light);
+  border: 1px solid var(--z-line-dark);
+}
+
+.zorcha-ui .z-muted {
+  color: var(--z-black-light);
+}
+
+.zorcha-ui .z-primary {
+  color: var(--z-primary);
+}
+
+.zorcha-ui .z-primary-bg {
+  background: var(--z-primary);
+  color: #fff;
+}
+
+.zorcha-ui .z-line {
+  border-color: var(--z-line-dark);
+}
+
+.zorcha-ui .z-shiny {
+  background: linear-gradient(110deg, #f7f7f7 8%, #ffffff 18%, #f7f7f7 33%);
+  background-size: 200% 100%;
+  animation: z-shiny 5s linear infinite;
+}
+
+@keyframes z-shiny {
+  to {
+    background-position-x: -200%;
+  }
+}
+
+/* Scale the phone preview down on shorter laptop screens so the editor stays fixed. */
+.phone-preview-scale {
+  transform-origin: top center;
+}
+
+/* Keep the feature tabs and phone visible inside the fixed editor panel. */
+@media (max-height: 860px) {
+  .phone-preview-scale {
+    zoom: 0.8;
+  }
+}
+
+@media (max-height: 760px) {
+  .phone-preview-scale {
+    zoom: 0.7;
+  }
+}
+
+@media (max-height: 680px) {
+  .phone-preview-scale {
+    zoom: 0.6;
+  }
 }

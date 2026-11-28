@@ -1,29 +1,23 @@
 "use client";
 
-import React, { useState } from "react";
+import React from "react";
 import {
   Heart,
-  MessageCircle,
   Send,
-  Bookmark,
   ExternalLink,
-  Instagram,
   ArrowLeft,
   Video,
   Plus,
   Smile,
-  Globe2,
-  Check,
+  FileText,
+  MessageCircle,
+  Bookmark,
+  Instagram,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatDmText } from "@/lib/meta/dm-template";
 import { buildDmVars, type DmVars } from "@/lib/dm-variables";
 import { shortLinkPreview } from "@/lib/link-preview";
-import {
-  normalizeCollectConfig,
-  parseCollectField,
-  renderCollectPrompt,
-} from "@/lib/lead-capture";
 
 interface PhonePreviewProps {
   triggerType?: "COMMENT" | "SHARE_TO_DM";
@@ -32,6 +26,7 @@ interface PhonePreviewProps {
   postCaption?: string | null;
   triggerKeyword: string;
   dmMessage: string;
+  composerFocused?: boolean;
   dmVariantCount?: number;
   messageFormat?: string;
   messageAsset?: {
@@ -49,6 +44,14 @@ interface PhonePreviewProps {
   followGateOpeningMessage?: string | null;
   followGateButtonLabel?: string | null;
   collectField?: string | null;
+  collectQuestion?: string | null;
+  collectAllowSkip?: boolean;
+  collectCustomProperty?: {
+    key: string;
+    question: string;
+    type: "options" | "yes_no" | "text";
+    options: string[];
+  } | null;
   collectRetryMessage?: string | null;
   collectSkipMessage?: string | null;
   collectSuccessMessage?: string | null;
@@ -57,6 +60,8 @@ interface PhonePreviewProps {
   profilePictureUrl?: string | null;
   isVerified?: boolean;
   followersCount?: number | null;
+  view?: "dm" | "post";
+  onViewChange?: (view: "dm" | "post") => void;
 }
 
 /** Uses the production formatter so the preview shows exactly what will be sent. */
@@ -116,12 +121,9 @@ function Avatar({
 }
 
 export function PhonePreview({
-  triggerType = "COMMENT",
-  postScope,
-  postThumbnailUrl,
-  postCaption,
   triggerKeyword,
   dmMessage,
+  composerFocused = false,
   dmVariantCount = 0,
   messageFormat = "text",
   messageAsset,
@@ -129,22 +131,29 @@ export function PhonePreview({
   shortLinksEnabled = false,
   buttonText,
   buttonUrl,
-  publicReplyEnabled,
+  publicReplyEnabled = false,
   publicReplyMessages,
-  followGateEnabled = false,
-  followGateOpeningMessage,
-  followGateButtonLabel,
+  postThumbnailUrl,
+  postCaption,
   collectField,
+  collectQuestion,
+  collectAllowSkip = true,
+  collectCustomProperty,
   collectRetryMessage,
-  collectSkipMessage,
   collectSuccessMessage,
-  collectSkipKeywords,
   instagramHandle = "yourbrand",
   profilePictureUrl = null,
   isVerified = false,
   followersCount = null,
+  view: controlledView,
+  onViewChange,
 }: PhonePreviewProps) {
-  const [activeTab, setActiveTab] = useState<"dm" | "post">("dm");
+  const [internalView, setInternalView] = React.useState<"dm" | "post">("dm");
+  const view = controlledView ?? internalView;
+  const setView = (next: "dm" | "post") => {
+    if (controlledView === undefined) setInternalView(next);
+    onViewChange?.(next);
+  };
   const sampleLink = buttonUrl || "https://dmplease.vercel.app/guide";
   const sampleVars = buildDmVars({
     username: "alex",
@@ -156,52 +165,36 @@ export function PhonePreview({
     voucher: "ALEX-7K2M9Q",
     voucher_url: `${sampleLink}${sampleLink.includes("?") ? "&" : "?"}voucher=ALEX-7K2M9Q`,
   });
-  const formattedDm = previewText(dmMessage, sampleVars);
-  const formattedOpening = previewText(
-    followGateOpeningMessage || "Follow the account, then tap below to get your {keyword}. 👇",
-    sampleVars
-  );
-  const collect = parseCollectField(collectField);
-  const collectConfig = normalizeCollectConfig({
-    retryMessage: collectRetryMessage,
-    skipMessage: collectSkipMessage,
-    successMessage: collectSuccessMessage,
-    skipKeywords: collectSkipKeywords,
-  });
-  const collectPrompt = collect ? renderCollectPrompt(collect, collectConfig) : null;
-  const sampleReply =
-    collect?.kind === "email"
-      ? "alex@example.com"
-      : collect?.kind === "phone"
-        ? "+91 98765 43210"
-        : collect?.kind === "name"
-          ? "Alex"
-          : "Acme Inc";
-  const linkMatch = formattedDm.match(/https?:\/\/[^\s]+/);
-  const linkUrl = linkMatch?.[0] || buttonUrl || "";
-  let linkHost = "";
-  try {
-    linkHost = new URL(linkUrl).hostname.replace(/^www\./, "");
-  } catch {
-    linkHost = "dmplease.vercel.app";
-  }
+  const hasDmText = dmMessage.trim().length > 0;
+  const formattedDm = hasDmText ? previewText(dmMessage, sampleVars) : "";
+  const collectKind =
+    collectField === "custom:gender"
+      ? "gender"
+      : collectField === "custom:age_group"
+        ? "age_group"
+        : collectField;
+
+  const sampleUsername = "alex";
+  const publicReplyText = (publicReplyMessages?.[0] || "Sent you a DM! 📩")
+    .replace(/\{username\}/gi, sampleUsername)
+    .replace(/\{keyword\}/gi, triggerKeyword || "Home");
 
   return (
     <div className="flex flex-col items-center">
-      <div className="flex items-center gap-1 p-1 rounded-full border border-[#e0e2e8] dark:border-border/80 bg-[#f7f8fa] dark:bg-muted/30 text-xs font-semibold mb-5">
-        {(["dm", "post"] as const).map((tab) => (
+      <div className="mb-3 flex items-center gap-1 rounded-full border border-[#e0e2e8] bg-[#f7f8fa] p-1 text-xs font-semibold dark:border-border/80 dark:bg-muted/30">
+        {(["dm", "post"] as const).map((mode) => (
           <button
-            key={tab}
+            key={mode}
             type="button"
-            onClick={() => setActiveTab(tab)}
+            onClick={() => setView(mode)}
             className={cn(
-              "px-4 py-1.5 rounded-full transition-colors text-[11px]",
-              activeTab === tab
+              "rounded-full px-3 py-1.5 text-[11px] transition-colors",
+              view === mode
                 ? "bg-[#1c1c1e] text-white shadow-sm dark:bg-white dark:text-[#1c1c1e]"
-                : "text-[#6b6f7e] dark:text-[#9aa0ad] hover:text-foreground"
+                : "text-[#6b6f7e] hover:text-foreground dark:text-[#9aa0ad]"
             )}
           >
-            {tab === "dm" ? "Direct Message" : "Post & Comment"}
+            {mode === "dm" ? "DM" : "Post & comments"}
           </button>
         ))}
       </div>
@@ -230,266 +223,251 @@ export function PhonePreview({
             </div>
           </div>
 
-          {activeTab === "dm" ? (
+          {view === "dm" ? (
             <>
-              {/* Instagram Direct header */}
-              <div className="px-3.5 py-2 border-b border-[#dbdbdb] dark:border-[#262626] flex items-center gap-2.5">
-                <ArrowLeft className="size-4 shrink-0" />
-                <Avatar src={profilePictureUrl} handle={instagramHandle} />
-                <div className="min-w-0 flex-1">
-                  <p className="flex items-center gap-1 font-semibold text-[12px] leading-tight truncate">
-                    <span className="truncate">{instagramHandle}</span>
-                    <VerifiedMark verified={isVerified} />
-                  </p>
-                  <p className="text-[10px] text-[#8e8e8e] leading-tight">
-                    {followersCount !== null
-                      ? `${followersCount.toLocaleString()} followers · Instagram`
-                      : "Instagram"}
-                  </p>
-                </div>
-                <Video className="size-4 text-[#8e8e8e] shrink-0" />
-              </div>
+          {/* Instagram Direct header */}
+          <div className="px-3.5 py-2 border-b border-[#dbdbdb] dark:border-[#262626] flex items-center gap-2.5">
+            <ArrowLeft className="size-4 shrink-0" />
+            <Avatar src={profilePictureUrl} handle={instagramHandle} />
+            <div className="min-w-0 flex-1">
+              <p className="flex items-center gap-1 font-semibold text-[12px] leading-tight truncate">
+                <span className="truncate">{instagramHandle}</span>
+                <VerifiedMark verified={isVerified} />
+              </p>
+              <p className="text-[10px] text-[#8e8e8e] leading-tight">
+                {followersCount !== null
+                  ? `${followersCount.toLocaleString()} followers · Instagram`
+                  : "Instagram"}
+              </p>
+            </div>
+            <Video className="size-4 text-[#8e8e8e] shrink-0" />
+          </div>
 
-              {/* Thread */}
-              <div className="flex-1 overflow-y-auto px-3.5 py-4 flex flex-col justify-end gap-3 bg-white dark:bg-black">
-                <div className="flex items-center gap-2 my-1">
-                  <div className="h-px flex-1 bg-[#dbdbdb] dark:bg-[#262626]" />
-                  <span className="text-[10px] text-[#8e8e8e] whitespace-nowrap">
-                    {triggerType === "SHARE_TO_DM"
-                      ? "Shared a reel to your DM"
-                      : `Commented “${triggerKeyword || "START"}”`}
-                  </span>
-                  <div className="h-px flex-1 bg-[#dbdbdb] dark:bg-[#262626]" />
-                </div>
-
-                {/* Incoming follower message */}
-                <div className="flex items-end gap-2">
-                  <div className="size-6 rounded-full bg-[#efefef] dark:bg-[#363636] grid place-items-center text-[9px] font-semibold text-[#8e8e8e] shrink-0">
-                    F
-                  </div>
-                  {triggerType === "SHARE_TO_DM" ? (
-                    <div className="max-w-[210px] rounded-[20px] rounded-bl-sm bg-[#efefef] dark:bg-[#262626] px-3 py-2 text-[12px] leading-[1.45] space-y-1.5">
-                      <div className="flex items-center gap-2">
-                        <span className="grid size-7 place-items-center rounded-lg bg-white/70 dark:bg-white/10 shrink-0">
-                          <Instagram className="size-3.5" />
-                        </span>
-                        <div className="min-w-0">
-                          <p className="font-semibold text-[11px] truncate">Reel shared</p>
-                          <p className="text-[10px] text-[#8e8e8e] truncate">
-                            Sent to your DM
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="max-w-[210px] rounded-[20px] rounded-bl-sm bg-[#efefef] dark:bg-[#262626] px-3 py-2 text-[12px] leading-[1.45] break-words whitespace-pre-wrap">
-                      {triggerKeyword || "START"}
+          {collectField && collectField !== "none" ? (
+            <div className="flex-1 overflow-y-auto px-3.5 py-4 flex flex-col justify-end gap-3 bg-white dark:bg-black">
+              <div className="flex flex-col items-end gap-1">
+                <div className="max-w-[248px] rounded-[20px] rounded-br-sm px-3 py-2.5 text-[12px] leading-[1.45] text-white bg-gradient-to-br from-[#515bd4] via-[#d62976] to-[#f58529] break-words whitespace-pre-wrap shadow-sm">
+                  <p>
+                    {collectQuestion?.trim() ||
+                      collectCustomProperty?.question?.trim() ||
+                      (collectKind === "email"
+                        ? "Reply with your email address to finish."
+                        : collectKind === "phone"
+                          ? "Reply with your phone number to finish."
+                          : collectKind === "name"
+                            ? "Reply with your name to finish."
+                            : collectKind === "gender"
+                              ? "Reply with your gender to finish."
+                              : collectKind === "age_group"
+                                ? "Reply with your age group to finish."
+                                : "Reply with your detail to finish.")}
+                  </p>
+                  {collectAllowSkip && (
+                    <div className="mt-2 flex items-center justify-center rounded-full bg-white/95 px-3 py-1.5 text-[11px] font-semibold text-[#262626]">
+                      Skip
                     </div>
                   )}
                 </div>
+                <span className="text-[9px] text-[#8e8e8e] pr-1">Seen · now</span>
+              </div>
 
-                {followGateEnabled && (
-                  <div className="space-y-2">
-                    <p className="text-center text-[9px] font-semibold uppercase tracking-wide text-[#8e8e8e]">
-                      Follow gate · step 1 of 2
-                    </p>
-                    <div className="flex flex-col items-end gap-1">
-                      <div className="max-w-[248px] rounded-[20px] rounded-br-sm px-3 py-2.5 text-[12px] leading-[1.45] text-white bg-gradient-to-br from-[#515bd4] via-[#d62976] to-[#f58529] break-words whitespace-pre-wrap shadow-sm">
-                        <p>{formattedOpening}</p>
-                        <div className="mt-2 flex items-center justify-center gap-1.5 rounded-full bg-white/95 px-3 py-1.5 text-[11px] font-semibold text-[#262626]">
-                          <span>{followGateButtonLabel || "I'm following ✅"}</span>
-                          <Check className="size-3" aria-hidden="true" />
-                        </div>
-                      </div>
-                      <span className="text-[9px] text-[#8e8e8e] pr-1">Tap to verify</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="h-px flex-1 bg-[#dbdbdb] dark:bg-[#262626]" />
-                      <span className="text-[9px] text-[#8e8e8e]">after follow is confirmed</span>
-                      <div className="h-px flex-1 bg-[#dbdbdb] dark:bg-[#262626]" />
-                    </div>
-                  </div>
-                )}
+              <div className="flex items-end gap-2">
+                <div className="size-6 rounded-full bg-[#efefef] dark:bg-[#363636] grid place-items-center text-[9px] font-semibold text-[#8e8e8e] shrink-0">
+                  F
+                </div>
+                <div className="max-w-[210px] rounded-[20px] rounded-bl-sm bg-[#efefef] dark:bg-[#262626] px-3 py-2 text-[12px] leading-[1.45] break-words whitespace-pre-wrap">
+                  {collectKind === "email"
+                    ? "not-an-email"
+                    : collectKind === "phone"
+                      ? "12345"
+                      : collectKind === "name"
+                        ? "123"
+                        : collectKind === "gender"
+                          ? "unknown"
+                          : collectKind === "age_group"
+                            ? "unknown"
+                            : collectCustomProperty?.type === "yes_no"
+                              ? "Maybe"
+                              : "—"}
+                </div>
+              </div>
 
-                {/* Brand reply — Instagram gradient bubble */}
-                {followGateEnabled && (
-                  <p className="text-center text-[9px] font-semibold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
-                    Step 2 of 2 · verified DM
-                  </p>
-                )}
+              {(collectKind === "email" || collectKind === "phone") && (
                 <div className="flex flex-col items-end gap-1">
                   <div className="max-w-[248px] rounded-[20px] rounded-br-sm px-3 py-2.5 text-[12px] leading-[1.45] text-white bg-gradient-to-br from-[#515bd4] via-[#d62976] to-[#f58529] break-words whitespace-pre-wrap shadow-sm">
-                    <p>{formattedDm}</p>
-                    {dmVariantCount > 0 && (
-                      <p className="mt-1.5 text-[9px] text-white/70">
-                        +{dmVariantCount} more variation{dmVariantCount === 1 ? "" : "s"} · rotated automatically
-                      </p>
-                    )}
+                    <p>
+                      {collectRetryMessage?.trim() ||
+                        (collectKind === "email"
+                          ? "Please enter a valid email address."
+                          : "Please enter a valid phone number.")}
+                    </p>
+                  </div>
+                </div>
+              )}
 
-                    {messageAsset && !["card", "carousel"].includes(messageFormat) && (
-                      <div className="mt-2 rounded-xl bg-black/25 border border-white/25 px-2.5 py-2 text-[10px]">
-                        {messageAsset.mimeType?.startsWith("image/")
-                          ? "📷 Image attachment"
-                          : messageAsset.mimeType?.startsWith("video/")
-                            ? "🎬 Video attachment"
-                            : messageAsset.mimeType?.startsWith("audio/")
-                              ? "🎙️ Audio attachment"
-                              : "📄 PDF attachment"}
-                        <span className="block text-white/70 truncate">
-                          {messageAsset.filename || "Attached file"}
+              <div className="flex items-end gap-2">
+                <div className="size-6 rounded-full bg-[#efefef] dark:bg-[#363636] grid place-items-center text-[9px] font-semibold text-[#8e8e8e] shrink-0">
+                  F
+                </div>
+                <div className="max-w-[210px] rounded-[20px] rounded-bl-sm bg-[#efefef] dark:bg-[#262626] px-3 py-2 text-[12px] leading-[1.45] break-words whitespace-pre-wrap">
+                  {collectKind === "email"
+                    ? "alex@example.com"
+                    : collectKind === "phone"
+                      ? "+91 98765 43210"
+                      : collectKind === "name"
+                        ? "Alex"
+                        : collectKind === "gender"
+                          ? "Female"
+                          : collectKind === "age_group"
+                            ? "25-34"
+                            : collectCustomProperty?.type === "options"
+                              ? collectCustomProperty.options[0] || "Option 1"
+                              : collectCustomProperty?.type === "yes_no"
+                                ? "Yes"
+                                : "Acme Inc"}
+                </div>
+              </div>
+
+              <div className="flex flex-col items-end gap-1">
+                <div className="max-w-[248px] rounded-[20px] rounded-br-sm px-3 py-2.5 text-[12px] leading-[1.45] text-white bg-gradient-to-br from-[#515bd4] via-[#d62976] to-[#f58529] break-words whitespace-pre-wrap shadow-sm">
+                  <p>{collectSuccessMessage?.trim() || "Got it, thank you! ✅"}</p>
+                </div>
+              </div>
+            </div>
+          ) : (
+          <div className="flex-1 overflow-y-auto px-3.5 py-4 flex flex-col justify-end gap-3 bg-white dark:bg-black">
+            <div className="flex flex-col items-end gap-1">
+              <div className="max-w-[248px] rounded-[20px] rounded-br-sm px-3 py-2.5 text-[12px] leading-[1.45] text-white bg-gradient-to-br from-[#515bd4] via-[#d62976] to-[#f58529] break-words whitespace-pre-wrap shadow-sm">
+                {messageAsset && !["card", "carousel"].includes(messageFormat) && (
+                  <div className="mb-2 overflow-hidden rounded-xl border border-white/25 bg-black/25">
+                    {messageAsset.mimeType?.startsWith("image/") ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={messageAsset.url}
+                        alt={messageAsset.filename || "Attachment"}
+                        className="max-h-40 w-full object-cover"
+                      />
+                    ) : messageAsset.mimeType?.startsWith("video/") ? (
+                      <video
+                        src={messageAsset.url}
+                        controls
+                        className="max-h-40 w-full object-cover"
+                      />
+                    ) : messageAsset.mimeType?.startsWith("audio/") ? (
+                      <div className="px-2.5 py-2">
+                        <audio src={messageAsset.url} controls className="w-full" />
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2 px-2.5 py-2 text-[10px]">
+                        <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-white/20">
+                          <FileText className="size-3.5" />
+                        </span>
+                        <span className="truncate">
+                          {messageAsset.filename || "PDF document"}
                         </span>
                       </div>
                     )}
-
-                    {(messageFormat === "card" || messageFormat === "carousel") &&
-                      cards.length > 0 && (
-                        <div className="mt-2 space-y-1.5">
-                          {cards.slice(0, messageFormat === "card" ? 1 : 3).map((card, index) => (
-                            <div
-                              key={index}
-                              className="rounded-xl bg-black/25 border border-white/25 px-2.5 py-2 text-[10px]"
-                            >
-                              <p className="font-semibold">{card.title || `Card ${index + 1}`}</p>
-                              {card.subtitle && (
-                                <p className="text-white/70">{card.subtitle}</p>
-                              )}
-                              {messageFormat === "carousel" && index === 2 && cards.length > 3 && (
-                                <p className="text-white/60">+{cards.length - 3} more cards</p>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                    {linkUrl && (
-                      <div className="mt-2.5 rounded-xl bg-black/25 border border-white/25 overflow-hidden">
-                        <div className="flex items-center gap-2 px-2.5 py-2">
-                          <span className="grid size-7 place-items-center rounded-lg bg-white/20 shrink-0">
-                            <Globe2 className="size-3.5" />
-                          </span>
-                          <div className="min-w-0">
-                            <p className="truncate font-semibold text-[11px]">
-                              {linkHost}
-                            </p>
-                            <p className="truncate text-[10px] text-white/75">
-                              Open link
-                            </p>
-                          </div>
-                          <ExternalLink className="size-3 ml-auto opacity-80" />
-                        </div>
-                      </div>
-                    )}
-
-                    {buttonText && (
-                      <div className="mt-2 flex items-center justify-center gap-1.5 rounded-full bg-white/95 px-3 py-1.5 text-[11px] font-semibold text-[#262626]">
-                        <span>{buttonText}</span>
-                        <ExternalLink className="size-3" />
-                      </div>
-                    )}
-                  </div>
-                  <span className="text-[9px] text-[#8e8e8e] pr-1">Seen · now</span>
-                </div>
-
-                {collectPrompt && (
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      <div className="h-px flex-1 bg-[#dbdbdb] dark:bg-[#262626]" />
-                      <span className="text-[9px] font-semibold uppercase tracking-wide text-[#8e8e8e]">
-                        Collect info
-                      </span>
-                      <div className="h-px flex-1 bg-[#dbdbdb] dark:bg-[#262626]" />
-                    </div>
-
-                    <div className="flex flex-col items-end gap-1">
-                      <div className="max-w-[248px] rounded-[20px] rounded-br-sm px-3 py-2.5 text-[12px] leading-[1.45] text-white bg-gradient-to-br from-[#515bd4] via-[#d62976] to-[#f58529] break-words whitespace-pre-wrap shadow-sm">
-                        <p>{collectPrompt}</p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-end gap-2">
-                      <div className="size-6 rounded-full bg-[#efefef] dark:bg-[#363636] grid place-items-center text-[9px] font-semibold text-[#8e8e8e] shrink-0">
-                        F
-                      </div>
-                      <div className="max-w-[210px] rounded-[20px] rounded-bl-sm bg-[#efefef] dark:bg-[#262626] px-3 py-2 text-[12px] leading-[1.45] break-words whitespace-pre-wrap">
-                        {sampleReply}
-                      </div>
-                    </div>
-
-                    <div className="flex flex-col items-end gap-1">
-                      <div className="max-w-[248px] rounded-[20px] rounded-br-sm px-3 py-2.5 text-[12px] leading-[1.45] text-white bg-gradient-to-br from-[#515bd4] via-[#d62976] to-[#f58529] break-words whitespace-pre-wrap shadow-sm">
-                        <p>{collectConfig.successMessage}</p>
-                      </div>
-                      <span className="text-[9px] text-[#8e8e8e] pr-1">
-                        Saved to Contacts
-                      </span>
-                    </div>
-
-                    <p className="text-center text-[9px] text-[#8e8e8e]">
-                      Invalid reply → “{collectConfig.retryMessage}”
-                    </p>
-                    <p className="text-center text-[9px] text-[#8e8e8e]">
-                      Reply {collectConfig.skipKeywords[0]?.toUpperCase() ?? "SKIP"} → skip
-                    </p>
                   </div>
                 )}
-
-                {publicReplyEnabled && (
-                  <p className="text-center text-[10px] text-[#8e8e8e]">
-                    Public reply: {publicReplyMessages?.[0] || "Sent you a DM! 📩"}
-                    {(publicReplyMessages?.length ?? 0) > 1 && (
-                      <span className="block text-[9px]">
-                        +{(publicReplyMessages?.length ?? 0) - 1} more variants, rotated automatically
-                      </span>
-                    )}
+                <p className={cn(!hasDmText && "italic text-white/70")}>
+                  {hasDmText ? formattedDm : "Set up a message"}
+                </p>
+                {hasDmText && dmVariantCount > 0 && (
+                  <p className="mt-1.5 text-[9px] text-white/70">
+                    +{dmVariantCount} more variation{dmVariantCount === 1 ? "" : "s"} · rotated automatically
                   </p>
                 )}
-              </div>
+                {(messageFormat === "card" || messageFormat === "carousel") &&
+                  cards.length > 0 && (
+                    <div className="mt-2 space-y-1.5">
+                      {cards.slice(0, messageFormat === "card" ? 1 : 3).map((card, index) => (
+                        <div
+                          key={index}
+                          className="rounded-xl bg-black/25 border border-white/25 px-2.5 py-2 text-[10px]"
+                        >
+                          <p className="font-semibold">{card.title || `Card ${index + 1}`}</p>
+                          {card.subtitle && (
+                            <p className="text-white/70">{card.subtitle}</p>
+                          )}
+                          {messageFormat === "carousel" && index === 2 && cards.length > 3 && (
+                            <p className="text-white/60">+{cards.length - 3} more cards</p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
 
-              {/* Composer */}
-              <div className="px-3 py-2 border-t border-[#dbdbdb] dark:border-[#262626] flex items-center gap-2.5">
-                <Plus className="size-4 shrink-0" />
-                <div className="flex-1 h-8 rounded-full border border-[#dbdbdb] dark:border-[#363636] px-3 flex items-center text-[11px] text-[#8e8e8e]">
-                  Message...
-                </div>
-                <Smile className="size-4 shrink-0" />
-                <Heart className="size-4 shrink-0" />
-                <Send className="size-4 shrink-0 text-[#0095f6]" />
+                {buttonText && (
+                  <a
+                    href={buttonUrl || "#"}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-2 flex items-center justify-center gap-1.5 rounded-full bg-white/95 px-3 py-1.5 text-[11px] font-semibold text-[#262626]"
+                  >
+                    <span>{buttonText}</span>
+                    <ExternalLink className="size-3" />
+                  </a>
+                )}
               </div>
+              <span className="text-[9px] text-[#8e8e8e] pr-1">
+                {hasDmText ? "Seen · now" : "Draft"}
+              </span>
+            </div>
+          </div>
+          )}
+
+          {/* Composer */}
+          <div className="px-3 py-2 border-t border-[#dbdbdb] dark:border-[#262626] flex items-center gap-2.5">
+            <Plus className="size-4 shrink-0" />
+            <div
+              className={cn(
+                "flex-1 h-8 rounded-full border px-3 flex items-center text-[11px]",
+                composerFocused
+                  ? "border-[#0095f6] text-[#262626] dark:text-[#f5f5f5]"
+                  : "border-[#dbdbdb] dark:border-[#363636] text-[#8e8e8e]"
+              )}
+            >
+              {composerFocused ? "Aa" : "Message..."}
+            </div>
+            <Smile className="size-4 shrink-0" />
+            <Heart className="size-4 shrink-0" />
+            <Send className="size-4 shrink-0 text-[#0095f6]" />
+          </div>
             </>
           ) : (
-            <>
-              {/* Instagram post */}
-              <div className="px-3 py-2 flex items-center gap-2 border-b border-[#dbdbdb] dark:border-[#262626]">
+            <div className="flex-1 overflow-y-auto bg-white dark:bg-black">
+              {/* Post header */}
+              <div className="flex items-center gap-2 border-b border-[#dbdbdb] px-3 py-2 dark:border-[#262626]">
                 <Avatar src={profilePictureUrl} handle={instagramHandle} size="sm" />
-                <p className="flex items-center gap-1 font-semibold text-[11px]">
+                <p className="flex items-center gap-1 text-[11px] font-semibold">
                   <span className="truncate">{instagramHandle}</span>
                   <VerifiedMark verified={isVerified} />
                 </p>
               </div>
 
-              <div className="aspect-square w-full bg-[#efefef] dark:bg-[#1a1a1a] overflow-hidden grid place-items-center">
+              {/* Post media */}
+              <div className="aspect-square w-full overflow-hidden bg-[#efefef] dark:bg-[#1a1a1a]">
                 {postThumbnailUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={postThumbnailUrl}
                     alt="Selected post"
-                    className="w-full h-full object-cover"
+                    className="h-full w-full object-cover"
                   />
                 ) : (
-                  <div className="text-center text-[#8e8e8e] px-6 space-y-2">
-                    <Instagram className="size-8 mx-auto stroke-1" />
-                    <p className="text-[10px] leading-snug">
-                      {postScope === "ANY_POST"
-                        ? "Responds to every post and reel"
-                        : postScope === "NEXT_POST"
-                          ? "Starts with your next upload — its link is attached automatically"
-                          : "Attached to the selected post"}
-                    </p>
+                  <div className="grid h-full place-items-center text-center text-[#8e8e8e]">
+                    <div className="space-y-2 px-6">
+                      <Instagram className="mx-auto size-8 stroke-1" />
+                      <p className="text-[10px] leading-snug">
+                        Your post or reel appears here
+                      </p>
+                    </div>
                   </div>
                 )}
               </div>
 
-              <div className="px-3 py-2 flex items-center justify-between">
+              {/* Post actions */}
+              <div className="flex items-center justify-between px-3 py-2">
                 <div className="flex items-center gap-3.5">
                   <Heart className="size-[18px]" />
                   <MessageCircle className="size-[18px] -scale-x-100" />
@@ -498,36 +476,63 @@ export function PhonePreview({
                 <Bookmark className="size-[18px]" />
               </div>
 
+              {/* Caption */}
               <div className="px-3 pb-2 text-[11px] leading-snug">
                 <p className="line-clamp-2">
-                  <span className="font-semibold mr-1">{instagramHandle}</span>
+                  <span className="mr-1 font-semibold">{instagramHandle}</span>
                   {postCaption || "Your caption appears here."}
                 </p>
               </div>
 
-              <div className="flex-1 px-3 py-2 border-t border-[#dbdbdb] dark:border-[#262626] space-y-3 overflow-y-auto">
+              {/* Comments */}
+              <div className="space-y-3 border-t border-[#dbdbdb] px-3 py-3 dark:border-[#262626]">
                 <div className="flex items-start gap-2">
-                  <div className="size-5 rounded-full bg-[#efefef] dark:bg-[#363636] grid place-items-center text-[9px] text-[#8e8e8e] shrink-0">
-                    F
-                  </div>
-                  <p className="text-[11px]">
-                    <span className="font-semibold mr-1">follower</span>
-                    <span className="font-semibold">{triggerKeyword || "START"}</span> please! 🙌
-                    <span className="block text-[9px] text-[#8e8e8e] mt-0.5">1m · Reply</span>
-                  </p>
-                </div>
-                {publicReplyEnabled && (
-                  <div className="flex items-start gap-2 pl-6">
-                    <Avatar src={profilePictureUrl} handle={instagramHandle} size="sm" />
-                    <p className="text-[11px]">
-                      <span className="font-semibold mr-1">{instagramHandle}</span>
-                      {publicReplyMessages?.[0] || "Sent you a DM! 📩"}
-                      <span className="block text-[9px] text-[#8e8e8e] mt-0.5">Now · Reply</span>
+                  <div className="size-7 shrink-0 rounded-full bg-[#efefef] dark:bg-[#363636]" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[10px] text-[#8e8e8e]">
+                      <span className="font-semibold text-[#262626] dark:text-[#f5f5f5]">
+                        follower
+                      </span>{" "}
+                      17w
                     </p>
+                    <p className="text-[11px] leading-snug">
+                      {triggerKeyword || "Home"}
+                    </p>
+                    <div className="mt-0.5 flex gap-3 text-[9px] text-[#8e8e8e]">
+                      <span>Reply</span>
+                      <span>See translation</span>
+                    </div>
+                  </div>
+                  <Heart className="mt-1 size-3.5 shrink-0 text-[#8e8e8e]" />
+                </div>
+
+                {publicReplyEnabled && (
+                  <div className="flex items-start gap-2">
+                    <Avatar
+                      src={profilePictureUrl}
+                      handle={instagramHandle}
+                      size="sm"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="flex items-center gap-1 text-[10px] text-[#8e8e8e]">
+                        <span className="font-semibold text-[#262626] dark:text-[#f5f5f5]">
+                          {instagramHandle}
+                        </span>
+                        <VerifiedMark verified={isVerified} />
+                        17w · Author
+                      </p>
+                      <p className="text-[11px] leading-snug">
+                        <span className="text-[#0095f6]">
+                          @{sampleUsername}
+                        </span>{" "}
+                        {publicReplyText}
+                      </p>
+                    </div>
+                    <Heart className="mt-1 size-3.5 shrink-0 text-[#8e8e8e]" />
                   </div>
                 )}
               </div>
-            </>
+            </div>
           )}
 
           <div className="h-5 flex items-center justify-center">

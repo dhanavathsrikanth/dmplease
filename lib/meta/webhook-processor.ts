@@ -29,6 +29,7 @@ import {
   renderCollectPrompt,
   validateLeadValue,
   type CollectConfig,
+  type CollectField,
 } from "@/lib/lead-capture";
 import { getQstash, getQstashWorkerUrl, getRedis, hasQstash, hasUpstashRedis } from "@/lib/upstash";
 import {
@@ -1079,12 +1080,20 @@ async function saveContactField(input: {
     if (input.field.kind === "email") patch.email = input.value;
     else if (input.field.kind === "phone") patch.phone = input.value;
     else if (input.field.kind === "name") patch.display_name = input.value;
-    else if (input.field.kind === "custom" && input.field.key) {
+    else if (
+      input.field.kind === "gender" ||
+      input.field.kind === "age_group" ||
+      (input.field.kind === "custom" && input.field.key)
+    ) {
       const properties =
         contact.properties && typeof contact.properties === "object"
           ? { ...(contact.properties as Record<string, unknown>) }
           : {};
-      properties[input.field.key] = input.value;
+      const key =
+        input.field.kind === "custom"
+          ? input.field.key
+          : input.field.kind;
+      if (key) properties[key] = input.value;
       patch.properties = properties;
     }
 
@@ -2341,6 +2350,32 @@ async function sendPublicReply(input: {
   return { sent, error: result?.error };
 }
 
+/**
+ * When a campaign collects a detail, the promise is delivered only after the
+ * follower replies with a valid value. This resolves the prompt and config once
+ * so the send path and the follow gate agree on what to ask first.
+ */
+function resolveCollect(auto: AutomationLike): {
+  field: CollectField;
+  config: CollectConfig;
+  prompt: string;
+} | null {
+  if (!auto.collectField) return null;
+  const field = parseCollectField(auto.collectField);
+  if (!field) return null;
+  const config = normalizeCollectConfig({
+    question: auto.messageAssets?.collectQuestion,
+    retryMessage: auto.collectRetryMessage,
+    skipMessage: auto.collectSkipMessage,
+    successMessage: auto.collectSuccessMessage,
+    skipKeywords: auto.collectSkipKeywords,
+    maxAttempts: auto.collectMaxAttempts,
+    allowSkip: auto.messageAssets?.collectAllowSkip,
+    customProperty: auto.messageAssets?.collectCustomProperty,
+  });
+  return { field, config, prompt: renderCollectPrompt(field, config) };
+}
+
 async function sendCommentDm(input: {
   token: string;
   accountId: string;
@@ -2512,7 +2547,17 @@ async function sendCommentDm(input: {
 
   await jitter(50, 350);
 
+  const collect = resolveCollect(auto);
+
   const dispatch = () => {
+    if (collect) {
+      return sendPrivateReply(
+        input.token,
+        input.accountId,
+        input.commentId,
+        collect.prompt
+      );
+    }
     if (content.formatted.attachment) {
       return sendPrivateReplyWithAttachment(
         input.token,
@@ -2594,35 +2639,27 @@ async function sendCommentDm(input: {
       });
     }
 
-    if (input.contactId && auto.collectField) {
-      const field = parseCollectField(auto.collectField);
-      if (field) {
-        const config = normalizeCollectConfig({
-          retryMessage: auto.collectRetryMessage,
-          skipMessage: auto.collectSkipMessage,
-          successMessage: auto.collectSuccessMessage,
-          skipKeywords: auto.collectSkipKeywords,
-          maxAttempts: auto.collectMaxAttempts,
-        });
-        await createPending({
-          workspaceId: input.workspaceId,
-          kind: "collect",
-          automationId: auto.id,
-          instagramAccountId: input.accountDbId,
-          recipientId: input.recipientId,
-          message: renderCollectPrompt(field, config),
-          collectField: auto.collectField,
-          collectConfig: config,
-        });
-        await recordLeadEvent({
-          workspaceId: input.workspaceId,
-          automationId: auto.id,
-          contactId: input.contactId,
-          recipientId: input.recipientId,
-          kind: "prompt",
-          field: auto.collectField,
-        });
-      }
+    if (input.contactId && collect) {
+      await createPending({
+        workspaceId: input.workspaceId,
+        kind: "collect",
+        automationId: auto.id,
+        instagramAccountId: input.accountDbId,
+        recipientId: input.recipientId,
+        message: text,
+        buttonText: auto.buttonText,
+        buttonUrl: content.buttonUrl,
+        collectField: auto.collectField,
+        collectConfig: collect.config,
+      });
+      await recordLeadEvent({
+        workspaceId: input.workspaceId,
+        automationId: auto.id,
+        contactId: input.contactId,
+        recipientId: input.recipientId,
+        kind: "prompt",
+        field: auto.collectField,
+      });
     }
   }
 
@@ -2633,13 +2670,13 @@ async function sendCommentDm(input: {
     recipient_id: input.recipientId,
     recipient_username: input.username || "instagram_user",
     trigger_keyword: input.keyword,
-    dm_message: text,
+    dm_message: collect?.prompt ?? text,
     status: succeeded ? "SENT" : "FAILED",
     post_id: input.event?.mediaId ?? null,
     keyword: input.keyword,
     sequence_step: 1,
     variant: variant.index >= 0 ? `variant-${variant.index + 1}` : "default",
-    message_format: content.formatted.format,
+    message_format: collect ? "text" : content.formatted.format,
   });
 
   if (input.contactId) {
@@ -2760,7 +2797,7 @@ export async function processCommentEventForAutomation(
       automationId: auto.id,
       commentId: event.commentId,
       keyword: matchedKeyword,
-      deliverMessage: auto.dmMessage,
+      deliverMessage: resolveCollect(auto)?.prompt ?? auto.dmMessage,
       buttonUrl: auto.buttonUrl,
       contactId,
       mediaId: event.mediaId,
@@ -2929,17 +2966,57 @@ export async function processShareEventForAutomation(
   });
 
   const text = content.text;
+  const collect = resolveCollect(auto);
+
+  // Share campaigns can use the same follow gate as comment campaigns.
+  if (auto.followGateEnabled) {
+    const gate = await applyFollowGate({
+      workspaceId: auto.workspaceId,
+      accountDbId: account.id,
+      accountId: event.instagramAccountId,
+      token,
+      recipientId: event.senderId,
+      username: event.senderName,
+      config: normalizeFollowGateConfig({
+        enabled: true,
+        openingMessage: auto.openingMessage,
+        buttonLabel: auto.followGateButtonLabel,
+        onUnavailable: auto.followGateOnUnavailable,
+      }),
+      automationId: auto.id,
+      commentId: null,
+      keyword: "SHARE",
+      deliverMessage: collect?.prompt ?? text,
+      buttonUrl: auto.buttonUrl,
+      contactId,
+      mediaId: event.mediaId ?? null,
+    });
+    if (!gate.proceed) {
+      return {
+        sent: false,
+        skipped: gate.skipped ?? "Follow gate: not confirmed",
+      };
+    }
+  }
+
   const result = await withRetry(() =>
-    auto.buttonText && content.buttonUrl
-      ? sendDirectMessageWithButton(
+    collect
+      ? sendDirectMessage(
           token,
           event.instagramAccountId,
           event.senderId,
-          text,
-          auto.buttonText,
-          content.buttonUrl
+          collect.prompt
         )
-      : sendDirectMessage(token, event.instagramAccountId, event.senderId, text)
+      : auto.buttonText && content.buttonUrl
+        ? sendDirectMessageWithButton(
+            token,
+            event.instagramAccountId,
+            event.senderId,
+            text,
+            auto.buttonText,
+            content.buttonUrl
+          )
+        : sendDirectMessage(token, event.instagramAccountId, event.senderId, text)
   );
   const succeeded = !result?.error;
 
@@ -2992,14 +3069,38 @@ export async function processShareEventForAutomation(
     recipient_id: event.senderId,
     recipient_username: event.senderName || "instagram_user",
     trigger_keyword: "SHARE",
-    dm_message: text,
+    dm_message: collect?.prompt ?? text,
     status: succeeded ? "SENT" : "FAILED",
     post_id: event.mediaId ?? null,
     keyword: "SHARE",
     sequence_step: 1,
     variant: variant.index >= 0 ? `variant-${variant.index + 1}` : "default",
-    message_format: content.formatted.format,
+    message_format: collect ? "text" : content.formatted.format,
   });
+
+  // Share campaigns can capture leads with the same collect flow as comments.
+  if (succeeded && contactId && collect) {
+    await createPending({
+      workspaceId: auto.workspaceId,
+      kind: "collect",
+      automationId: auto.id,
+      instagramAccountId: account.id,
+      recipientId: event.senderId,
+      message: text,
+      buttonText: auto.buttonText,
+      buttonUrl: content.buttonUrl,
+      collectField: auto.collectField,
+      collectConfig: collect.config,
+    });
+    await recordLeadEvent({
+      workspaceId: auto.workspaceId,
+      automationId: auto.id,
+      contactId,
+      recipientId: event.senderId,
+      kind: "prompt",
+      field: auto.collectField,
+    });
+  }
 
   return { sent: succeeded, error: result?.error };
 }
@@ -3564,7 +3665,9 @@ export async function processWebhookPayload(
       // A reply to a lead-capture question is stored on the contact first.
       const { data: pendingRows } = await getAdminDb()
         .from("pending_dms")
-        .select("id, collect_field, collect_config, attempts, automation_id, rule_id")
+        .select(
+          "id, collect_field, collect_config, attempts, automation_id, rule_id, message, button_text, button_url"
+        )
         .eq("workspace_id", account.workspace_id)
         .eq("recipient_id", event.senderId)
         .eq("kind", "collect")
@@ -3579,6 +3682,9 @@ export async function processWebhookPayload(
             attempts: number | null;
             automation_id: string | null;
             rule_id: string | null;
+            message: string | null;
+            button_text: string | null;
+            button_url: string | null;
           }
         | undefined;
       if (pending?.collect_field) {
@@ -3586,11 +3692,16 @@ export async function processWebhookPayload(
         if (field) {
           const stored = (pending.collect_config ?? {}) as Record<string, unknown>;
           const config = normalizeCollectConfig({
+            question: stored.question as string | undefined,
             retryMessage: stored.retryMessage as string | undefined,
             skipMessage: stored.skipMessage as string | undefined,
             successMessage: stored.successMessage as string | undefined,
             skipKeywords: stored.skipKeywords as string[] | undefined,
             maxAttempts: stored.maxAttempts as number | undefined,
+            allowSkip: stored.allowSkip as boolean | undefined,
+            customProperty: stored.customProperty as
+              | { type: "options" | "yes_no" | "text"; options: string[] }
+              | undefined,
           });
           const attempts = Number(pending.attempts ?? 0);
 
@@ -3617,8 +3728,47 @@ export async function processWebhookPayload(
             }
           };
 
+          // The promise is stored on the pending row and released only after a
+          // valid reply, so the detail is collected before the reward.
+          const sendPromise = async () => {
+            if (!token || !pending.message) return;
+            const result =
+              pending.button_text && pending.button_url
+                ? await sendDirectMessageWithButton(
+                    token,
+                    event.instagramAccountId,
+                    event.senderId,
+                    pending.message,
+                    pending.button_text,
+                    pending.button_url
+                  )
+                : await sendDirectMessage(
+                    token,
+                    event.instagramAccountId,
+                    event.senderId,
+                    pending.message
+                  );
+            if (conversationId) {
+              await recordMessage({
+                workspaceId: account.workspace_id,
+                conversationId,
+                externalId: result?.message_id ?? null,
+                direction: "outbound",
+                senderType: "bot",
+                text: pending.message,
+                status: result?.error ? "failed" : "sent",
+              });
+            }
+          };
+
           // 1. Explicit skip.
-          if (isSkipKeyword(event.messageText, config.skipKeywords)) {
+          if (
+            isSkipKeyword(
+              event.messageText,
+              config.skipKeywords,
+              config.allowSkip
+            )
+          ) {
             await reply(config.skipMessage);
             await deletePending(pending.id);
             await recordLeadEvent({
@@ -3634,7 +3784,11 @@ export async function processWebhookPayload(
           }
 
           // 2. Validate.
-          const validation = validateLeadValue(field.kind, event.messageText);
+          const validation = validateLeadValue(
+            field.kind,
+            event.messageText,
+            config.customProperty
+          );
           if (!validation.valid) {
             const nextAttempts = attempts + 1;
             await recordLeadEvent({
@@ -3677,6 +3831,7 @@ export async function processWebhookPayload(
             value: validation.normalized,
           });
           await deletePending(pending.id);
+          await sendPromise();
           await reply(config.successMessage);
           await recordLeadEvent({
             workspaceId: account.workspace_id,

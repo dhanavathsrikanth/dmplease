@@ -2,16 +2,11 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { connection } from "next/server";
 import {
-  Zap,
-  TrendingUp,
   MessageCircle,
   Plus,
   ArrowRight,
-  CheckCircle2,
-  Clock,
-  Send,
-  Users,
   Activity,
+  LifeBuoy,
 } from "lucide-react";
 import { getCurrentProfile, getCurrentUser } from "@/lib/profile";
 import { getWorkspacePreferences } from "@/lib/workspace-preferences";
@@ -21,7 +16,11 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { GettingStarted } from "@/components/dashboard/getting-started";
+import { ShimmerButton } from "@/components/ui/shimmer-button";
+import { SetupAccordion } from "@/components/dashboard/setup-accordion";
+import { PlanCard } from "@/components/dashboard/plan-card";
+import { GrowthCard } from "@/components/dashboard/growth-card";
+import { RecentActivityCard } from "@/components/dashboard/recent-activity-card";
 
 export const metadata = {
   title: "Dashboard - dmplease",
@@ -29,7 +28,7 @@ export const metadata = {
 
 function DashboardSkeleton() {
   return (
-    <div className="space-y-6 animate-pulse">
+    <div className="space-y-6 animate-pulse motion-reduce:animate-none">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="space-y-2">
           <Skeleton className="h-8 w-64 rounded-xl" />
@@ -167,264 +166,190 @@ async function DashboardContent() {
       : null;
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-300 antialiased selection:bg-[#ffd02f] selection:text-[#1c1c1e]">
-      {/* ── Top Header & Greeting ── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-[#e0e2e8] dark:border-border/80">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-medium tracking-tight text-foreground flex items-center gap-2">
-            Workspace Overview
+    <div className="space-y-6 animate-in fade-in duration-300 antialiased selection:bg-brand selection:text-brand-foreground">
+      {/* ── Header ── */}
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="min-w-0">
+          <p className="font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+            Workspace
+          </p>
+          <h1 className="mt-1 text-balance text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+            Home
           </h1>
-          <p className="text-xs sm:text-sm text-[#555a6a] dark:text-muted-foreground mt-0.5">
-            Real-time comment-to-DM triggers and visual conversion performance for {firstName}.
+          <p className="mt-1 max-w-2xl text-pretty text-sm text-muted-foreground">
+            Welcome back, {firstName}. Here&apos;s what&apos;s happening with your
+            automations.
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5 shrink-0">
-          <Button asChild size="sm" variant="outline" className="rounded-full h-9 text-xs font-medium border-[#c7cad5] px-4">
-            <Link href="/dashboard/logs">
-              <Clock className="size-3.5 mr-1.5" />
-              Logs Explorer
+        <div className="flex shrink-0 items-center gap-2.5">
+          <Button
+            asChild
+            size="sm"
+            variant="outline"
+            className="h-9 rounded-full px-4 text-xs font-medium"
+          >
+            <Link href="/support">
+              <LifeBuoy className="mr-1.5 size-3.5" aria-hidden="true" />
+              Support
             </Link>
           </Button>
-          <Button asChild size="sm" className="rounded-full h-9 text-xs font-semibold bg-[#1c1c1e] hover:bg-[#2c2c34] text-white px-5 shadow-xs dark:bg-[#ffd02f] dark:text-[#1c1c1e] dark:hover:bg-[#fcb900]">
-            <Link href="/dashboard/campaigns/new">
-              <Plus className="size-3.5 mr-1.5" />
-              New Campaign
-            </Link>
-          </Button>
+          <ShimmerButton
+            href="/dashboard/campaigns/new"
+            className="h-9 px-5 text-xs"
+          >
+            <Plus className="size-3.5" aria-hidden="true" />
+            New Campaign
+          </ShimmerButton>
         </div>
-      </div>
-
-      {/* ── First-run guided setup ── */}
-      <GettingStarted
-        connected={Boolean(connectedUsername)}
-        campaignCount={allAutomations.length}
-        ruleCount={ruleCount}
-        dmCount={totalDmsSent}
-      />
-
-      {/* ── 4 Miro Pastel Hero Metric Cards with Liquid Glass ── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Metric 1: Yellow Tint */}
-        <Card className="rounded-2xl glass-card liquid-sheen border border-[#ffd02f]/30 bg-[#fff8e0]/40 dark:bg-[#746019]/10 shadow-subtle p-5 flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-[#746019] dark:text-[#ffd02f]">Total DMs Sent</span>
-            <div className="size-8 rounded-full bg-[#ffd02f] text-[#1c1c1e] flex items-center justify-center font-bold shadow-xs">
-              <Send className="size-4" />
-            </div>
-          </div>
-          <div className="mt-4">
-            <div className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground">
-              {totalDmsSent}
-            </div>
-            <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground mt-1 flex items-center gap-1 font-medium">
-              <TrendingUp className="size-3 inline" aria-hidden="true" />
-              <span>Since you connected</span>
-            </p>
-          </div>
-        </Card>
-
-        {/* Metric 2: Teal Tint */}
-        <Card className="rounded-2xl glass-card liquid-sheen border border-[#0fbcb0]/30 bg-[#c3faf5]/30 dark:bg-[#187574]/10 shadow-subtle p-5 flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-[#187574] dark:text-[#c3faf5]">Delivery Success</span>
-            <div className="size-8 rounded-full bg-[#0fbcb0] text-white flex items-center justify-center font-bold shadow-xs">
-              <CheckCircle2 className="size-4" />
-            </div>
-          </div>
-          <div className="mt-4">
-            <div className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground">
-              {deliveryRate === null ? "—" : `${deliveryRate}%`}
-            </div>
-            <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground mt-1 font-medium">
-              {deliverySampleCount > 0
-                ? `${deliveredCount} delivered of last ${deliverySampleCount}`
-                : "No deliveries measured yet"}
-            </p>
-          </div>
-        </Card>
-
-        {/* Metric 3: Rose Tint */}
-        <Card className="rounded-2xl glass-card liquid-sheen border border-[#ffd8f4]/40 bg-[#fde0f0]/30 dark:bg-[#7d2663]/10 shadow-subtle p-5 flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-[#7d2663] dark:text-[#ffd8f4]">Active Automations</span>
-            <div className="size-8 rounded-full bg-[#ffd8f4] text-[#7d2663] flex items-center justify-center font-bold shadow-xs">
-              <Zap className="size-4" />
-            </div>
-          </div>
-          <div className="mt-4">
-            <div className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground">
-              {allAutomations.filter((a) => a.active).length}
-            </div>
-            <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground mt-1">
-              Comment triggers armed
-            </p>
-          </div>
-        </Card>
-
-        {/* Metric 4: Coral Tint */}
-        <Card className="rounded-2xl glass-card liquid-sheen border border-[#ff9999]/30 bg-[#ffe6cd]/30 dark:bg-[#804000]/10 shadow-subtle p-5 flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-[#600000] dark:text-[#ffe6cd]">Unique Leads</span>
-            <div className="size-8 rounded-full bg-[#ff9999] text-[#600000] flex items-center justify-center font-bold shadow-xs">
-              <Users className="size-4" />
-            </div>
-          </div>
-          <div className="mt-4">
-            <div className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground">
-              {uniqueLeads}
-            </div>
-            <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground mt-1">
-              {deliverySampleCount > 0
-                ? `Distinct people in last ${deliverySampleCount} deliveries`
-                : "No leads recorded yet"}
-            </p>
-          </div>
-        </Card>
-      </div>
+      </header>
 
       {health.available && health.total > 0 && (
         <div
           role="status"
-          className="flex flex-wrap items-center gap-2 rounded-xl border border-[#e0e2e8] dark:border-border/80 bg-card px-4 py-2.5 text-[11px] text-[#555a6a] dark:text-muted-foreground"
+          className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-card px-4 py-2.5 text-[11px] text-muted-foreground"
         >
-          <Activity className="size-3.5 text-[#187574] dark:text-[#c3faf5]" aria-hidden="true" />
-          <span className="font-semibold text-foreground">Automation processing</span>
-          <span>{health.successRate ?? 0}% successful · {health.avgDurationMs ?? "—"} ms average · last 7 days</span>
+          <Activity
+            className="size-3.5 text-success-soft-foreground dark:text-success-soft"
+            aria-hidden="true"
+          />
+          <span className="font-semibold text-foreground">
+            Automation processing
+          </span>
+          <span>
+            {health.successRate ?? 0}% successful · {health.avgDurationMs ?? "—"}{" "}
+            ms average · last 7 days
+          </span>
         </div>
       )}
 
-      {/* ── Main Content Grid: Campaigns & Recent Activity ── */}
-      <div className="grid gap-6 lg:grid-cols-3">
-        {/* Column 1 & 2: Active Campaigns */}
-        <div className="lg:col-span-2 space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-xs font-bold tracking-wider text-[#6b6f7e] dark:text-[#9aa0ad] uppercase">
-                Active Comment Campaigns
-              </h2>
-              <p className="text-xs text-[#555a6a] dark:text-muted-foreground mt-0.5">
-                Automations actively listening for keyword comments
-              </p>
-            </div>
-            <Button asChild variant="ghost" size="sm" className="text-xs font-medium gap-1 rounded-full h-8 px-3">
-              <Link href="/dashboard/campaigns">
-                View all <ArrowRight className="size-3" />
-              </Link>
-            </Button>
-          </div>
-
-          <div className="space-y-3">
-            {allAutomations.length > 0 ? (
-              allAutomations.map((auto) => (
-                <div
-                  key={auto.id}
-                  className="p-5 rounded-2xl border border-[#e0e2e8] dark:border-border/80 bg-card hover:border-[#c7cad5] transition-all shadow-subtle space-y-3.5"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold text-sm text-foreground">
-                          {auto.name}
-                        </span>
-                        <Badge
-                          variant="tag-teal"
-                          className="text-[10px] py-0.5 px-2.5"
-                        >
-                          Active
-                        </Badge>
-                      </div>
-                      <p className="text-xs text-[#555a6a] dark:text-muted-foreground">
-                        Auto-replies when user comments specified keywords
-                      </p>
-                    </div>
-
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      {auto.triggerKeywords.map((kw, i) => (
-                        <span
-                          key={i}
-                          className="px-2.5 py-0.5 rounded-full bg-[#1c1c1e] text-white font-mono font-medium text-xs dark:bg-white dark:text-[#1c1c1e]"
-                        >
-                          {kw}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="p-3 rounded-xl bg-[#f7f8fa] dark:bg-muted/40 border border-[#e0e2e8] dark:border-border/60 text-xs text-foreground font-sans flex items-center justify-between gap-2">
-                    <span className="truncate">&ldquo;{auto.dmMessage}&rdquo;</span>
-                    <Badge variant="outline" className="shrink-0 text-[10px] font-medium rounded-full">
-                      Instagram DM
-                    </Badge>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <Card className="rounded-3xl border-dashed p-10 text-center space-y-4">
-                <div className="size-11 rounded-2xl bg-[#fff8e0] text-[#746019] flex items-center justify-center mx-auto shadow-xs">
-                  <MessageCircle className="size-5" />
-                </div>
-                <div>
-                  <p className="font-semibold text-base text-foreground">No campaigns created yet</p>
-                  <p className="text-xs text-[#555a6a] dark:text-muted-foreground max-w-sm mx-auto mt-1">
-                    Set up your first comment-to-DM automation to start converting followers automatically.
-                  </p>
-                </div>
-                <Button asChild size="sm" className="rounded-full font-semibold text-xs mt-2 bg-[#1c1c1e] hover:bg-[#2c2c34] text-white px-6 h-9">
-                  <Link href="/onboarding">Launch Setup Wizard</Link>
-                </Button>
-              </Card>
-            )}
-          </div>
+      {/* ── Zorcha-style two-column home ── */}
+      <div className="grid items-start gap-5 min-[1200px]:grid-cols-2">
+        <div className="flex min-w-0 flex-col gap-5">
+          <SetupAccordion
+            connected={Boolean(connectedUsername)}
+            campaignCount={allAutomations.length}
+            ruleCount={ruleCount}
+            dmCount={totalDmsSent}
+          />
+          <PlanCard
+            dmCount={totalDmsSent}
+            campaignCount={allAutomations.length}
+            contactCount={uniqueLeads}
+          />
         </div>
 
-        {/* Column 3: Live DM Delivery Activity (Miro Stream Style) */}
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xs font-bold tracking-wider text-[#6b6f7e] dark:text-[#9aa0ad] uppercase flex items-center gap-1.5">
-              <span className="size-2 rounded-full bg-[#00b473] animate-pulse" />
-              Live Ingestion Stream
-            </h2>
-            <Link href="/dashboard/logs" className="text-[11px] font-medium text-[#4262ff] dark:text-[#8fa6ff] hover:underline">
-              view all &rarr;
-            </Link>
-          </div>
-
-          <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border bg-card shadow-subtle p-4 space-y-2">
-            {recentLogs.length > 0 ? (
-              recentLogs.map((log) => (
-                <div
-                  key={log.id}
-                  className="flex items-center justify-between py-2.5 border-b border-[#e0e2e8]/60 dark:border-border/60 last:border-0 text-xs"
-                >
-                  <div className="space-y-0.5 truncate">
-                    <p className="font-semibold text-foreground truncate">{log.user}</p>
-                    <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground flex items-center gap-1">
-                      kw: <span className="text-[#1c1c1e] dark:text-foreground font-semibold px-1.5 py-0.2 rounded-full bg-[#fff8e0] dark:bg-[#746019]/40">{log.keyword}</span>
-                    </p>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <span className="inline-flex items-center gap-1 text-[10px] text-[#00b473] font-semibold">
-                      <CheckCircle2 className="size-3" /> {log.status}
-                    </span>
-                    <p className="text-[10px] font-mono text-[#6b6f7e] mt-0.5">{log.time}</p>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <div className="py-10 text-center space-y-2.5">
-                <div className="size-9 rounded-xl bg-[#f7f8fa] dark:bg-muted flex items-center justify-center mx-auto text-[#6b6f7e]">
-                  <Clock className="size-4" />
-                </div>
-                <p className="text-xs font-semibold text-foreground">Waiting for comments</p>
-                <p className="text-[11px] text-[#555a6a] dark:text-muted-foreground max-w-xs mx-auto">
-                  When someone comments on your connected account, real-time dispatch logs appear here.
-                </p>
-              </div>
-            )}
-          </Card>
+        <div className="flex min-w-0 flex-col gap-5">
+          <GrowthCard
+            conversionRate={deliveryRate}
+            sent={totalDmsSent}
+            delivered={deliveredCount}
+            leads={uniqueLeads}
+          />
+          <RecentActivityCard logs={recentLogs} />
         </div>
       </div>
+
+      {/* ── Active campaigns ── */}
+      <section className="space-y-4" aria-labelledby="campaigns-heading">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h2
+              id="campaigns-heading"
+              className="text-base font-semibold text-foreground"
+            >
+              Active campaigns
+            </h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Automations actively listening for keyword comments
+            </p>
+          </div>
+          <Button
+            asChild
+            variant="ghost"
+            size="sm"
+            className="h-8 shrink-0 gap-1 rounded-full px-3 text-xs font-medium"
+          >
+            <Link href="/dashboard/campaigns">
+              View all <ArrowRight className="size-3" aria-hidden="true" />
+            </Link>
+          </Button>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-2">
+          {allAutomations.length > 0 ? (
+            allAutomations.map((auto) => (
+              <Card
+                key={auto.id}
+                className="space-y-3.5 rounded-3xl p-5 transition-[border-color,box-shadow,transform] hover:-translate-y-0.5 hover:border-border-strong hover:shadow-card"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-sm font-semibold text-foreground">
+                        {auto.name}
+                      </span>
+                      <Badge
+                        variant="tag-teal"
+                        className="px-2.5 py-0.5 text-[10px]"
+                      >
+                        Active
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Auto-replies when a follower comments a keyword
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {auto.triggerKeywords.map((kw, i) => (
+                      <span
+                        key={i}
+                        className="rounded-full bg-primary px-2.5 py-0.5 font-mono text-xs font-medium text-primary-foreground"
+                      >
+                        {kw}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-2 rounded-xl border border-border bg-muted/40 p-3 text-xs text-foreground">
+                  <span className="truncate">
+                    &ldquo;{auto.dmMessage}&rdquo;
+                  </span>
+                  <Badge
+                    variant="outline"
+                    className="shrink-0 rounded-full text-[10px] font-medium"
+                  >
+                    Instagram DM
+                  </Badge>
+                </div>
+              </Card>
+            ))
+          ) : (
+            <Card className="rounded-3xl border-dashed p-10 text-center md:col-span-2">
+              <div className="mx-auto flex size-11 items-center justify-center rounded-2xl bg-brand-soft text-brand-soft-foreground shadow-xs">
+                <MessageCircle className="size-5" aria-hidden="true" />
+              </div>
+              <div className="mt-4">
+                <p className="text-base font-semibold text-foreground">
+                  No campaigns created yet
+                </p>
+                <p className="mx-auto mt-1 max-w-sm text-xs text-muted-foreground">
+                  Set up your first comment-to-DM automation to start converting
+                  followers automatically.
+                </p>
+              </div>
+              <ShimmerButton
+                href="/onboarding"
+                className="mt-4 h-9 px-6 text-xs"
+              >
+                Launch Setup Wizard
+              </ShimmerButton>
+            </Card>
+          )}
+        </div>
+      </section>
     </div>
   );
 }
