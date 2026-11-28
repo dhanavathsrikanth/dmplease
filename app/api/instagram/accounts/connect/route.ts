@@ -3,13 +3,11 @@ import { z } from "zod";
 
 import { getCurrentProfile, getCurrentUser } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
-import { prisma } from "@/lib/prisma";
 import { decryptToken, encryptToken } from "@/lib/meta/vault";
 import {
   fetchInstagramAccountsForToken,
   subscribeInstagramAccountToWebhooks,
 } from "@/lib/meta/client";
-import { hasDatabaseUrl } from "@/lib/config";
 
 interface PendingAccount {
   instagramBusinessId: string;
@@ -281,30 +279,6 @@ export async function POST(request: NextRequest) {
           { onConflict: "instagram_id" }
         );
       if (insertError) throw insertError;
-
-      if (hasDatabaseUrl()) {
-        try {
-          await prisma.instagramAccount.upsert({
-            where: { instagramId: account.instagramBusinessId },
-            create: {
-              workspaceId,
-              instagramId: account.instagramBusinessId,
-              username: account.username,
-              name: account.displayName || account.username,
-              accessToken: encryptedToken,
-              tokenExpiresAt: new Date(expiresAt),
-              webhookSubscribed,
-            },
-            update: {
-              workspaceId,
-              username: account.username,
-              webhookSubscribed,
-            },
-          });
-        } catch (error) {
-          console.warn("[connect] Prisma mirror failed:", error);
-        }
-      }
 
       connectedIds.add(account.instagramBusinessId);
       results.push({

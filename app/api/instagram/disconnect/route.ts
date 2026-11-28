@@ -2,10 +2,8 @@ import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { getCurrentUser } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
-import { prisma } from "@/lib/prisma";
 import { decryptToken } from "@/lib/meta/vault";
 import { unsubscribeInstagramAccountFromWebhooks } from "@/lib/meta/client";
-import { hasDatabaseUrl } from "@/lib/config";
 import { getAdminDb, hasAdminDb } from "@/lib/db-admin";
 
 export async function POST() {
@@ -88,24 +86,7 @@ export async function POST() {
       }
     }
 
-    // 5. Erase from Prisma database if direct connection is available
-    const hasDb = hasDatabaseUrl();
-
-    if (hasDb) {
-      try {
-        await prisma.instagramAccount.deleteMany({
-          where: {
-            workspace: {
-              ownerId: user.id,
-            },
-          },
-        });
-      } catch (e) {
-        console.warn("[Instagram Disconnect Prisma fallback]:", e);
-      }
-    }
-
-    // 6. Completely purge layout and settings page caches
+    // 5. Completely purge layout and settings page caches
     revalidatePath("/dashboard", "layout");
     revalidatePath("/dashboard/settings");
     revalidatePath("/dashboard/campaigns");

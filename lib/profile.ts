@@ -1,7 +1,5 @@
 import { cache } from "react";
 import { createClient } from "@/lib/supabase/server";
-import { prisma } from "@/lib/prisma";
-import { hasDatabaseUrl } from "@/lib/config";
 
 export interface AutomationData {
   id: string;
@@ -76,32 +74,9 @@ async function loadCurrentProfile(): Promise<UserProfileData | null> {
     return null;
   }
 
-  // Check if DATABASE_URL has a valid password configured
-  const hasDbPassword = hasDatabaseUrl();
-
-  if (hasDbPassword) {
-    try {
-      const profile = await prisma.profile.findUnique({
-        where: { id: user.id },
-        include: {
-          ownedWorkspaces: {
-            orderBy: { createdAt: "asc" },
-            include: {
-              automations: true,
-            },
-          },
-        },
-      });
-
-      if (profile) {
-        return profile as unknown as UserProfileData;
-      }
-    } catch {
-      // Fall through to Supabase client query
-    }
-  }
-
-  // Fallback: Query directly via Supabase Client with RLS
+  // Query directly via Supabase Client with RLS. This is the only data path:
+  // the Prisma mirror is not reachable from the deployment, and attempting it
+  // first stalled every dashboard render for ~10s before falling back here.
   const supabase = await createClient();
   const { data: profileData } = await supabase
     .from("profiles")
