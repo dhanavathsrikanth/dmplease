@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Check, Copy, ExternalLink, Loader2, RefreshCw, ShieldOff } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -28,8 +28,13 @@ export function ReportLinkSettings({
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // `window` is unavailable during the server render, so resolve the origin
+  // after mount. Rendering a relative path on both sides avoids a hydration
+  // mismatch when a report link already exists.
+  const [origin, setOrigin] = useState("");
+  useEffect(() => setOrigin(window.location.origin), []);
 
-  const url = link ? `${typeof window !== "undefined" ? window.location.origin : ""}/report/${link.token}` : "";
+  const url = link ? `${origin}/report/${link.token}` : "";
 
   const copy = async () => {
     if (!url) return;

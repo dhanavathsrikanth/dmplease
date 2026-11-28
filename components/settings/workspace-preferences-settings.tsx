@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Check, Loader2, Save } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -69,6 +69,23 @@ export function WorkspacePreferencesSettings({
   initialWeekStartsOn: number;
 }) {
   const timeZones = useMemo(listTimeZones, []);
+  // Offset labels come from the browser's Intl data, which can disagree with
+  // Node's for the same zone. Render the zone names during hydration and add
+  // the offsets after mount so the server and client markup match.
+  const [offsetsReady, setOffsetsReady] = useState(false);
+  useEffect(() => setOffsetsReady(true), []);
+  const zoneLabels = useMemo(
+    () =>
+      new Map(
+        timeZones.map((zone) => [
+          zone,
+          offsetsReady
+            ? `${zone.replace(/_/g, " ")} (${offsetLabel(zone)})`
+            : zone.replace(/_/g, " "),
+        ])
+      ),
+    [offsetsReady, timeZones]
+  );
   const [timezone, setTimezone] = useState(initialTimezone || DEFAULT_TIMEZONE);
   const [weekStartsOn, setWeekStartsOn] = useState(
     Number.isInteger(initialWeekStartsOn)
@@ -126,7 +143,7 @@ export function WorkspacePreferencesSettings({
           >
             {timeZones.map((zone) => (
               <option key={zone} value={zone}>
-                {zone.replace(/_/g, " ")} ({offsetLabel(zone)})
+                {zoneLabels.get(zone)}
               </option>
             ))}
           </select>
