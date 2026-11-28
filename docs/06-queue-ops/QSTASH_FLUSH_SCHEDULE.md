@@ -172,6 +172,7 @@ sub-daily jobs live in QStash. `vercel.json` keeps only daily/weekly crons.
 | Safety retention | Vercel cron | `0 4 * * *` | `/api/cron/safety-retention` |
 | Safety digest | Vercel cron | `0 9 * * 1` | `/api/cron/safety-digest` |
 | Follow-ups | QStash | `0 * * * *` | `/api/cron/followups` |
+| Webhook recovery | QStash | `0 * * * *` | `/api/cron/recover-webhooks` |
 | DM queue drain | QStash | `17 * * * *` | `/api/cron/drain-dm-queue` |
 | Link-click flush | QStash | `*/5 * * * *` | `/api/cron/flush-link-clicks` |
 | Metrics flush | QStash | `* * * * *` | `/api/cron/flush-metrics` |
