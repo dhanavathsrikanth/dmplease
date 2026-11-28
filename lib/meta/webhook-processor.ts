@@ -1,5 +1,6 @@
 import { getAdminDb, hasAdminDb } from "@/lib/db-admin";
 import { decryptToken } from "@/lib/meta/vault";
+import { claimDmSend, releaseDmSend } from "@/lib/dm-send-claim";
 import { captureServerEvent } from "@/lib/posthog-server";
 import {
   postPublicCommentReply,
@@ -48,9 +49,12 @@ import {
   fallbackAsRule,
   matchesRuleKeywords,
   normalizeFallbackReply,
+  pickDispatchableCandidate,
   selectInboundRule,
+  selectInboundRuleCandidates,
   type DispatchRule,
   type FallbackRow,
+  type RuleCandidate,
 } from "@/lib/dm-rules";
 
 // Kept exported for existing callers/tests; the implementation now lives in
@@ -138,7 +142,7 @@ export interface AutomationLike {
   id: string;
   workspaceId: string;
   name?: string | null;
-  triggerType?: "COMMENT" | "SHARE_TO_DM" | null;
+  triggerType?: string | null;
   triggerKeywords?: string[] | null;
   postScope?: string | null;
   postId?: string | null;
@@ -212,7 +216,10 @@ export function toAutomationLike(row: AutomationRow): AutomationLike {
     id: row.id,
     workspaceId: row.workspace_id,
     name: row.name,
-    triggerType: row.trigger_type === "SHARE_TO_DM" ? "SHARE_TO_DM" : "COMMENT",
+    // Preserve the real trigger type. Collapsing every non-share value to
+    // "COMMENT" would let a future trigger family (DM_KEYWORD, STORY_REPLY,
+    // …) slip through the comment dispatcher.
+    triggerType: row.trigger_type ?? "COMMENT",
     triggerKeywords: row.trigger_keywords ?? [],
     postScope: row.post_scope,
     postId: row.post_id,
@@ -380,7 +387,8 @@ export async function isOptedOut(
       .maybeSingle();
     return Boolean(data?.opted_out_at);
   } catch {
-    return false;
+    // Fail closed: if the opt-out state cannot be read, do not message.
+    return true;
   }
 }
 
@@ -388,21 +396,34 @@ export async function recordOptOut(
   workspaceId: string,
   recipientId: string,
   keyword: string
-): Promise<void> {
-  if (!hasAdminDb()) return;
+): Promise<boolean> {
+  if (!hasAdminDb()) return false;
   try {
-    await getAdminDb()
+    // Upsert, not update: a first-time story sender has no contacts row yet,
+    // and an update-only write would silently drop the opt-out.
+    const { error } = await getAdminDb()
       .from("contacts")
-      .update({ opted_out_at: nowIso(), opted_out_keyword: keyword, updated_at: nowIso() })
-      .eq("workspace_id", workspaceId)
-      .eq("instagram_id", recipientId);
+      .upsert(
+        {
+          workspace_id: workspaceId,
+          instagram_id: recipientId,
+          source: "opt_out",
+          opted_out_at: nowIso(),
+          opted_out_keyword: keyword,
+          updated_at: nowIso(),
+        },
+        { onConflict: "workspace_id,instagram_id" }
+      );
+    if (error) throw error;
     await recordSafety({
       workspaceId,
       recipientId,
       kind: "opt_out",
     });
+    return true;
   } catch (error) {
     console.warn("[opt-out] Could not record opt-out:", error);
+    return false;
   }
 }
 
@@ -526,7 +547,7 @@ async function getAccount(instagramId: string) {
     const { data, error } = await getAdminDb()
       .from("instagram_accounts")
       .select(
-        "id, workspace_id, access_token, fallback_reply_enabled, fallback_reply_message, fallback_reply_variants, fallback_once_per_days, fallback_follow_gate_enabled, fallback_opening_message, fallback_follow_gate_button_label, fallback_follow_gate_on_unavailable, fallback_button_text, fallback_button_url, fallback_short_links_enabled, fallback_link_rotator_id"
+        "id, workspace_id, access_token, token_status, fallback_reply_enabled, fallback_reply_message, fallback_reply_variants, fallback_once_per_days, fallback_follow_gate_enabled, fallback_opening_message, fallback_follow_gate_button_label, fallback_follow_gate_on_unavailable, fallback_button_text, fallback_button_url, fallback_short_links_enabled, fallback_link_rotator_id"
       )
       .eq("instagram_id", instagramId)
       .limit(1)
@@ -537,6 +558,7 @@ async function getAccount(instagramId: string) {
           id: data.id as string,
           workspace_id: data.workspace_id as string,
           access_token: (data.access_token as string | null) ?? null,
+          token_status: (data.token_status as string | null) ?? null,
           fallback: data as FallbackRow,
         }
       : null;
@@ -545,7 +567,7 @@ async function getAccount(instagramId: string) {
   }
 }
 
-async function getToken(instagramId: string, account: { access_token: string | null } | null): Promise<string | null> {
+async function getAccountToken(account: { access_token: string | null } | null): Promise<string | null> {
   if (account?.access_token) {
     try {
       return decryptToken(account.access_token);
@@ -553,7 +575,31 @@ async function getToken(instagramId: string, account: { access_token: string | n
       console.warn("[webhook] Could not decrypt account token:", error);
     }
   }
-  return process.env.INSTAGRAM_ACCESS_TOKEN ?? null;
+  // Fail closed. A process-wide fallback token would break the binding between
+  // the credential and the account it is used for.
+  return null;
+}
+
+/**
+ * Returns the account-bound token, or null. When the token is missing or
+ * undecryptable, marks the account for reconnection once so the creator sees
+ * it in Settings instead of silently losing automations.
+ */
+async function getToken(account: {
+  id: string;
+  workspace_id: string;
+  access_token: string | null;
+  token_status?: string | null;
+} | null): Promise<string | null> {
+  const token = await getAccountToken(account);
+  if (!token && account && account.token_status !== "invalid") {
+    await markTokenInvalid(
+      account.id,
+      account.workspace_id,
+      "No stored or decryptable access token"
+    );
+  }
+  return token;
 }
 
 export async function ensureContact(
@@ -904,15 +950,41 @@ async function createPending(input: {
   }
 }
 
-async function consumePending(id: string) {
+/**
+ * Atomically claims a pending row and returns it.
+ *
+ * The claim is a single `UPDATE … WHERE claimed_at IS NULL` so two concurrent
+ * postbacks cannot both release the same opt-in. Callers that keep the row
+ * (follow gate not yet satisfied, transient send failure) must call
+ * `releasePendingClaim` so the follower can try again.
+ */
+export async function consumePending(
+  id: string,
+  scope?: {
+    workspaceId?: string;
+    recipientId?: string;
+    kind?: string;
+    instagramAccountId?: string;
+  }
+) {
   if (!hasAdminDb()) return null;
   try {
-    const { data, error } = await getAdminDb()
+    let query = getAdminDb()
       .from("pending_dms")
-      .select("id, workspace_id, kind, automation_id, rule_id, instagram_account_id, recipient_id, comment_id, message, button_text, button_url, collect_field")
+      .update({ claimed_at: nowIso() })
       .eq("id", id)
-      .gt("expires_at", nowIso())
-      .limit(1)
+      .is("claimed_at", null)
+      .gt("expires_at", nowIso());
+    if (scope?.workspaceId) query = query.eq("workspace_id", scope.workspaceId);
+    if (scope?.recipientId) query = query.eq("recipient_id", scope.recipientId);
+    if (scope?.kind) query = query.eq("kind", scope.kind);
+    if (scope?.instagramAccountId) {
+      query = query.eq("instagram_account_id", scope.instagramAccountId);
+    }
+    const { data, error } = await query
+      .select(
+        "id, workspace_id, kind, automation_id, rule_id, instagram_account_id, recipient_id, comment_id, message, button_text, button_url, collect_field"
+      )
       .maybeSingle();
     if (error) throw error;
     if (!data) return null;
@@ -932,6 +1004,19 @@ async function consumePending(id: string) {
     };
   } catch {
     return null;
+  }
+}
+
+/** Releases a claim taken by `consumePending` so the row can be retried. */
+async function releasePendingClaim(id: string): Promise<void> {
+  if (!hasAdminDb()) return;
+  try {
+    await getAdminDb()
+      .from("pending_dms")
+      .update({ claimed_at: null })
+      .eq("id", id);
+  } catch {
+    // Best effort: a stuck claim only blocks a retry until the row expires.
   }
 }
 
@@ -1311,13 +1396,17 @@ async function recordFollowCheck(input: {
   }
 }
 
-async function countFollowChecksForPending(pendingId: string): Promise<number> {
+async function countFollowChecksForPending(
+  pendingId: string,
+  workspaceId: string
+): Promise<number> {
   if (!hasAdminDb()) return 0;
   try {
     const { count, error } = await getAdminDb()
       .from("follow_checks")
       .select("id", { count: "exact", head: true })
-      .eq("pending_id", pendingId);
+      .eq("pending_id", pendingId)
+      .eq("workspace_id", workspaceId);
     if (error) throw error;
     return count ?? 0;
   } catch {
@@ -1505,7 +1594,7 @@ async function sendOpeningDm(input: {
  * opening DM with an opt-in button, and verification outages follow the
  * creator's explicit hold/deliver policy (never a silent fail-open).
  */
-async function applyFollowGate(input: {
+export async function applyFollowGate(input: {
   workspaceId: string;
   accountDbId: string | null;
   accountId: string;
@@ -1670,7 +1759,7 @@ async function sendRuleOptinDm(input: {
   recipientId: string;
   rule: DmRule;
   message: string;
-}): Promise<{ sent: boolean; error?: MetaApiError }> {
+}): Promise<{ sent: boolean; skipped?: string; error?: MetaApiError }> {
   const { choice: variant, recent: variantRecent } = await chooseDmVariant(
     `rule:${input.rule.id}`,
     input.rule.variants,
@@ -1696,6 +1785,17 @@ async function sendRuleOptinDm(input: {
     recipientId: input.recipientId,
   });
   const text = content.text;
+
+  const claimed = await claimDmSend({
+    workspaceId: input.workspaceId,
+    automationId: input.rule.id,
+    instagramAccountId: input.accountDbId,
+    recipientId: input.recipientId,
+  });
+  if (!claimed) {
+    return { sent: false, skipped: "Send already in progress" };
+  }
+
   const result = await withRetry(
     () =>
       input.rule.button_text && content.buttonUrl
@@ -1709,6 +1809,13 @@ async function sendRuleOptinDm(input: {
     3
   );
   const sent = !result?.error;
+
+  if (!sent && !isTransientMetaError(result.error)) {
+    await releaseDmSend({
+      automationId: input.rule.id,
+      recipientId: input.recipientId,
+    });
+  }
 
   if (sent) {
     await recordDmVariant(`rule:${input.rule.id}`, variant, variantRecent);
@@ -1781,6 +1888,7 @@ async function loadPendingGateConfig(pending: {
       .from("dm_rules")
       .select("*")
       .eq("id", pending.rule_id)
+      .eq("workspace_id", pending.workspace_id)
       .maybeSingle();
     if (data) {
       rule = toDmRule(data as Partial<DmRule> & Record<string, unknown>);
@@ -1796,6 +1904,7 @@ async function loadPendingGateConfig(pending: {
       .from("automations")
       .select("opening_message, follow_gate_button_label, follow_gate_on_unavailable")
       .eq("id", pending.automation_id)
+      .eq("workspace_id", pending.workspace_id)
       .maybeSingle();
     if (data) {
       config = normalizeFollowGateConfig({
@@ -1832,7 +1941,7 @@ async function releasePendingOptin(input: {
   accountId: string;
   accountDbId: string;
   userId: string;
-}): Promise<{ sent: boolean; error?: MetaApiError }> {
+}): Promise<{ sent: boolean; skipped?: string; error?: MetaApiError }> {
   const { pending, rule } = input;
 
   if (rule) {
@@ -1852,6 +1961,7 @@ async function releasePendingOptin(input: {
       .from("automations")
       .select("id, workspace_id, dm_message, button_text, button_url, public_reply_enabled, public_reply_messages, hourly_cap, dm_variants, trigger_keywords")
       .eq("id", pending.automation_id)
+      .eq("workspace_id", pending.workspace_id)
       .maybeSingle();
     if (autoRow) {
       const auto = toAutomationLike(autoRow as AutomationRow);
@@ -1970,7 +2080,8 @@ interface FollowPromptRow {
 }
 
 async function getFollowPromptByPending(
-  pendingId: string
+  pendingId: string,
+  workspaceId: string
 ): Promise<FollowPromptRow | null> {
   if (!hasAdminDb()) return null;
   try {
@@ -1978,6 +2089,7 @@ async function getFollowPromptByPending(
       .from("follow_prompts")
       .select("*")
       .eq("pending_id", pendingId)
+      .eq("workspace_id", workspaceId)
       .limit(1)
       .maybeSingle();
     if (error) throw error;
@@ -1989,11 +2101,16 @@ async function getFollowPromptByPending(
 
 async function updateFollowPrompt(
   id: string,
+  workspaceId: string,
   patch: Partial<Pick<FollowPromptRow, "status" | "tapped_at" | "resolved_at" | "delivered_at">>
 ): Promise<void> {
   if (!hasAdminDb()) return;
   try {
-    await getAdminDb().from("follow_prompts").update(patch).eq("id", id);
+    await getAdminDb()
+      .from("follow_prompts")
+      .update(patch)
+      .eq("id", id)
+      .eq("workspace_id", workspaceId);
   } catch {
     // Analytics ledger is best-effort.
   }
@@ -2029,9 +2146,9 @@ async function resolveFollowPrompt(input: {
   const decision = decideFollowGateAction(hardGate, verification);
 
   if (decision === "ask") {
-    const checks = await countFollowChecksForPending(pending.id);
+    const checks = await countFollowChecksForPending(pending.id, prompt.workspace_id);
     const expired = checks >= FOLLOW_GATE_LIMITS.maxChecksPerPending;
-    await updateFollowPrompt(prompt.id, {
+    await updateFollowPrompt(prompt.id, prompt.workspace_id, {
       status: expired ? "expired" : verification.status,
       tapped_at: prompt.tapped_at ?? nowIso(),
       resolved_at: expired ? nowIso() : null,
@@ -2053,7 +2170,7 @@ async function resolveFollowPrompt(input: {
   }
 
   // Confirmed follower (or an explicit deliver policy).
-  await updateFollowPrompt(prompt.id, {
+  await updateFollowPrompt(prompt.id, prompt.workspace_id, {
     status: "follower",
     tapped_at: prompt.tapped_at ?? nowIso(),
     resolved_at: nowIso(),
@@ -2136,7 +2253,7 @@ async function resolveFollowPrompt(input: {
   }
 
   if (outcome.sent) {
-    await updateFollowPrompt(prompt.id, { delivered_at: nowIso() });
+    await updateFollowPrompt(prompt.id, prompt.workspace_id, { delivered_at: nowIso() });
     await deletePending(pending.id);
   }
   return outcome;
@@ -2237,7 +2354,7 @@ async function sendCommentDm(input: {
   accountDbId: string | null;
   event?: WebhookCommentEvent;
   attempts?: number;
-}): Promise<{ sent: boolean; error?: MetaApiError }> {
+}): Promise<{ sent: boolean; skipped?: string; error?: MetaApiError }> {
   const { auto } = input;
 
   // Account-level ceiling: Meta allows 750 private replies/hour per Instagram
@@ -2416,8 +2533,30 @@ async function sendCommentDm(input: {
       : sendPrivateReply(input.token, input.accountId, input.commentId, text);
   };
 
+  // Atomic send claim: two overlapping deliveries cannot both pass the
+  // read-before-send 24h guard. The first writer wins; the second skips.
+  const claimed = await claimDmSend({
+    workspaceId: input.workspaceId,
+    automationId: auto.id,
+    instagramAccountId: input.accountDbId,
+    recipientId: input.recipientId,
+  });
+  if (!claimed) {
+    return { sent: false, skipped: "Send already in progress" };
+  }
+
   const result = await withRetry(dispatch, 3);
   const succeeded = !result?.error;
+
+  // A definitive Meta rejection will never succeed on retry, so release the
+  // claim. A transient/network error keeps it for the TTL: the request may
+  // have reached Meta, and a duplicate private reply is worse than a delay.
+  if (!succeeded && !isTransientMetaError(result.error)) {
+    await releaseDmSend({
+      automationId: auto.id,
+      recipientId: input.recipientId,
+    });
+  }
 
   await recordSendOutcome({
     accountId: input.accountDbId ?? input.accountId,
@@ -2534,18 +2673,33 @@ export async function processCommentEventForAutomation(
   auto: AutomationLike,
   attempts = 0
 ): Promise<{ sent: boolean; skipped?: string; error?: MetaApiError }> {
+  // Defense in depth: only a COMMENT campaign may be dispatched from a comment
+  // event. This is an allow-list, not a deny-list, so a future trigger family
+  // cannot slip through the comment path.
+  if (auto.triggerType !== "COMMENT") {
+    return {
+      sent: false,
+      skipped: "Only comment campaigns can be dispatched from a comment event",
+    };
+  }
   if (!hasAdminDb()) return { sent: false, skipped: "Database unavailable" };
 
   const account = await getAccount(event.instagramAccountId);
   if (!account) return { sent: false, skipped: "Account not connected" };
-  const token = await getToken(event.instagramAccountId, account);
+  // The account row is the authoritative tenant binding. A campaign row that
+  // points at another workspace must never be dispatched through this account.
+  if (auto.workspaceId !== account.workspace_id) {
+    return { sent: false, skipped: "Campaign workspace mismatch" };
+  }
+  const workspaceId = account.workspace_id;
+  const token = await getToken(account);
   if (!token) return { sent: false, skipped: "No valid access token" };
 
   const latestMediaCache = new Map<string, Promise<string | null>>();
   const matchedKeyword = findMatchingKeyword(auto.triggerKeywords, event.commentText);
   if (matchedKeyword === null) return { sent: false, skipped: "No keyword match" };
 
-  if (await isOptedOut(auto.workspaceId, event.commenterId)) {
+  if (await isOptedOut(workspaceId, event.commenterId)) {
     return { sent: false, skipped: "Recipient opted out of automated DMs" };
   }
   if (!(await matchesPostScope(auto, event, token, latestMediaCache))) {
@@ -2583,7 +2737,7 @@ export async function processCommentEventForAutomation(
   if (alreadyReplied) return { sent: false, skipped: "Already replied to this person for this post (30-day)" };
 
   const contactId = await ensureContact(
-    auto.workspaceId,
+    workspaceId,
     event.commenterId,
     event.commenterName,
     "comment"
@@ -2591,7 +2745,7 @@ export async function processCommentEventForAutomation(
 
   if (auto.followGateEnabled) {
     const gate = await applyFollowGate({
-      workspaceId: auto.workspaceId,
+      workspaceId,
       accountDbId: account.id,
       accountId: event.instagramAccountId,
       token,
@@ -2623,7 +2777,7 @@ export async function processCommentEventForAutomation(
     token,
     accountId: event.instagramAccountId,
     commentId: event.commentId,
-    workspaceId: auto.workspaceId,
+    workspaceId,
     recipientId: event.commenterId,
     username: event.commenterName,
     auto,
@@ -2635,12 +2789,15 @@ export async function processCommentEventForAutomation(
   });
 
   if (dispatch.sent) return { sent: true };
+  if (dispatch.skipped) {
+    return { sent: false, skipped: dispatch.skipped, error: dispatch.error };
+  }
 
   const code = metaErrorCode(dispatch.error);
   if (code === 190) {
     await markTokenInvalid(
       account.id,
-      auto.workspaceId,
+      workspaceId,
       "Meta error 190: invalid OAuth access token"
     );
     return {
@@ -2671,7 +2828,7 @@ export async function processShareEventForAutomation(
 
   const account = await getAccount(event.instagramAccountId);
   if (!account) return { sent: false, skipped: "Account not connected" };
-  const token = await getToken(event.instagramAccountId, account);
+  const token = await getToken(account);
   if (!token) return { sent: false, skipped: "No valid access token" };
 
   if (await isOptedOut(auto.workspaceId, event.senderId)) {
@@ -2862,7 +3019,20 @@ async function processDirectRule(input: {
 
   // Opt-out handling takes priority over every rule, including keyword rules.
   if (isOptOutMessage(input.matchedText)) {
-    await recordOptOut(input.workspaceId, input.recipientId, String(input.matchedText ?? ""));
+    const recorded = await recordOptOut(
+      input.workspaceId,
+      input.recipientId,
+      String(input.matchedText ?? "")
+    );
+    if (!recorded) {
+      // Never tell someone they are unsubscribed unless the opt-out is
+      // durably stored. The next "stop" will retry the write.
+      console.error("[opt-out] Opt-out could not be persisted; skipping confirmation", {
+        workspaceId: input.workspaceId,
+        recipientId: input.recipientId,
+      });
+      return false;
+    }
     await withRetry(() =>
       sendDirectMessage(
         input.token,
@@ -3068,7 +3238,7 @@ export async function sendOptinDm(input: {
   contactId: string | null;
   postId?: string | null;
   keyword?: string;
-}): Promise<{ sent: boolean; error?: MetaApiError }> {
+}): Promise<{ sent: boolean; skipped?: string; error?: MetaApiError }> {
   const { choice: variant, recent: variantRecent } = await chooseDmVariant(
     `auto:${input.auto.id}`,
     input.auto.dmVariants,
@@ -3110,6 +3280,16 @@ export async function sendOptinDm(input: {
   });
   const text = content.text;
 
+  const claimed = await claimDmSend({
+    workspaceId: input.workspaceId,
+    automationId: input.auto.id,
+    instagramAccountId: input.accountDbId,
+    recipientId: input.recipientId,
+  });
+  if (!claimed) {
+    return { sent: false, skipped: "Send already in progress" };
+  }
+
   const response = await withRetry(
     () =>
       content.formatted.attachment
@@ -3123,6 +3303,13 @@ export async function sendOptinDm(input: {
     3
   );
   const sent = !response?.error;
+
+  if (!sent && !isTransientMetaError(response.error)) {
+    await releaseDmSend({
+      automationId: input.auto.id,
+      recipientId: input.recipientId,
+    });
+  }
 
   if (sent) {
     await recordDmVariant(`auto:${input.auto.id}`, variant, variantRecent);
@@ -3231,6 +3418,7 @@ export async function processWebhookPayload(
         .from("automations")
         .select("*")
         .eq("workspace_id", account.workspace_id)
+        .eq("trigger_type", "COMMENT")
         .eq("active", true);
       const automations = (automationRows ?? []).map((row) =>
         toAutomationLike(row as AutomationRow)
@@ -3288,7 +3476,7 @@ export async function processWebhookPayload(
     try {
       const account = await getAccount(event.instagramAccountId);
       if (!account) continue;
-      const token = await getToken(event.instagramAccountId, account);
+      const token = await getToken(account);
       const contactId = await ensureContact(account.workspace_id, event.senderId, undefined, "dm");
       const conversationId = contactId
         ? await ensureConversation(account.workspace_id, account.id, contactId)
@@ -3520,7 +3708,10 @@ export async function processWebhookPayload(
         const optin = optinRows?.[0] as PendingOptinDelivery | undefined;
         if (optin) {
           // A DM reply also grants consent, so it can confirm an in-chat prompt.
-          const inChatPrompt = await getFollowPromptByPending(optin.id);
+          const inChatPrompt = await getFollowPromptByPending(
+            optin.id,
+            optin.workspace_id
+          );
           if (inChatPrompt) {
             const verification = await verifyFollowership(
               token,
@@ -3573,7 +3764,10 @@ export async function processWebhookPayload(
           });
 
           if (decideFollowGateAction(config, verification) === "ask") {
-            const checks = await countFollowChecksForPending(optin.id);
+            const checks = await countFollowChecksForPending(
+              optin.id,
+              optin.workspace_id
+            );
             if (checks >= FOLLOW_GATE_LIMITS.maxChecksPerPending) {
               await deletePending(optin.id);
             }
@@ -3619,6 +3813,9 @@ export async function processWebhookPayload(
             await deletePending(optin.id);
             result.events.push({ kind: "message", accountId: event.instagramAccountId, outcome: "sent", detail: "Follow confirmed — DM delivered" });
             result.sent++;
+          } else if (released.skipped) {
+            result.events.push({ kind: "message", accountId: event.instagramAccountId, outcome: "skipped", detail: released.skipped });
+            result.skipped++;
           } else {
             result.errors.push(`Opt-in reply delivery failed: ${describeMetaError(released.error)}`);
             result.events.push({ kind: "message", accountId: event.instagramAccountId, outcome: "failed", detail: "Follow confirmed, delivery failed" });
@@ -3634,27 +3831,60 @@ export async function processWebhookPayload(
       // Deterministic selection: specific keywords always beat catch-alls,
       // priority breaks ties, and the account fallback runs only if nothing
       // matched. This makes "Respond to all DMs" predictable in production.
-      const selection = selectInboundRule(rules, event.messageText);
       const fallback = normalizeFallbackReply(account.fallback);
-      const chosen: DmRule | null =
-        selection.rule ??
-        (fallback.enabled && fallback.message
-          ? {
-              ...fallbackAsRule(fallback, account.id),
-              workspace_id: account.workspace_id,
-            }
-          : null);
+      const candidates: RuleCandidate<DmRule>[] = selectInboundRuleCandidates(
+        rules,
+        event.messageText
+      );
+      if (fallback.enabled && fallback.message) {
+        candidates.push({
+          rule: {
+            ...fallbackAsRule(fallback, account.id),
+            workspace_id: account.workspace_id,
+          },
+          matchedKeyword: null,
+          catchAll: false,
+        });
+      }
 
-      if (!chosen) {
+      // A rule throttled by `once_per_days` must not block a lower-priority
+      // rule or the catch-all. An opt-out blocks every rule.
+      const blocked = new Set<string>();
+      let optedOut = false;
+      if (candidates.length > 0) {
+        optedOut = await isOptedOut(account.workspace_id, event.senderId);
+        if (optedOut) {
+          for (const candidate of candidates) blocked.add(candidate.rule.id);
+        } else {
+          for (const candidate of candidates) {
+            const throttled = await recentlyMessaged(
+              account.workspace_id,
+              event.senderId,
+              candidate.rule.id,
+              candidate.rule.once_per_days
+            );
+            if (!throttled) break;
+            blocked.add(candidate.rule.id);
+          }
+        }
+      }
+
+      const selection = pickDispatchableCandidate(candidates, blocked);
+      if (!selection) {
         result.events.push({
           kind: "message",
           accountId: event.instagramAccountId,
           outcome: "ignored",
-          detail: "No matching DM rule and no fallback configured",
+          detail: optedOut
+            ? "Recipient opted out of automated DMs"
+            : candidates.length > 0
+              ? "All matching DM rules throttled"
+              : "No matching DM rule and no fallback configured",
         });
         continue;
       }
 
+      const chosen = selection.rule;
       const succeeded = await processDirectRule({
         workspaceId: account.workspace_id,
         accountId: event.instagramAccountId,
@@ -3669,7 +3899,7 @@ export async function processWebhookPayload(
         kind: "message",
         accountId: event.instagramAccountId,
         outcome: succeeded ? "sent" : "skipped",
-        detail: `${selection.catchAll ? "Catch-all: " : fallback.enabled && !selection.rule ? "Fallback: " : ""}${chosen.name}`,
+        detail: `${selection.catchAll ? "Catch-all: " : chosen.trigger_type === "FALLBACK" ? "Fallback: " : ""}${chosen.name}`,
       });
       if (succeeded) result.sent++;
       else result.skipped++;
@@ -3683,7 +3913,7 @@ export async function processWebhookPayload(
     try {
       const account = await getAccount(event.instagramAccountId);
       if (!account) continue;
-      const token = await getToken(event.instagramAccountId, account);
+      const token = await getToken(account);
       if (!token) continue;
 
       // Refresh Meta's 24-hour messaging window on any button tap. This is what
@@ -3725,7 +3955,12 @@ export async function processWebhookPayload(
       }
 
       if (action === "OPTIN" && value) {
-        const pending = await consumePending(value);
+        const pending = await consumePending(value, {
+          workspaceId: account.workspace_id,
+          recipientId: event.userId,
+          kind: "optin",
+          instagramAccountId: account.id,
+        });
         if (!pending) {
           result.events.push({ kind: "postback", accountId: event.instagramAccountId, outcome: "skipped", detail: "Opt-in link expired" });
           result.skipped++;
@@ -3733,7 +3968,10 @@ export async function processWebhookPayload(
         }
 
         // In-chat "Ask to follow" prompts have their own hard-gate resolver.
-        const inChatPrompt = await getFollowPromptByPending(value);
+        const inChatPrompt = await getFollowPromptByPending(
+          value,
+          pending.workspace_id
+        );
         if (inChatPrompt) {
           const verification = await verifyFollowership(
             token,
@@ -3753,10 +3991,14 @@ export async function processWebhookPayload(
             result.events.push({ kind: "postback", accountId: event.instagramAccountId, outcome: "sent", detail: "Follow confirmed — content delivered" });
             result.sent++;
           } else if (resolved.error) {
+            // Keep the row retryable after a transient delivery failure.
+            await releasePendingClaim(value);
             result.errors.push(`Follow prompt ${value} failed: ${describeMetaError(resolved.error)}`);
             result.events.push({ kind: "postback", accountId: event.instagramAccountId, outcome: "failed", detail: "Follow prompt delivery failed" });
             result.failed++;
           } else {
+            // Not a follower yet: release the claim so the next tap works.
+            await releasePendingClaim(value);
             result.events.push({ kind: "postback", accountId: event.instagramAccountId, outcome: "skipped", detail: resolved.skipped ?? "Follow not confirmed" });
             result.skipped++;
           }
@@ -3785,9 +4027,13 @@ export async function processWebhookPayload(
         });
 
         if (decideFollowGateAction(config, verification) === "ask") {
-          const checks = await countFollowChecksForPending(value);
+          const checks = await countFollowChecksForPending(
+            value,
+            pending.workspace_id
+          );
           const expired = checks >= FOLLOW_GATE_LIMITS.maxChecksPerPending;
           if (expired) await deletePending(value);
+          else await releasePendingClaim(value);
           await withRetry(
             () =>
               sendDirectMessage(
@@ -3833,9 +4079,15 @@ export async function processWebhookPayload(
           await deletePending(value);
           result.events.push({ kind: "postback", accountId: event.instagramAccountId, outcome: "sent", detail: "Follow confirmed — DM delivered" });
           result.sent++;
+        } else if (released.skipped) {
+          // The row is kept (e.g. hourly cap); let the follower retry.
+          await releasePendingClaim(value);
+          result.events.push({ kind: "postback", accountId: event.instagramAccountId, outcome: "skipped", detail: released.skipped });
+          result.skipped++;
         } else {
           // Keep the pending row so the follower can try again after a
           // transient failure instead of losing the lead permanently.
+          await releasePendingClaim(value);
           const code = metaErrorCode(released.error);
           if (code === 190) {
             await markTokenInvalid(
@@ -3923,7 +4175,7 @@ export async function processWebhookPayload(
       ).filter((rule) => rule.trigger_type === triggerTypes[0]);
       const selection = selectInboundRule(candidates, event.text ?? "");
       const chosen = selection.rule;
-      const token = await getToken(event.instagramAccountId, account);
+      const token = await getToken(account);
       if (!token) continue;
 
       if (!chosen) {
@@ -3978,7 +4230,7 @@ export async function processWebhookPayload(
           );
         });
       });
-      const token = await getToken(event.instagramAccountId, account);
+      const token = await getToken(account);
       if (!token) continue;
       if (rules.length === 0) {
         result.events.push({
@@ -4057,7 +4309,7 @@ export async function processWebhookPayload(
       const account = await getAccount(event.instagramAccountId);
       if (!account) continue;
       await persistShareEvent(account.workspace_id, account.id, event);
-      const token = await getToken(event.instagramAccountId, account);
+      const token = await getToken(account);
       if (!token) continue;
 
       // Campaign automations take priority over inbox rules so a creator who

@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { getCronSecret } from "@/lib/config";
+import { getAdminApiSecret } from "@/lib/config";
 import { getAdminDb, hasAdminDb } from "@/lib/db-admin";
 import { processWebhookPayload } from "@/lib/meta/webhook-processor";
 import { markWebhookFinished, markWebhookProcessing } from "@/lib/meta/webhook-events";
@@ -8,12 +8,13 @@ import { markWebhookFinished, markWebhookProcessing } from "@/lib/meta/webhook-e
 /**
  * Replays a stored webhook event through the real processor. Intended for
  * recovering events that failed because of a deploy-time bug. Protected by the
- * cron secret; payload shape is validated before processing.
+ * admin secret (not the cron secret); payload shape is validated before
+ * processing.
  */
 function authorized(request: NextRequest): boolean {
   const header = request.headers.get("authorization") || "";
   try {
-    const expected = `Bearer ${getCronSecret()}`;
+    const expected = `Bearer ${getAdminApiSecret()}`;
     const a = Buffer.from(header);
     const b = Buffer.from(expected);
     return a.length === b.length && timingSafeEqual(a, b);
@@ -55,7 +56,7 @@ export async function POST(request: NextRequest) {
   }
 
   const startedAt = Date.now();
-  await markWebhookProcessing(row.id);
+  await markWebhookProcessing(row.id, "replay");
   const result = await processWebhookPayload(payload);
   await markWebhookFinished(row.id, result, startedAt);
 

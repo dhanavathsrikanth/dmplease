@@ -6,7 +6,7 @@ import { getCurrentProfile, getCurrentUser } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
 import { DashboardShell } from "@/components/dashboard/dashboard-shell";
 import { WorkspaceItem } from "@/lib/workspace-context";
-import { isAdminEmail } from "@/lib/alerts/capacity";
+import { isVerifiedAdmin } from "@/lib/alerts/capacity";
 
 export default function DashboardLayout({
   children,
@@ -95,7 +95,7 @@ async function AuthenticatedDashboardShell({
       instagramUsername={instagramUsername}
       instagramAccountCount={instagramAccountCount}
       userEmail={user.email}
-      isAdmin={isAdminEmail(user.email)}
+      isAdmin={isVerifiedAdmin(user)}
     >
       {children}
     </DashboardShell>

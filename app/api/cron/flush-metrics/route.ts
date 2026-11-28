@@ -13,6 +13,11 @@ import {
 
 export const maxDuration = 60;
 
+// daily_creator_metrics.creator_id and target_id are UUID columns. A malformed
+// key must be skipped, not allowed to abort the whole flush batch.
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 interface AggregateRow {
   day: string;
   creatorId: string;
@@ -55,10 +60,20 @@ export async function POST(request: Request) {
     const values = (await resetPipeline.exec()) as Array<string | number | null>;
 
     const aggregated = new Map<string, AggregateRow>();
+    let skipped = 0;
     keys.forEach((key, index) => {
       const parsed = parseMetricKey(key);
       const delta = Number(values[index] ?? 0);
-      if (!parsed || !Number.isFinite(delta) || delta <= 0) return;
+      if (
+        !parsed ||
+        !UUID_RE.test(parsed.creatorId) ||
+        !UUID_RE.test(parsed.targetId) ||
+        !Number.isFinite(delta) ||
+        delta <= 0
+      ) {
+        skipped++;
+        return;
+      }
 
       const groupKey = `${parsed.day}:${parsed.creatorId}:${parsed.targetId}`;
       let row = aggregated.get(groupKey);
@@ -131,6 +146,7 @@ export async function POST(request: Request) {
       event: "daily_metrics_flushed",
       properties: {
         flushed_keys: keys.length,
+        skipped_keys: skipped,
         creator_rows: rows.length,
         bio_clicks: rows.reduce((sum, row) => sum + row.bioClicks, 0),
         dms_sent: rows.reduce((sum, row) => sum + row.dmSent, 0),
@@ -142,6 +158,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       flushedKeys: keys.length,
+      skippedKeys: skipped,
       upsertedRows: rows.length,
       status: "ok",
     });

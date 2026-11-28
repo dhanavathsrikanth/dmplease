@@ -2,6 +2,8 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import { validateCampaign } from "@/lib/validation/campaign";
+import { validateAutomationInput } from "@/lib/meta/safety";
 
 export interface OnboardingPayload {
   fullName: string;
@@ -25,6 +27,50 @@ export async function submitOnboarding(payload: OnboardingPayload) {
 
   if (authError || !user) {
     return { success: false, error: "Not authenticated" };
+  }
+
+  // Screen the first automation before any writes. A whitespace-only keyword
+  // would otherwise be stored as [''] and match every comment.
+  const triggerKeyword = payload.triggerKeyword?.trim() ?? "";
+  if (!triggerKeyword) {
+    return {
+      success: false,
+      error: "Add a trigger keyword so we know which comments to reply to.",
+    };
+  }
+
+  let automationName = "My First Automation";
+  if (payload.primaryGoal === "lead_magnet") automationName = "Freebie / Lead Magnet Delivery";
+  if (payload.primaryGoal === "discount") automationName = "Flash Sale / VIP Discount";
+  if (payload.primaryGoal === "booking") automationName = "Book a Discovery Call";
+  if (payload.primaryGoal === "custom") automationName = "Custom Keyword Auto-Reply";
+
+  const candidate = {
+    name: automationName,
+    goal: payload.primaryGoal,
+    postScope: "ANY_POST" as const,
+    triggerKeywords: [payload.triggerKeyword],
+    dmMessage: payload.dmMessage,
+    hourlyCap: 30,
+  };
+
+  const validation = validateCampaign(candidate);
+  if (!validation.success || !validation.data) {
+    return { success: false, error: validation.error };
+  }
+  const values = validation.data;
+
+  // Same pre-launch safety screening as createCampaign: loops, duplicate
+  // keywords, too many links and spam patterns.
+  const safetyIssues = validateAutomationInput({
+    name: candidate.name,
+    message: candidate.dmMessage,
+    keywords: candidate.triggerKeywords,
+    buttonUrl: null,
+    variants: [],
+  });
+  if (safetyIssues.length > 0) {
+    return { success: false, error: safetyIssues[0].message };
   }
 
   try {
@@ -74,21 +120,22 @@ export async function submitOnboarding(payload: OnboardingPayload) {
     }
 
     // 3. Create their first Automation based on their selected preset
-    if (workspaceId && payload.triggerKeyword && payload.dmMessage) {
-      let automationName = "My First Automation";
-      if (payload.primaryGoal === "lead_magnet") automationName = "Freebie / Lead Magnet Delivery";
-      if (payload.primaryGoal === "discount") automationName = "Flash Sale / VIP Discount";
-      if (payload.primaryGoal === "booking") automationName = "Book a Discovery Call";
-      if (payload.primaryGoal === "custom") automationName = "Custom Keyword Auto-Reply";
-
-      await supabase.from("automations").insert({
+    if (workspaceId) {
+      const { error: automationError } = await supabase.from("automations").insert({
         workspace_id: workspaceId,
-        name: automationName,
-        goal: payload.primaryGoal,
-        trigger_keywords: [payload.triggerKeyword.toUpperCase().trim()],
-        dm_message: payload.dmMessage,
+        name: values.name,
+        goal: values.goal || "custom",
+        post_scope: "ANY_POST",
+        trigger_keywords: values.triggerKeywords,
+        dm_message: values.dmMessage,
+        hourly_cap: 30,
         active: true,
       });
+
+      if (automationError) {
+        console.error("Automation insert error:", automationError);
+        return { success: false, error: "Could not create your first automation" };
+      }
     }
 
     revalidatePath("/", "layout");

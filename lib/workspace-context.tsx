@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState } from "react";
 import { useRouter } from "next/navigation";
+import { workspaceCookie } from "@/lib/workspace-cookie";
 
 export interface WorkspaceItem {
   id: string;
@@ -44,7 +45,9 @@ export function WorkspaceProvider({
   const switchWorkspace = (workspaceId: string) => {
     setCurrentId(workspaceId);
     if (typeof document !== "undefined") {
-      document.cookie = `active_workspace_id=${workspaceId}; path=/; max-age=31536000; SameSite=Lax`;
+      const secure =
+        typeof window !== "undefined" && window.location.protocol === "https:";
+      document.cookie = workspaceCookie(workspaceId, secure);
     }
     router.refresh();
   };

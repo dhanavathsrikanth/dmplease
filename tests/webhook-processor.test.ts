@@ -25,6 +25,7 @@ import {
   linkForMessage,
   formatDmText,
   withRetry,
+  processCommentEventForAutomation,
 } from "@/lib/meta/webhook-processor";
 import { clearReelLinkCache } from "@/lib/meta/reel-link-resolver";
 
@@ -183,5 +184,43 @@ describe("retry policy", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("comment automation trigger scoping", () => {
+  const commentEvent = {
+    instagramAccountId: "ig-1",
+    commentId: "c-1",
+    commentText: "nice post",
+    commenterId: "u-1",
+    mediaId: "m-1",
+  };
+
+  it("refuses to dispatch a SHARE_TO_DM campaign from a comment event", async () => {
+    const result = await processCommentEventForAutomation(commentEvent, {
+      id: "a-1",
+      workspaceId: "ws-1",
+      name: "Share campaign",
+      triggerType: "SHARE_TO_DM",
+      triggerKeywords: [],
+      dmMessage: "Thanks for sharing!",
+    });
+
+    expect(result.sent).toBe(false);
+    expect(result.skipped).toMatch(/only comment campaigns/i);
+  });
+
+  it("refuses any future non-COMMENT trigger family", async () => {
+    const result = await processCommentEventForAutomation(commentEvent, {
+      id: "a-2",
+      workspaceId: "ws-1",
+      name: "DM keyword rule",
+      triggerType: "DM_KEYWORD",
+      triggerKeywords: [],
+      dmMessage: "Hello",
+    });
+
+    expect(result.sent).toBe(false);
+    expect(result.skipped).toMatch(/only comment campaigns/i);
   });
 });

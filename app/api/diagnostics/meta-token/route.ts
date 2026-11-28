@@ -1,17 +1,36 @@
 import { timingSafeEqual } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { getCronSecret } from "@/lib/config";
+import { getAdminApiSecret } from "@/lib/config";
 import { getAdminDb, hasAdminDb } from "@/lib/db-admin";
 import { decryptToken } from "@/lib/meta/vault";
+import { getRateLimiterFor } from "@/lib/upstash";
 
 /**
  * Sanitized Meta token diagnostics. Never returns token values — only booleans,
  * scopes, error codes and counts — so it is safe to call from logs/support.
+ *
+ * This route fans out to the Meta Graph API, so it is gated on the dedicated
+ * admin secret (never the shared cron secret) and rate limited per hour. Pass
+ * `?accountId=<uuid>` to probe a single account instead of the default batch.
  */
+
+/** Maximum accounts probed in one call when no accountId is supplied. */
+const ACCOUNT_CAP = 3;
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function json(body: unknown, status = 200) {
+  return NextResponse.json(body, {
+    status,
+    headers: { "Cache-Control": "no-store" },
+  });
+}
+
 function authorized(request: NextRequest): boolean {
   const header = request.headers.get("authorization") || "";
   try {
-    const expected = `Bearer ${getCronSecret()}`;
+    const expected = `Bearer ${getAdminApiSecret()}`;
     const a = Buffer.from(header);
     const b = Buffer.from(expected);
     return a.length === b.length && timingSafeEqual(a, b);
@@ -47,18 +66,65 @@ async function probe(url: string) {
 
 export async function GET(request: NextRequest) {
   if (!authorized(request)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  if (!hasAdminDb()) {
-    return NextResponse.json({ error: "Admin DB unavailable" }, { status: 503 });
+    return json({ error: "Unauthorized" }, 401);
   }
 
-  const { data: rows } = await getAdminDb()
-    .from("instagram_accounts")
-    .select("instagram_id, username, access_token, token_status")
-    .limit(5);
+  // A leaked admin secret must not become an amplifier against the Meta app
+  // quota. Two calls per hour is enough for support work.
+  try {
+    const limiter = getRateLimiterFor("diagnostics:meta-token", 2);
+    const limit = await limiter.limit("meta-token");
+    if (!limit.success) {
+      return json(
+        { error: "Rate limited", retryAfterMs: limit.reset - Date.now() },
+        429
+      );
+    }
+  } catch (error) {
+    // Fail open: a limiter outage must not hide diagnostics. The failure is
+    // logged so a missing Upstash configuration is still visible in the logs.
+    console.warn(
+      "[diagnostics/meta-token] rate limiter unavailable",
+      error instanceof Error ? error.message : error
+    );
+  }
+
+  if (!hasAdminDb()) {
+    return json({ error: "Admin DB unavailable" }, 503);
+  }
+
+  const accountId = request.nextUrl.searchParams.get("accountId")?.trim() || null;
+  if (accountId && !UUID_RE.test(accountId)) {
+    return json({ error: "accountId must be a UUID" }, 400);
+  }
+
+  const db = getAdminDb();
+  const columns = "instagram_id, username, access_token, token_status";
+  let rows: Array<{
+    instagram_id: string;
+    username: string | null;
+    access_token: string;
+    token_status: string | null;
+  }> | null = null;
+
+  if (accountId) {
+    // Targeted probe: exactly one row, scoped by primary key.
+    const { data } = await db
+      .from("instagram_accounts")
+      .select(columns)
+      .eq("id", accountId)
+      .limit(1);
+    rows = data;
+  } else {
+    const { data } = await db
+      .from("instagram_accounts")
+      .select(columns)
+      .limit(ACCOUNT_CAP);
+    rows = data;
+  }
+
   if (!rows?.length) {
-    return NextResponse.json({ accounts: [] });
+    return json({ accounts: [] });
   }
 
   const appToken = `${process.env.META_APP_ID}|${process.env.META_APP_SECRET}`;
@@ -125,10 +191,6 @@ export async function GET(request: NextRequest) {
       username: row.username,
       instagram_id: row.instagram_id,
       token_status: row.token_status,
-      token_meta: {
-        length: token.length,
-        whitespace: (token.match(/\s/g) || []).length,
-      },
       debug_token: {
         ok: debug.ok,
         error: debug.error,
@@ -199,7 +261,7 @@ export async function GET(request: NextRequest) {
     }
   };
 
-  return NextResponse.json({
+  return json({
     env_urls: {
       NEXT_PUBLIC_SITE_URL: urlCheck(process.env.NEXT_PUBLIC_SITE_URL),
       APP_URL: urlCheck(process.env.APP_URL),

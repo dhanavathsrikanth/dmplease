@@ -2,7 +2,7 @@
 
 > **Purpose:** everything in this file is a **human action in a dashboard or console**. Code, database migrations and tests are already merged and deployed. Keep this file open during the launch review and tick each box.
 >
-> **Last security review:** 2026-11-27. The database hardening in `supabase/migrations/20261127_security_hardening.sql` has been applied to production (cross-tenant metrics view locked down, anonymous RPC execution revoked). See §9 for the verification record.
+> **Last security review:** 2026-11-28. The 2026-11-27 hardening (`20261127_security_hardening.sql`) and the 2026-11-28 hardening (rerun, cron locks, QStash replay, pending-DM queue, webhook claim lease) are applied to production. See §2.4 and §9 for the verification record.
 
 ---
 
@@ -70,20 +70,44 @@
   - Cloudflare Turnstile requires a domain name when creating the widget. Until you have one, **keep CAPTCHA disabled** in Supabase (Authentication → Attack Protection → CAPTCHA). The forms render no widget when `NEXT_PUBLIC_TURNSTILE_SITE_KEY` is unset, so sign-up/login continue to work.
   - When the domain is ready, follow the ordered steps in **§10**.
 - [ ] **Auth rate limits:** Supabase Dashboard → **Authentication → Rate Limits**. Keep the defaults or tighten them. The app also has a per-IP Upstash guard at `/api/auth/guard` (signup 10/h, login 30/h, reset 5/h, magic-link 10/h, password-change 10/h) as defense-in-depth.
-- [ ] **Require current password when changing password:** Supabase Dashboard → **Authentication → Policies**. The Settings page now has a **Password** card that sends `current_password` with the update.
-  - **Test the password-reset flow after enabling this.** If Supabase also requires the current password on recovery sessions, keep the setting off and rely on the Settings card instead.
+- [x] **Require current password when changing password:** Supabase Dashboard → **Authentication → Policies**. **Enabled.** Supabase intentionally exempts password-recovery sessions from this check (`auth.email.require_current_password`: "A password recovery flow skips this check"), so the reset flow still works. The Settings → Password card also verifies the current password server-side (`app/dashboard/settings/password-actions.ts`) and sends `current_password` with the update, so the control is enforced by both layers.
+  - The recovery page is gated separately by a short-lived, signed recovery grant issued only by `/auth/confirm` after a recovery email exchange (`lib/auth/recovery-grant.ts`). A normal authenticated session cannot use `/auth/update-password`.
+  - If a reset ever fails with a "current password required" error, confirm the session came from a true recovery exchange (`type=recovery` or a recovery PKCE code) and that the Supabase Auth version still exempts recovery sessions. The app maps that error to a support message rather than exposing the raw GoTrue text.
 - [ ] **OTP expiry:** set to **3600 seconds (1 hour) or lower**.
 - [ ] **Custom SMTP (recommended):** configure your own sender so confirmation and reset emails come from your domain and are not limited by the Free-tier shared email quota.
 - [ ] **Leaked Password Protection:** available on **Pro and above** only. On Free, the app-level policy + CAPTCHA + rate limits are the compensating controls. If you upgrade, enable it and verify `auth_leaked_password_protection` disappears from **Advisors → Security**.
 
 ### 2.2 Migrations
 
-- [x] Production migrations applied (48 migrations, latest `remove_auto_confirm_20261127`).
+- [x] Production migrations applied (57 migrations, latest `qstash_replay_20261128`).
 - [x] Security hardening applied: `20261127_security_hardening.sql`.
 - [x] Auto-confirm bypass removed: `20261127_remove_auto_confirm.sql`.
+- [x] 2026-11-28 hardening applied: `pending_dms_workspace_guard`, `rerun_claim_timestamp`, `webhook_events_retention_index`, `webhook_dedupe_analytics`, `webhook_claim_lease`, `pending_dms_queue_hardening`, `rerun_hardening`, `cron_locks`, `qstash_replay`.
 - [ ] Re-run **all** migrations against any staging/secondary Supabase project before promoting it.
 - [ ] Confirm `dm_rules.trigger_type` accepts `MESSAGE_REACTION` and RLS policies exist for `follow_checks` / `follow_prompts`.
 - [ ] Apply RLS to any new table added after this checklist was written.
+
+### 2.4 2026-11-28 hardening migrations (applied to production)
+
+| Ledger version | Migration | What it added |
+|---|---|---|
+| `20261127194206` | `pending_dms_workspace_guard_20261127` | `enforce_pending_dms_workspace` trigger |
+| `20261127194208` | `rerun_claim_timestamp_20261127` | `rerun_job_items.claimed_at` + index |
+| `20261127194210` | `webhook_events_retention_index_20261127` | account + received-at indexes |
+| `20261127194216` | `webhook_dedupe_analytics_20261128` | webhook analytics columns, `webhook_health`, `dm_send_claims` |
+| `20261127194221` | `webhook_claim_lease_20261128` | `lease_expires_at`, `claim_webhook_payload` |
+| `20261127194225` | `pending_dms_queue_hardening_20261128` | `enqueue_queued_dm`, account guard, queue check constraint |
+| `20261127194228` | `rerun_hardening_20261128` | `is_workspace_owner`, owner-only policy, workspace trigger |
+| `20261127194230` | `cron_locks_20261128` | `cron_locks`, `acquire_cron_lock` / `release_cron_lock` |
+| `20261127194232` | `qstash_replay_20261128` | `qstash_replay_guard`, `claim_qstash_signature` |
+| `20261127195817` | `reference_binding_20261128` | workspace-binding triggers for `followup_steps`, `dm_logs`, `conversations`, `messages` |
+| `20261127204525` | `conversion_token_version_20261128` | `workspaces.conversion_token_version` for token rotation |
+| `20261127204533` | `workspace_members_insert_20261128` | owner-only INSERT policy on `workspace_members` |
+| `20261127204537` | `oauth_state_nonces_20261128` | single-use OAuth state nonces |
+| `20261127211004` | `pending_dms_claim_20261128` | `pending_dms.claimed_at` atomic claim marker |
+
+`pending_dms_queued_requires_automation` was validated after confirming **0**
+legacy queued rows had a null `automation_id` (`convalidated = true`).
 
 ### 2.3 Verify the security fix (read-only)
 
@@ -113,6 +137,14 @@ curl -i -X POST "https://<project>.supabase.co/rest/v1/rpc/increment_daily_metri
 
 `META_APP_ID`, `META_APP_SECRET`, `META_VERIFY_TOKEN`, `META_CONFIG_ID`, `TOKEN_VAULT_SECRET`, `CRON_SECRET`, `DATABASE_URL`, `DIRECT_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`, `QSTASH_TOKEN`, `QSTASH_CURRENT_SIGNING_KEY`, `QSTASH_NEXT_SIGNING_KEY`, `QSTASH_WORKER_URL`, `QSTASH_URL`, `NEXT_PUBLIC_SITE_URL`, `APP_URL`, `ADMIN_ALERT_EMAILS`, `NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN`, `NEXT_PUBLIC_POSTHOG_HOST`.
 
+### 3.1.1 Required before deploying the 2026-11-28 admin-secret change
+
+- [ ] **`ADMIN_API_SECRET`** — set in **Vercel → Project Settings → Environment Variables** for Production (and Preview if you use admin endpoints there). It must be a **different value from `CRON_SECRET`**.
+  - `deliver-guide`, `webhook-replay`, `dlq`, `sync-profile`, and `followup-schedule` now require this secret.
+  - Production fails closed (401) on those endpoints when it is missing.
+  - Scheduled crons (`/api/cron/*`, `/api/admin/alerts/check`) keep using `CRON_SECRET`.
+  - Any operator script or dashboard that calls the admin endpoints with the cron bearer must switch to `ADMIN_API_SECRET`.
+
 ### 3.2 Missing — add only if you are selling the feature
 
 - [ ] **Cloudflare R2 (rich DM attachments: audio, PDF, image, video).** Without these, `/api/assets/sign` returns `503` and the UI reports `configured:false`.
@@ -139,9 +171,43 @@ curl -i -X POST "https://<project>.supabase.co/rest/v1/rpc/increment_daily_metri
 
 - [ ] `/api/health` returns **ready** in production (it checks the nine critical env vars).
 - [ ] The latest production deployment is **Ready** and points at the current `main` commit.
-- [ ] Vercel crons are enabled: `/api/cron/refresh-tokens`, `/api/cron/insights`, `/api/admin/alerts/check`, `/api/cron/safety-retention`, `/api/cron/safety-digest`.
+- [ ] Vercel crons are enabled: `/api/cron/refresh-tokens`, `/api/cron/insights`, `/api/admin/alerts/check`, `/api/cron/safety-retention`, `/api/cron/safety-digest`, `/api/cron/recover-webhooks`.
 
 > Note: `/api/health` does **not** check R2, Resend or PostHog source maps. A green health check does not mean those features are configured.
+
+### 3.4 Meta egress and logging
+
+- [ ] **Allow POST to `graph.facebook.com`.** The OAuth code exchange and long-lived token exchange now send `client_secret` in a POST body. An egress proxy/WAF that only allows GET will break Facebook login and token refresh.
+- [ ] **Disable or redact request logging for `graph.instagram.com`.** Meta's Instagram long-lived token endpoint only accepts GET with `client_secret` in the query string. Ensure proxy, CDN, APM and platform request logs do not capture that URL.
+- [ ] **Run the webhook re-subscribe backfill after deploy:**
+  ```bash
+  curl -X POST "https://<your-domain>/api/admin/resubscribe-webhooks" \
+    -H "Authorization: Bearer <ADMIN_API_SECRET>" \
+    -H "Content-Type: application/json" \
+    -d '{"limit": 50}'
+  ```
+  Repeat until `scanned` is 0. This corrects any `webhook_subscribed = true` rows written before the connect route stored the real Meta result.
+
+### 3.5 OAuth origin and vault rotation
+
+- [ ] **Set `APP_URL` or `NEXT_PUBLIC_SITE_URL` to the exact public origin registered in the Meta app's Valid OAuth Redirect URIs.** The callback and connect routes no longer derive the origin from `x-forwarded-host`/`x-forwarded-proto`; without a configured origin, OAuth fails closed with an `/auth/error` redirect. The registered redirect URI must be `<origin>/api/auth/meta/callback`.
+- [ ] **Set a dedicated `OAUTH_STATE_SECRET` in production**, different from `TOKEN_VAULT_SECRET`. The app now fails closed without it; the vault key is no longer accepted as the OAuth-state HMAC key.
+- [ ] **If any tokens were encrypted under the old hardcoded vault key**, set `TOKEN_VAULT_LEGACY_SECRET` to that old key so the refresh cron can decrypt and re-encrypt them. Remove `TOKEN_VAULT_LEGACY_SECRET` once the refresh cron reports no remaining legacy rows. There is no hardcoded fallback in any environment.
+- [ ] **Legacy plaintext tokens are rejected by `decryptToken`.** The refresh cron still migrates `EAA…`/`IG…` plaintext rows through `readStoredTokenForMigration`; any non-cron caller now requires a vault ciphertext.
+
+### 3.6 Conversion token rotation
+
+- [ ] **Existing conversion tokens are invalidated by this deploy.** The signing key is now purpose-derived and `workspaces.conversion_token_version` defaults to 1, while old tokens parse as version 0. Owners must copy the new token from **Settings → Conversion token** and update their checkout/pixel.
+- [ ] **Use the "Rotate token" button** in Settings to revoke a leaked token immediately; it increments `conversion_token_version`, and the ingest route rejects every token with an older version.
+- [ ] **Conversion tokens now expire after one year.** Rotate before expiry or the checkout will start receiving 401s.
+
+### 3.7 Webhook, auth, and diagnostics hardening
+
+- [ ] **`META_APP_SECRET` must be the secret of the app that owns the webhook subscription.** Webhook verification now accepts at most one secret; the `INSTAGRAM_APP_SECRET`/`FACEBOOK_APP_SECRET` aliases are used only when `META_APP_SECRET` is unset.
+- [ ] **Turnstile and Supabase CAPTCHA must agree.** If `NEXT_PUBLIC_TURNSTILE_SITE_KEY` is set, configure the matching secret in Supabase → Authentication → Attack Protection → CAPTCHA. If it is unset, disable Supabase CAPTCHA for that environment.
+- [ ] **Password changes revoke other sessions.** The change-password action calls `signOut({ scope: "others" })`; confirm Supabase's reauthentication setting is enabled as the authoritative layer.
+- [ ] **Diagnostics configuration checks are admin-only.** Non-admins see operational checks plus a "Managed by admin" card; the Meta latency probe is cached for 5 minutes.
+- [ ] **The click buffer is capped at 10,000 entries** and `safety_events` retention is 90 days, matching the architecture doc.
 
 ---
 
@@ -219,11 +285,21 @@ Run these against the live deployment, in order:
 | Password minimum was 6 characters | Medium | **Fixed** | `lib/password-policy.ts` enforces 8+ with upper/lower/digit/symbol in all forms |
 | No CAPTCHA on auth forms | Medium | **Code ready; setup deferred until a domain exists** | Turnstile widget wired into sign-up, login, magic-link and reset; follow §10 when the domain is available |
 | No app-level auth rate limiting | Medium | **Fixed (code)** | `/api/auth/guard` with Upstash sliding windows; Supabase Auth limits remain authoritative |
-| No current-password check on password change | Medium | **Fixed (code)** | Settings → Password card sends `current_password`; enable the Supabase setting and test the reset flow |
+| No current-password check on password change | Medium | **Fixed (code)** | Settings → Password verifies the current password server-side before `updateUser`; recovery page requires a signed, short-lived grant from `/auth/confirm` |
+| Recovery page usable by any authenticated session | Medium | **Fixed (code)** | `/auth/update-password` requires a recovery grant bound to the user id; normal sessions are sent to Settings; grant is cleared after use and other sessions are revoked |
 | Leaked password protection disabled | Medium | **Human action / plan-gated** | Pro+ only. On Free, use the password policy + CAPTCHA + rate limits; upgrade to enable the native check |
 | `admin_alerts` / `webhook_events` RLS with no policy | Info | **Accepted** | Deny-all for `anon`/`authenticated`; only the service role writes |
+| `deliver-guide` bypassed live-path guards | High | **Fixed** | `lib/meta/delivery-guards.ts`; route validates the recipient and applies active/opt-out/24h dedupe/cooldown/account ceiling/automation cap/follow gate |
+| Shared `CRON_SECRET` for cron and admin actions | High | **Fixed** | `ADMIN_API_SECRET` required in production; `deliver-guide`, `webhook-replay`, `dlq`, `sync-profile`, `followup-schedule` switched |
+| `rerun_jobs` member-wide UPDATE | Medium | **Fixed** | Owner-only `"Owners update rerun_jobs"` policy + `enforce_rerun_job_workspace` trigger |
+| `findRerunCandidates` sliced before filtering | Medium | **Fixed** | Filters the full eligible set in 500-row chunks, then slices |
+| `withCronLock` failed open on Redis outage | Medium | **Fixed** | Postgres `cron_locks` fallback; both stores unavailable → `locked: true` |
+| QStash signature replay window | Medium | **Fixed** | `qstash_replay_guard` + `claim_qstash_signature`; Redis fast path, DB fallback, fail closed |
+| `pending_dms` cross-tenant automation reference | High | **Fixed** | `enforce_pending_dms_workspace` trigger + drain workspace binding |
+| Webhook dedupe failed open without Redis | High | **Fixed** | `claim_webhook_payload` lease + `dm_send_claims` atomic send claim |
+| Retried webhook batch dropped unprocessed events | High | **Fixed** | Lease re-claim + `/api/cron/recover-webhooks` sweep |
 
-Migrations: `supabase/migrations/20261127_security_hardening.sql`, `supabase/migrations/20261127_remove_auto_confirm.sql`.
+Migrations: `supabase/migrations/20261127_security_hardening.sql`, `supabase/migrations/20261127_remove_auto_confirm.sql`, `supabase/migrations/20261127_pending_dms_workspace_guard.sql`, `supabase/migrations/20261127_rerun_claim_timestamp.sql`, `supabase/migrations/20261127_webhook_events_retention_index.sql`, `supabase/migrations/20261128_webhook_dedupe_analytics.sql`, `supabase/migrations/20261128_webhook_claim_lease.sql`, `supabase/migrations/20261128_pending_dms_queue_hardening.sql`, `supabase/migrations/20261128_rerun_hardening.sql`, `supabase/migrations/20261128_cron_locks.sql`, `supabase/migrations/20261128_qstash_replay.sql`.
 
 ---
 

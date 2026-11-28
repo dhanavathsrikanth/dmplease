@@ -14,10 +14,14 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { safeConsentRedirect } from "@/lib/safe-url";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+
+const UNSAFE_REDIRECT_MESSAGE =
+  "The application returned an unsafe redirect URL. Authorization was stopped.";
 
 const SCOPE_DESCRIPTIONS: Record<string, { title: string; desc: string }> = {
   openid: {
@@ -123,8 +127,13 @@ function OAuthConsentContent() {
           setError(authDetailsError.message);
         } else if (data) {
           if ("redirect_url" in data) {
-            // User has already approved this application; redirect immediately
-            window.location.href = data.redirect_url;
+            // User has already approved this application; redirect immediately.
+            const target = safeConsentRedirect(data.redirect_url);
+            if (!target) {
+              setError(UNSAFE_REDIRECT_MESSAGE);
+              return;
+            }
+            window.location.href = target;
             return;
           }
 
@@ -165,7 +174,13 @@ function OAuthConsentContent() {
         setError(approveError.message);
         setSubmitting(null);
       } else if (data?.redirect_url) {
-        window.location.href = data.redirect_url;
+        const target = safeConsentRedirect(data.redirect_url);
+        if (!target) {
+          setError(UNSAFE_REDIRECT_MESSAGE);
+          setSubmitting(null);
+          return;
+        }
+        window.location.href = target;
       }
     } catch (err: unknown) {
       const message =
@@ -189,7 +204,13 @@ function OAuthConsentContent() {
         setError(denyError.message);
         setSubmitting(null);
       } else if (data?.redirect_url) {
-        window.location.href = data.redirect_url;
+        const target = safeConsentRedirect(data.redirect_url);
+        if (!target) {
+          setError(UNSAFE_REDIRECT_MESSAGE);
+          setSubmitting(null);
+          return;
+        }
+        window.location.href = target;
       }
     } catch (err: unknown) {
       const message =

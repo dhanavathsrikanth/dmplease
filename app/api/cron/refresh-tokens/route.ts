@@ -2,7 +2,11 @@ import { timingSafeEqual } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { connection } from "next/server";
 import { getAdminDb, hasAdminDb } from "@/lib/db-admin";
-import { decryptToken, encryptToken, needsReEncryption } from "@/lib/meta/vault";
+import {
+  encryptToken,
+  needsReEncryption,
+  readStoredTokenForMigration,
+} from "@/lib/meta/vault";
 import { refreshLongLivedToken } from "@/lib/meta/client";
 import { getCronSecret } from "@/lib/config";
 import { withCronLock } from "@/lib/redis-lock";
@@ -52,7 +56,7 @@ export async function GET(request: NextRequest) {
     if (!account.access_token) continue;
     const migratedKey = needsReEncryption(account.access_token);
     try {
-      const plainToken = decryptToken(account.access_token);
+      const plainToken = readStoredTokenForMigration(account.access_token);
       const { accessToken, expiresIn } = await refreshLongLivedToken(plainToken);
       const { error: updateError } = await db
         .from("instagram_accounts")
@@ -72,12 +76,42 @@ export async function GET(request: NextRequest) {
   }
 
   const refreshed = results.filter((result) => result.refreshed).length;
+
+  // Drain legacy-key rows even when they are not close to expiry. Bounded so
+  // the cron stays cheap on a large table; repeated runs eventually migrate
+  // every row.
+  let reEncrypted = 0;
+  const { data: legacyRows } = await db
+    .from("instagram_accounts")
+    .select("id, access_token")
+    .not("access_token", "is", null)
+    .order("updated_at", { ascending: true })
+    .limit(100);
+  for (const row of legacyRows ?? []) {
+    if (!row.access_token || !needsReEncryption(row.access_token)) continue;
+    try {
+      const plain = readStoredTokenForMigration(row.access_token);
+      const { error: updateError } = await db
+        .from("instagram_accounts")
+        .update({
+          access_token: encryptToken(plain),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", row.id);
+      if (updateError) throw updateError;
+      reEncrypted++;
+    } catch (error) {
+      console.warn(`[cron] Could not re-encrypt token for ${row.id}:`, error);
+    }
+  }
+
   captureServerEvent({
     event: "token_refresh_completed",
     properties: {
       processed: (accounts ?? []).length,
       refreshed,
       failed: results.length - refreshed,
+      re_encrypted: reEncrypted,
     },
     anonymous: true,
   });
@@ -86,6 +120,7 @@ export async function GET(request: NextRequest) {
     processed: (accounts ?? []).length,
     refreshed,
     failed: results.length - refreshed,
+    reEncrypted,
     results,
   });
   });

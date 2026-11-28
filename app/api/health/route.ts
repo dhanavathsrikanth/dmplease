@@ -1,7 +1,9 @@
 import { SeverityNumber } from "@opentelemetry/api-logs";
+import { timingSafeEqual } from "crypto";
 import { NextResponse } from "next/server";
 import { posthogLogger } from "@/instrumentation";
 import {
+  getAdminApiSecret,
   hasDatabaseUrl,
   hasSecret,
   isProduction,
@@ -10,10 +12,33 @@ import { hasWebhookSigningSecret } from "@/lib/meta/webhook";
 import { hasQstash, hasUpstashRedis } from "@/lib/upstash";
 
 /**
- * Public, secret-free configuration probe. Reveals only booleans — never
- * values — so you can confirm a deployment is ready without opening logs.
+ * Constant-time check for the admin bearer token. Anonymous callers get only
+ * the readiness summary; the per-control booleans are control-posture data and
+ * are reserved for operators.
  */
-export async function GET() {
+function isAdminRequest(request: Request): boolean {
+  const header = request.headers.get("authorization");
+  if (!header) return false;
+
+  try {
+    const expected = `Bearer ${getAdminApiSecret()}`;
+    const supplied = Buffer.from(header);
+    const wanted = Buffer.from(expected);
+    return (
+      supplied.length === wanted.length && timingSafeEqual(supplied, wanted)
+    );
+  } catch {
+    // A missing/misconfigured admin secret must never grant the detailed view.
+    return false;
+  }
+}
+
+/**
+ * Readiness probe. Anonymous callers see only `ready` and `environment`.
+ * Callers presenting `Authorization: Bearer <ADMIN_API_SECRET>` also receive
+ * the per-control `checks` map and a remediation `hint`.
+ */
+export async function GET(request: Request) {
   const checks = {
     databaseUrl: hasDatabaseUrl(),
     supabaseServiceKey: hasSecret("SUPABASE_SERVICE_ROLE_KEY"),
@@ -28,6 +53,7 @@ export async function GET() {
   };
 
   const ready = Object.values(checks).every(Boolean);
+  const admin = isAdminRequest(request);
 
   posthogLogger?.emit({
     body: "health_check_completed",
@@ -38,18 +64,22 @@ export async function GET() {
     },
   });
 
-  return NextResponse.json(
-    {
-      ready,
-      environment: isProduction() ? "production" : "development",
-      checks,
-      hint: checks.supabaseServiceKey
-        ? undefined
-        : "Set SUPABASE_SERVICE_ROLE_KEY so backend writes can use Supabase's HTTPS API.",
-    },
-    {
-      status: ready ? 200 : 503,
-      headers: { "Cache-Control": "no-store" },
-    }
-  );
+  const body = admin
+    ? {
+        ready,
+        environment: isProduction() ? "production" : "development",
+        checks,
+        hint: checks.supabaseServiceKey
+          ? null
+          : "Set SUPABASE_SERVICE_ROLE_KEY so backend writes can use Supabase's HTTPS API.",
+      }
+    : {
+        ready,
+        environment: isProduction() ? "production" : "development",
+      };
+
+  return NextResponse.json(body, {
+    status: ready ? 200 : 503,
+    headers: { "Cache-Control": "no-store" },
+  });
 }

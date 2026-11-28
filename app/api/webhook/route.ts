@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { after } from "next/server";
+import { createHash } from "crypto";
 import {
   verifyWebhookSignature,
   verifyWebhookVerifyToken,
@@ -9,7 +10,6 @@ import { processWebhookPayload, type ProcessingResult } from "@/lib/meta/webhook
 import {
   markWebhookFinished,
   markWebhookProcessing,
-  recordWebhookReceived,
 } from "@/lib/meta/webhook-events";
 import { cleanEnv, getQstash, getQstashWorkerUrl, hasQstash } from "@/lib/upstash";
 import { claimWebhookEvent } from "@/lib/dedupe";
@@ -19,6 +19,51 @@ import { captureServerEvent } from "@/lib/posthog-server";
 export const maxDuration = 60;
 
 const NO_STORE = { "Cache-Control": "no-store, must-revalidate" } as const;
+
+/** The first event kind in the batch, for the analytics ledger. */
+function firstEventKind(payload: WebhookPayload): string | null {
+  const entry = payload.entry?.[0];
+  if (!entry) return null;
+  const change = entry.changes?.[0];
+  if (change) return change.field || "change";
+  const messaging = entry.messaging?.[0];
+  if (messaging) {
+    if (messaging.message) return "message";
+    if (messaging.postback) return "postback";
+    if (messaging.message_reactions) return "reaction";
+    if (messaging.read) return "read";
+    if (messaging.delivery) return "delivery";
+    return "messaging";
+  }
+  return null;
+}
+
+/** A stable external id for the first event, used for correlation. */
+function firstExternalEventId(payload: WebhookPayload): string | null {
+  const entry = payload.entry?.[0];
+  if (!entry) return null;
+  const change = entry.changes?.[0]?.value;
+  if (change) {
+    return (
+      change.id ??
+      change.comment_id ??
+      change.mid ??
+      change.media_id ??
+      change.story_id ??
+      null
+    );
+  }
+  const messaging = entry.messaging?.[0];
+  if (messaging) {
+    return (
+      messaging.message?.mid ??
+      messaging.postback?.mid ??
+      messaging.message_reactions?.mid ??
+      null
+    );
+  }
+  return null;
+}
 
 /**
  * Meta webhook handshake.
@@ -47,8 +92,10 @@ export async function GET(request: NextRequest) {
 /**
  * Meta webhook ingestion.
  *
- * The signature is verified and the event is recorded synchronously, then all
- * processing is scheduled with `after()` so Meta gets its 200 immediately.
+ * The signature is verified and the event is claimed atomically in Postgres,
+ * then all processing is scheduled with `after()` so Meta gets its 200
+ * immediately. The claim is the ledger row, so a retry cannot overlap the
+ * first run even when Redis is unavailable.
  */
 export async function POST(request: NextRequest) {
   const rawBody = await request.text();
@@ -78,20 +125,39 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // 3. Drop Meta retry bursts atomically before doing any work.
-  const dedupeKey =
-    payload.entry?.[0]?.changes?.[0]?.value?.id ??
-    payload.entry?.[0]?.changes?.[0]?.value?.comment_id ??
-    payload.entry?.[0]?.messaging?.[0]?.message?.mid;
-  if (dedupeKey && !(await claimWebhookEvent(dedupeKey))) {
+  // 3. Atomically claim the delivery. The key is a hash of the whole verified
+  // body, so its scope matches the processing scope (every entry/change). The
+  // claim carries a lease: a retry can re-claim a failed or abandoned attempt,
+  // while a completed batch is still rejected as a duplicate.
+  const dedupeKey = createHash("sha256").update(rawBody).digest("hex");
+  const claim = await claimWebhookEvent({
+    dedupeKey,
+    payload,
+    object: payload.object,
+    instagramAccountId: payload.entry?.[0]?.id ?? null,
+    eventKind: firstEventKind(payload),
+    externalEventId: firstExternalEventId(payload),
+  });
+
+  if (claim.status === "unavailable") {
+    // No atomic claim store is available. Ask Meta to retry rather than risk
+    // a duplicate send from an unclaimed delivery.
+    return NextResponse.json(
+      { success: false, error: "Claim store unavailable" },
+      { status: 503, headers: { ...NO_STORE, "Retry-After": "30" } }
+    );
+  }
+  if (claim.status === "duplicate" || claim.status === "in_progress") {
+    // `duplicate` means the batch already completed. `in_progress` means
+    // another worker holds a live lease; if it crashes, the lease expires and
+    // Meta's retry (or the recovery sweep) re-claims the batch.
     return NextResponse.json(
       { success: true, status: "DUPLICATE_IGNORED" },
       { status: 200, headers: NO_STORE }
     );
   }
 
-  // Persist a job record (best effort) before returning.
-  const eventId = await recordWebhookReceived(payload);
+  const eventId = claim.eventId;
 
   // 4. Durable queue path: hand the event to QStash and return immediately.
   //    QStash retries failed deliveries and moves exhausted ones to its DLQ.
@@ -101,12 +167,7 @@ export async function POST(request: NextRequest) {
       cleanEnv("APP_URL") ||
       request.nextUrl.origin
     ).replace(/\/$/, "");
-    const firstEntry = payload.entry?.[0];
-    const externalId =
-      firstEntry?.changes?.[0]?.value?.id ??
-      firstEntry?.changes?.[0]?.value?.comment_id ??
-      firstEntry?.messaging?.[0]?.message?.mid ??
-      `${payload.object}:${firstEntry?.id ?? "unknown"}`;
+    const externalId = firstExternalEventId(payload);
 
     try {
       const published = await getQstash().publishJSON({
@@ -147,7 +208,7 @@ export async function POST(request: NextRequest) {
   const processingStartedAt = Date.now();
   after(async () => {
     try {
-      await markWebhookProcessing(eventId);
+      await markWebhookProcessing(eventId, "after");
       const result: ProcessingResult = await processWebhookPayload(payload);
       await markWebhookFinished(eventId, result, processingStartedAt);
 

@@ -65,10 +65,9 @@ async function DashboardContent() {
   await connection();
   // These reads are independent — run them together instead of stacking their
   // network round trips on every sidebar navigation.
-  const [user, profile, health] = await Promise.all([
+  const [user, profile] = await Promise.all([
     getCurrentUser(),
     getCurrentProfile(),
-    getWebhookHealth(24 * 7),
   ]);
   const supabase = await createClient();
 
@@ -77,6 +76,7 @@ async function DashboardContent() {
   );
 
   const workspaceIds = (profile?.ownedWorkspaces || []).map((w) => w.id);
+  const health = await getWebhookHealth(24 * 7, workspaceIds);
   const preferences = workspaceIds[0]
     ? await getWorkspacePreferences(workspaceIds[0])
     : { timezone: "Asia/Kolkata", weekStartsOn: 1 };

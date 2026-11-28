@@ -24,6 +24,7 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 import { ThemeSwitcher } from "@/components/theme-switcher";
+import { safeNextPath } from "@/lib/safe-redirect";
 
 async function OAuthCodeRedirect({
   searchParams,
@@ -32,8 +33,12 @@ async function OAuthCodeRedirect({
 }) {
   const resolvedParams = searchParams ? await searchParams : {};
   if (resolvedParams?.code) {
+    // Sanitize before forwarding so the callback route never receives an
+    // off-site target, even though it validates again on arrival.
     const nextParam = resolvedParams.next
-      ? `&next=${encodeURIComponent(resolvedParams.next)}`
+      ? `&next=${encodeURIComponent(
+          safeNextPath(resolvedParams.next, "https://app.local")
+        )}`
       : "";
     redirect(
       `/auth/callback?code=${encodeURIComponent(

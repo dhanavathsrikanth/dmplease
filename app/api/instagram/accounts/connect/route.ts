@@ -5,7 +5,10 @@ import { getCurrentProfile, getCurrentUser } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
 import { prisma } from "@/lib/prisma";
 import { decryptToken, encryptToken } from "@/lib/meta/vault";
-import { subscribeInstagramAccountToWebhooks } from "@/lib/meta/client";
+import {
+  fetchInstagramAccountsForToken,
+  subscribeInstagramAccountToWebhooks,
+} from "@/lib/meta/client";
 import { hasDatabaseUrl } from "@/lib/config";
 
 interface PendingAccount {
@@ -15,7 +18,7 @@ interface PendingAccount {
   displayName?: string | null;
   profilePictureUrl?: string | null;
   followersCount?: number;
-  isVerified?: boolean;
+  isVerified?: boolean | null;
   pageToken?: string | null;
 }
 
@@ -139,13 +142,42 @@ export async function POST(request: NextRequest) {
         { status: 500 }
       );
     }
-    selected = (parsed.data.accounts ?? []).map((account) => ({
-      instagramBusinessId: account.instagramBusinessId,
-      username: account.username,
-      displayName: account.displayName ?? null,
-      facebookPageId: account.facebookPageId ?? null,
-      pageToken: account.pageToken ?? null,
-    }));
+    // The request body only selects which accounts to connect. Identity and
+    // metadata come from Meta, not from the caller, so a forged username,
+    // page token, or account id cannot be persisted.
+    const requestedIds = new Set(
+      (parsed.data.accounts ?? []).map((account) => account.instagramBusinessId)
+    );
+
+    try {
+      const available = await fetchInstagramAccountsForToken(sourceToken);
+      selected = available
+        .filter((account) => requestedIds.has(account.instagramBusinessId))
+        .map((account) => ({
+          instagramBusinessId: account.instagramBusinessId,
+          username: account.username,
+          displayName: account.displayName ?? null,
+          facebookPageId: account.facebookPageId ?? null,
+          profilePictureUrl: account.profilePictureUrl ?? null,
+          followersCount: account.followersCount ?? 0,
+          isVerified: account.isVerified ?? null,
+          pageToken: account.pageToken ?? null,
+        }));
+    } catch {
+      return NextResponse.json(
+        { error: "Could not verify the selected accounts with Meta." },
+        { status: 502 }
+      );
+    }
+    if (selected.length === 0) {
+      return NextResponse.json(
+        {
+          error:
+            "None of the selected accounts are controlled by this connection.",
+        },
+        { status: 403 }
+      );
+    }
   }
 
   if (!sourceToken || selected.length === 0) {
@@ -208,6 +240,22 @@ export async function POST(request: NextRequest) {
         Date.now() + 60 * 24 * 3600 * 1000
       ).toISOString();
 
+      // Subscribe before persisting so the stored state matches Meta. A failed
+      // subscription is recorded as such rather than assumed to have worked.
+      const subscribeTarget =
+        account.facebookPageId || account.instagramBusinessId;
+      let subscribeResult: { success: boolean } = { success: false };
+      try {
+        subscribeResult = await subscribeInstagramAccountToWebhooks(
+          subscribeTarget,
+          token
+        );
+      } catch (error) {
+        console.warn("[connect] Webhook subscription failed:", error);
+        subscribeResult = { success: false };
+      }
+      const webhookSubscribed = subscribeResult.success === true;
+
       const { error: insertError } = await supabase
         .from("instagram_accounts")
         .upsert(
@@ -226,7 +274,7 @@ export async function POST(request: NextRequest) {
               : "No Facebook Page access token available; DM sending requires a Page token.",
             token_checked_at: new Date().toISOString(),
             token_expires_at: expiresAt,
-            webhook_subscribed: true,
+            webhook_subscribed: webhookSubscribed,
             connected_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           },
@@ -245,18 +293,18 @@ export async function POST(request: NextRequest) {
               name: account.displayName || account.username,
               accessToken: encryptedToken,
               tokenExpiresAt: new Date(expiresAt),
-              webhookSubscribed: true,
+              webhookSubscribed,
             },
-            update: { workspaceId, username: account.username },
+            update: {
+              workspaceId,
+              username: account.username,
+              webhookSubscribed,
+            },
           });
         } catch (error) {
           console.warn("[connect] Prisma mirror failed:", error);
         }
       }
-
-      const subscribeTarget =
-        account.facebookPageId || account.instagramBusinessId;
-      await subscribeInstagramAccountToWebhooks(subscribeTarget, token);
 
       connectedIds.add(account.instagramBusinessId);
       results.push({

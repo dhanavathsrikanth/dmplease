@@ -13,17 +13,25 @@ import { Separator } from "@/components/ui/separator";
 import { OAuthButtons } from "@/components/auth/oauth-buttons";
 import { Turnstile } from "@/components/auth/turnstile";
 import { checkAuthRateLimit } from "@/lib/auth-guard";
+import { safeNextPath } from "@/lib/safe-redirect";
+import { safeDecodeURIComponent } from "@/lib/safe-decode";
 import posthog from "posthog-js";
 
 export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const nextTarget = searchParams.get("next") || searchParams.get("callbackUrl");
-  const callbackUrl = nextTarget || "/onboarding";
+  // Sanitize the post-login target once. A protocol-relative, absolute, or
+  // javascript: value falls back to /onboarding. The same sanitized value is
+  // used for the password redirect, the magic link, and the OAuth redirect.
+  const callbackUrl = safeNextPath(nextTarget, "https://app.local");
   const signUpUrl = nextTarget
-    ? `/auth/sign-up?next=${encodeURIComponent(nextTarget)}`
+    ? `/auth/sign-up?next=${encodeURIComponent(callbackUrl)}`
     : "/auth/sign-up";
   const urlError = searchParams.get("error");
+  const decodedError: string | null = urlError
+    ? safeDecodeURIComponent(urlError)
+    : null;
 
   const [authMode, setAuthMode] = useState<"password" | "magic-link">("password");
   const [email, setEmail] = useState("");
@@ -33,7 +41,7 @@ export function LoginForm() {
     urlError
       ? {
           title: "Sign-in notice",
-          description: decodeURIComponent(urlError),
+          description: decodedError ?? urlError,
         }
       : null
   );

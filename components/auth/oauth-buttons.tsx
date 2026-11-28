@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/client";
+import { safeNextPath } from "@/lib/safe-redirect";
 
 interface OAuthButtonsProps {
   callbackUrl?: string;
@@ -24,7 +25,11 @@ export function OAuthButtons({
         typeof window !== "undefined"
           ? window.location.origin
           : process.env.NEXT_PUBLIC_SITE_URL || "";
-      const redirectTo = `${origin}/auth/callback?next=${encodeURIComponent(callbackUrl)}`;
+      const redirectTo = `${origin}/auth/callback?next=${encodeURIComponent(
+        // Sanitize here as well so every caller inherits the same-origin
+        // guarantee, even one that forgets to normalize its own value.
+        safeNextPath(callbackUrl, "https://app.local")
+      )}`;
 
       const { error } = await supabase.auth.signInWithOAuth({
         provider,

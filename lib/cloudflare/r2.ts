@@ -51,10 +51,30 @@ export function getPublicAssetUrl(objectKey: string): string {
   return `${cleanEnv("R2_PUBLIC_CDN_URL").replace(/\/+$/, "")}/${objectKey}`;
 }
 
+/**
+ * Exact shape of a key produced by `createAssetUpload`:
+ *   workspaces/<workspace uuid>/messages/<format>/<asset uuid>.<ext>
+ *
+ * R2 keys are opaque, so a prefix check is already safe, but matching the
+ * generated shape keeps traversal-ish input (`..`, `//`, `\`, `%`) out of the
+ * delete path as defense in depth.
+ */
+const ASSET_KEY_RE =
+  /^workspaces\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/messages\/[a-z0-9_-]+\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]+$/i;
+
 export function isWorkspaceAssetKey(
   workspaceId: string,
   objectKey: string
 ): boolean {
+  if (!ASSET_KEY_RE.test(objectKey)) return false;
+  if (
+    objectKey.includes("..") ||
+    objectKey.includes("//") ||
+    objectKey.includes("\\") ||
+    objectKey.includes("%")
+  ) {
+    return false;
+  }
   return objectKey.startsWith(`workspaces/${workspaceId}/messages/`);
 }
 
@@ -88,6 +108,7 @@ export async function createAssetUpload(input: {
     Bucket: cleanEnv("R2_BUCKET_NAME"),
     Key: objectKey,
     ContentType: input.mimeType,
+    ContentLength: input.sizeBytes,
     CacheControl: "public, max-age=31536000, immutable",
   });
   const expiresInSeconds = 120;

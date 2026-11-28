@@ -10,6 +10,7 @@ import {
 } from "@/lib/validation/follow-gate";
 import { dmVariantsSchema } from "@/lib/validation/dm-variants";
 import { isValidTimeZone, normalizeWeekStart } from "@/lib/timezone";
+import { isHttpUrl } from "@/lib/safe-url";
 
 const fallbackSchema = z.object({
   workspaceId: z.string().uuid("Invalid workspace."),
@@ -23,7 +24,12 @@ const fallbackSchema = z.object({
   buttonLabel: followGateButtonLabelSchema.default(""),
   onUnavailable: z.enum(["hold", "deliver"]).default("hold"),
   buttonText: z.string().trim().max(20).default(""),
-  buttonUrl: z.union([z.literal(""), z.url()]).default(""),
+  buttonUrl: z
+    .union([
+      z.literal(""),
+      z.string().url().refine(isHttpUrl, "Only http(s) URLs are allowed"),
+    ])
+    .default(""),
 });
 
 export type FallbackReplyInput = z.input<typeof fallbackSchema>;

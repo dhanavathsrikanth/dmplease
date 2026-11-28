@@ -1,19 +1,19 @@
 import { timingSafeEqual } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { getCronSecret } from "@/lib/config";
+import { getAdminApiSecret } from "@/lib/config";
 import { getCurrentUser } from "@/lib/profile";
-import { isAdminEmail } from "@/lib/alerts/capacity";
+import { isVerifiedAdmin } from "@/lib/alerts/capacity";
 import {
   deleteDeadLetter,
   listDeadLetters,
   replayDeadLetter,
 } from "@/lib/dlq-ops";
 
-function hasCronToken(request: NextRequest): boolean {
+function hasAdminToken(request: NextRequest): boolean {
   const header = request.headers.get("authorization") || "";
   let secret: string;
   try {
-    secret = getCronSecret();
+    secret = getAdminApiSecret();
   } catch {
     return false;
   }
@@ -24,10 +24,10 @@ function hasCronToken(request: NextRequest): boolean {
 }
 
 async function authorized(request: NextRequest): Promise<boolean> {
-  if (hasCronToken(request)) return true;
+  if (hasAdminToken(request)) return true;
   try {
     const user = await getCurrentUser();
-    return isAdminEmail(user?.email);
+    return isVerifiedAdmin(user);
   } catch {
     return false;
   }
@@ -65,9 +65,10 @@ export async function POST(request: NextRequest) {
     else await deleteDeadLetter(body.dlqId);
     return NextResponse.json({ success: true, action: body.action, dlqId: body.dlqId });
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "DLQ action failed" },
-      { status: 500 }
-    );
+    const message = error instanceof Error ? error.message : "DLQ action failed";
+    if (message === "Unknown DLQ message") {
+      return NextResponse.json({ error: "Unknown DLQ message" }, { status: 404 });
+    }
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

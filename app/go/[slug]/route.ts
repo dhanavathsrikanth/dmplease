@@ -5,6 +5,7 @@ import { parseTrackedLink } from "@/lib/tracking";
 import { recordMetricEvent } from "@/lib/metrics";
 import { getWorkspaceTimeZone } from "@/lib/workspace-preferences";
 import { getAdminDb, hasAdminDb } from "@/lib/db-admin";
+import { safeRedirectTarget } from "@/lib/safe-url";
 import {
   findTrackedLink,
   recordTrackedLinkClick,
@@ -40,6 +41,11 @@ export async function GET(
   const tracked = await findTrackedLink(slug);
 
   if (tracked) {
+    // Stored destinations are user-supplied; never emit a non-http(s) Location.
+    const destination = safeRedirectTarget(tracked.destination_url);
+    if (!destination) {
+      return NextResponse.redirect(new URL("/?link=invalid", request.url), 302);
+    }
     const userAgent = request.headers.get("user-agent") ?? "";
     await recordMetricEvent({
       kind: "dm_link_click",
@@ -54,7 +60,7 @@ export async function GET(
       eventId: randomUUID(),
     });
     return NextResponse.redirect(
-      withAttribution(tracked.destination_url, {
+      withAttribution(destination, {
         automationId: tracked.automation_id,
         postId: tracked.post_id,
         keyword: tracked.keyword,
@@ -66,6 +72,12 @@ export async function GET(
   // Legacy signed tokens remain valid — old DMs keep working after deploy.
   const payload = parseTrackedLink(slug);
   if (!payload) {
+    return NextResponse.redirect(new URL("/?link=invalid", request.url), 302);
+  }
+
+  // Defense in depth: the token parser already rejects non-http(s) URLs.
+  const legacyDestination = safeRedirectTarget(payload.url);
+  if (!legacyDestination) {
     return NextResponse.redirect(new URL("/?link=invalid", request.url), 302);
   }
 
@@ -105,5 +117,5 @@ export async function GET(
     }
   }
 
-  return NextResponse.redirect(payload.url, 302);
+  return NextResponse.redirect(legacyDestination, 302);
 }

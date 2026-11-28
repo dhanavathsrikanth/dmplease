@@ -5,13 +5,15 @@ import { z } from "zod";
 
 import { createClient } from "@/lib/supabase/server";
 import type { LinkRotationMode } from "@/lib/link-rotation";
+import { isHttpUrl } from "@/lib/safe-url";
 
 const targetSchema = z.object({
   id: z.string().uuid().optional(),
   destinationUrl: z
     .string()
     .trim()
-    .url("Enter a full URL such as https://yourbrand.com/offer"),
+    .url("Enter a full URL such as https://yourbrand.com/offer")
+    .refine(isHttpUrl, "Only http(s) URLs are allowed"),
   label: z.string().trim().max(80).optional(),
   enabled: z.boolean().default(true),
 });

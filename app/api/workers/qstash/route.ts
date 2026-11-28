@@ -38,7 +38,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    await markWebhookProcessing(body.eventId ?? null);
+    await markWebhookProcessing(body.eventId ?? null, "qstash");
     const result = await processWebhookPayload(body.payload);
     await markWebhookFinished(body.eventId ?? null, result, startedAt);
 

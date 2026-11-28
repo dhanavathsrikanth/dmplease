@@ -33,6 +33,9 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: "No workspace" }, { status: 404 });
   }
 
+  // `is_verified_manual` is an owner-only override for the badge shown in the
+  // owner's own settings and preview. It is not a Meta verification signal and
+  // must never be exposed on public reports or in DM content.
   const { error } = await supabase
     .from("instagram_accounts")
     .update({

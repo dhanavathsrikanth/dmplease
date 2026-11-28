@@ -1,14 +1,23 @@
 import { createServerClient } from "@supabase/ssr";
 import { type EmailOtpType } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
+import { safeNextPath } from "@/lib/safe-redirect";
+import { attachRecoveryGrant } from "@/lib/auth/recovery-cookie";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const token_hash = searchParams.get("token_hash");
   const type = searchParams.get("type") as EmailOtpType | null;
   const code = searchParams.get("code");
-  const next = searchParams.get("next") ?? "/onboarding";
   const authError = searchParams.get("error_description") || searchParams.get("error");
+
+  // A recovery exchange always lands on the recovery page, regardless of the
+  // `next` value carried by the email link. For PKCE links there is no `type`
+  // parameter, so the recovery intent is expressed by `next`.
+  const isRecoveryType = type === "recovery";
+  const next = isRecoveryType
+    ? "/auth/update-password"
+    : searchParams.get("next") ?? "/onboarding";
 
   // Determine correct public origin (handles local dev, Cloudflare Tunnel, and production domains)
   const forwardedHost = request.headers.get("x-forwarded-host");
@@ -17,11 +26,21 @@ export async function GET(request: NextRequest) {
     ? forwardedProto === "https"
     : request.nextUrl.protocol === "https:";
   const host = forwardedHost || request.headers.get("host") || request.nextUrl.host;
-  const origin = `${isHttps ? "https" : "http"}://${host}`;
+  const requestOrigin = `${isHttps ? "https" : "http"}://${host}`;
 
-  const destinationPath = next.startsWith("/") ? next : `/${next}`;
-  const redirectUrl = new URL(destinationPath, origin);
-  const errorUrl = new URL("/auth/error", origin);
+  // Prefer a configured public origin so a forged Host / X-Forwarded-Host
+  // header cannot move the post-auth redirect off-site. Fall back to the
+  // request origin only when no public URL is configured (local development).
+  const configuredOrigin =
+    process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ||
+    process.env.APP_URL?.replace(/\/$/, "") ||
+    requestOrigin;
+
+  const destinationPath = safeNextPath(next, configuredOrigin);
+  const recoveryRequested =
+    isRecoveryType || destinationPath === "/auth/update-password";
+  const redirectUrl = new URL(destinationPath, configuredOrigin);
+  const errorUrl = new URL("/auth/error", configuredOrigin);
 
   // If Supabase returned an OAuth provider error in query parameters
   if (authError) {
@@ -57,6 +76,12 @@ export async function GET(request: NextRequest) {
   if (code) {
     const { data, error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error && data?.user) {
+      // The PKCE verifier proves this browser initiated the flow. Mark the
+      // session as a recovery session so the landing page can require it.
+      if (recoveryRequested) {
+        attachRecoveryGrant(response, data.user.id, isHttps);
+      }
+
       // Check if user has already completed onboarding
       try {
         const { data: profile } = await supabase
@@ -67,7 +92,7 @@ export async function GET(request: NextRequest) {
 
         // If onboarding is already done and default /onboarding target was passed, go to /dashboard
         if (profile?.onboarding_completed && destinationPath === "/onboarding") {
-          return NextResponse.redirect(new URL("/dashboard", origin), {
+          return NextResponse.redirect(new URL("/dashboard", configuredOrigin), {
             headers: response.headers,
           });
         }
@@ -85,11 +110,14 @@ export async function GET(request: NextRequest) {
   }
 
   if (token_hash && type) {
-    const { error } = await supabase.auth.verifyOtp({
+    const { data, error } = await supabase.auth.verifyOtp({
       type,
       token_hash,
     });
     if (!error) {
+      if (type === "recovery" && data?.user) {
+        attachRecoveryGrant(response, data.user.id, isHttps);
+      }
       return response;
     }
     errorUrl.searchParams.set("error", error.message);

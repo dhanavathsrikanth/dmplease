@@ -17,6 +17,15 @@ export function utcDayString(date = new Date()): string {
   return date.toISOString().slice(0, 10);
 }
 
+// daily_creator_metrics.creator_id and target_id are UUID columns. Validate at
+// the write boundary so a future caller cannot poison the shared flush.
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function isUuid(value: string): boolean {
+  return UUID_RE.test(value);
+}
+
 export function buildMetricKey(params: {
   kind: MetricKind;
   creatorId: string;
@@ -39,6 +48,9 @@ export function parseMetricKey(key: string): {
   if (!day || !creatorId || !targetId || !ALL_METRIC_KINDS.includes(kind as MetricKind)) {
     return null;
   }
+  // Reject malformed keys at parse time so the flush never hands a non-UUID
+  // value to the Postgres RPC.
+  if (!isUuid(creatorId) || !isUuid(targetId)) return null;
   return { day, kind: kind as MetricKind, creatorId, targetId };
 }
 
@@ -55,10 +67,27 @@ export async function recordMetricEvent(params: {
   const amount = params.amount ?? 1;
   if (amount <= 0) return;
 
+  if (!isUuid(params.creatorId)) {
+    console.warn(
+      "[metrics] Ignoring event with a non-UUID creator id:",
+      params.creatorId
+    );
+    return;
+  }
+  // Coerce a non-UUID target to the workspace id instead of writing a key the
+  // flush cannot persist. This keeps a future caller from poisoning the batch.
+  const targetId = isUuid(params.targetId) ? params.targetId : params.creatorId;
+  if (targetId !== params.targetId) {
+    console.warn(
+      "[metrics] Coercing non-UUID target id to the workspace id:",
+      params.targetId
+    );
+  }
+
   const key = buildMetricKey({
     kind: params.kind,
     creatorId: params.creatorId,
-    targetId: params.targetId,
+    targetId,
     day: params.timeZone ? getDayKey(new Date(), params.timeZone) : undefined,
   });
 

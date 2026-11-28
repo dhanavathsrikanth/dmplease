@@ -41,6 +41,13 @@ export interface RuleSelection<T extends DispatchRule> {
   catchAll: boolean;
 }
 
+/** A rule that matched, in dispatch order. Unlike `RuleSelection`, never null. */
+export interface RuleCandidate<T extends DispatchRule> {
+  rule: T;
+  matchedKeyword: string | null;
+  catchAll: boolean;
+}
+
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -51,7 +58,9 @@ function escapeRegex(value: string): string {
  */
 export function matchesRuleKeyword(text: string, keyword: string): boolean {
   const needle = keyword.trim().replace(/\s+/g, " ");
-  if (!needle) return true;
+  // A blank keyword is a misconfiguration, not a wildcard. Treating it as a
+  // match would let an empty rule steal every DM from a real keyword rule.
+  if (!needle) return false;
 
   const pattern = escapeRegex(needle).replace(/ /g, "\\s+");
   try {
@@ -75,28 +84,54 @@ export function matchesRuleKeywords(keywords: string[], text: string): boolean {
  * `priority` wins; ties fall back to stable insertion order (callers pass
  * rules sorted by created_at). This prevents an empty-keyword rule from
  * stealing a DM that has a specific keyword match.
+ *
+ * Returns every matching rule in dispatch order: specific keyword matches by
+ * priority, then catch-alls by priority. Callers iterate this list so a rule
+ * throttled by `once_per_days` does not block a lower-priority rule or the
+ * catch-all.
  */
-export function selectInboundRule<T extends DispatchRule>(
+export function selectInboundRuleCandidates<T extends DispatchRule>(
   rules: T[],
   text: string
-): RuleSelection<T> {
+): RuleCandidate<T>[] {
   // Virtual account fallbacks are applied by the caller only when no stored
   // rule matched, so they must never participate in normal selection.
   const stored = rules.filter((rule) => rule.trigger_type !== "FALLBACK");
   const specific = stored.filter((rule) => (rule.keywords ?? []).length > 0);
   const catchAlls = stored.filter((rule) => (rule.keywords ?? []).length === 0);
 
+  const candidates: RuleCandidate<T>[] = [];
   for (const rule of [...specific].sort((a, b) => b.priority - a.priority)) {
     const matched = (rule.keywords ?? []).find((keyword) =>
       matchesRuleKeyword(text, keyword)
     );
-    if (matched) return { rule, matchedKeyword: matched, catchAll: false };
+    if (matched) {
+      candidates.push({ rule, matchedKeyword: matched, catchAll: false });
+    }
   }
+  for (const rule of [...catchAlls].sort((a, b) => b.priority - a.priority)) {
+    candidates.push({ rule, matchedKeyword: null, catchAll: true });
+  }
+  return candidates;
+}
 
-  const catchAll = [...catchAlls].sort((a, b) => b.priority - a.priority)[0];
-  return catchAll
-    ? { rule: catchAll, matchedKeyword: null, catchAll: true }
-    : { rule: null, matchedKeyword: null, catchAll: false };
+/**
+ * Picks the first candidate whose rule is not blocked (opted out or inside its
+ * `once_per_days` window). Returns null when every candidate is blocked.
+ */
+export function pickDispatchableCandidate<T extends DispatchRule>(
+  candidates: RuleCandidate<T>[],
+  blockedRuleIds: ReadonlySet<string>
+): RuleCandidate<T> | null {
+  return candidates.find((candidate) => !blockedRuleIds.has(candidate.rule.id)) ?? null;
+}
+
+export function selectInboundRule<T extends DispatchRule>(
+  rules: T[],
+  text: string
+): RuleSelection<T> {
+  const [first] = selectInboundRuleCandidates(rules, text);
+  return first ?? { rule: null, matchedKeyword: null, catchAll: false };
 }
 
 export interface FallbackRow {

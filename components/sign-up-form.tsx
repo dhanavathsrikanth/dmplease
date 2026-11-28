@@ -14,15 +14,19 @@ import { OAuthButtons } from "@/components/auth/oauth-buttons";
 import { Turnstile } from "@/components/auth/turnstile";
 import { checkAuthRateLimit } from "@/lib/auth-guard";
 import { passwordPolicyHint, validatePassword } from "@/lib/password-policy";
+import { safeNextPath } from "@/lib/safe-redirect";
 import posthog from "posthog-js";
 
 export function SignUpForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const nextTarget = searchParams.get("next") || searchParams.get("callbackUrl");
-  const callbackUrl = nextTarget || "/onboarding";
+  // Sanitize the post-sign-up target once. A protocol-relative, absolute, or
+  // javascript: value falls back to /onboarding. The same sanitized value is
+  // used for the immediate redirect, the confirmation email, and OAuth.
+  const callbackUrl = safeNextPath(nextTarget, "https://app.local");
   const signInUrl = nextTarget
-    ? `/auth/login?next=${encodeURIComponent(nextTarget)}`
+    ? `/auth/login?next=${encodeURIComponent(callbackUrl)}`
     : "/auth/login";
 
   const [email, setEmail] = useState("");

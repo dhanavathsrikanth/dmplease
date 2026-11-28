@@ -9,24 +9,44 @@ import {
 } from "@/lib/meta/client";
 import { encryptToken } from "@/lib/meta/vault";
 import { createClient } from "@/lib/supabase/server";
+import { getCurrentUser } from "@/lib/profile";
 import { cleanEnv } from "@/lib/config";
+import { getOAuthOrigin } from "@/lib/meta/oauth-origin";
+import { safeNextPath } from "@/lib/safe-redirect";
 import { captureServerEvent } from "@/lib/posthog-server";
 
+/**
+ * Redirects to the local /auth/error page with a relative Location header.
+ * NextResponse.redirect() requires an absolute URL, and building one from the
+ * request would reintroduce the header-trust problem this route avoids.
+ */
+function authErrorRedirect(message: string): NextResponse {
+  return new NextResponse(null, {
+    status: 307,
+    headers: { Location: `/auth/error?error=${encodeURIComponent(message)}` },
+  });
+}
+
 export async function GET(request: NextRequest) {
-  const host = request.headers.get("x-forwarded-host") || request.nextUrl.host;
-  const proto = request.headers.get("x-forwarded-proto") || (request.nextUrl.protocol.replace(":", "") || "https");
-  const isLocal = host.includes("localhost") || host.includes("127.0.0.1");
-
-  // Determine and sanitize origin to strip any invisible BOM (\uFEFF) or trailing whitespace
-  const rawOrigin = (isLocal && (process.env.TUNNEL_URL || process.env.CLOUDFLARE_TUNNEL_URL))
-    ? (process.env.TUNNEL_URL || process.env.CLOUDFLARE_TUNNEL_URL)!
-    : (cleanEnv("APP_URL") || `${proto}://${host}`);
-
-  const origin = rawOrigin
-    .replace(/^[\uFEFF\u200B-\u200D\s]+|[\uFEFF\u200B-\u200D\s]+$/g, "")
-    .replace(/\/$/, "");
+  // The redirect_uri must come from configuration, never from request
+  // headers: a forged Host / X-Forwarded-Host would move it off-site.
+  let origin: string;
+  try {
+    origin = getOAuthOrigin();
+  } catch {
+    return authErrorRedirect(
+      "APP_URL or NEXT_PUBLIC_SITE_URL must be configured for OAuth."
+    );
+  }
 
   const redirectUri = `${origin}/api/auth/meta/callback`;
+
+  // Pin the post-auth redirect to a configured public origin so a forged
+  // Host / X-Forwarded-Host header cannot move it off-site.
+  const configuredOrigin =
+    cleanEnv("NEXT_PUBLIC_SITE_URL").replace(/\/$/, "") ||
+    cleanEnv("APP_URL").replace(/\/$/, "") ||
+    origin;
 
   const searchParams = request.nextUrl.searchParams;
   const code = searchParams.get("code");
@@ -34,14 +54,18 @@ export async function GET(request: NextRequest) {
   const errorDescription = searchParams.get("error_description");
   const stateParam = searchParams.get("state");
 
-  const verifiedState = stateParam ? verifyOAuthState(stateParam) : null;
-  const nextTarget = verifiedState?.nextUrl || "/dashboard/settings";
+  const verifiedState = stateParam ? await verifyOAuthState(stateParam) : null;
+  const nextTarget = safeNextPath(
+    verifiedState?.nextUrl,
+    configuredOrigin,
+    "/dashboard/settings"
+  );
 
   let targetUrl: URL;
   try {
-    targetUrl = new URL(nextTarget, origin);
+    targetUrl = new URL(nextTarget, configuredOrigin);
   } catch {
-    targetUrl = new URL(nextTarget, request.nextUrl.origin);
+    targetUrl = new URL("/dashboard/settings", configuredOrigin);
   }
 
   if (error) {
@@ -57,7 +81,15 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(targetUrl);
   }
 
-  if (!verifiedState || !verifiedState.userId) {
+  // The state is signed for the user who started the flow. Require that the
+  // request's session is that same user before exchanging the code or writing
+  // anything, so a valid state alone is not sufficient authorization.
+  const sessionUser = await getCurrentUser();
+  if (
+    !verifiedState ||
+    !verifiedState.userId ||
+    sessionUser?.id !== verifiedState.userId
+  ) {
     targetUrl.searchParams.set(
       "error",
       "The connection link expired. Please try again."

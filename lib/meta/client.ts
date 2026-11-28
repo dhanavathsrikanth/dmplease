@@ -1,6 +1,8 @@
 import { createHmac, randomUUID, timingSafeEqual } from "crypto";
 import { getOAuthStateSecret, getOAuthStateSecrets } from "@/lib/config";
+import { getAdminDb, hasAdminDb } from "@/lib/db-admin";
 import type { FormattedMessage } from "@/lib/meta/message-attachments";
+import { getRedis, hasUpstashRedis } from "@/lib/upstash";
 
 const META_API_VERSION = process.env.META_API_VERSION || "v21.0";
 const META_BASE_URL = `https://graph.facebook.com/${META_API_VERSION}`;
@@ -85,21 +87,53 @@ export interface VerifiedOAuthState {
   provider?: MetaAuthProvider;
 }
 
+/** Lifetime of a signed OAuth state, and of the nonce that makes it single-use. */
+const OAUTH_STATE_TTL_SECONDS = 600;
+
+/** Parsed payload carried inside a signed OAuth state. */
+interface OAuthStatePayload {
+  userId?: string;
+  nextUrl?: string;
+  provider?: MetaAuthProvider;
+  expiresAt?: number;
+  nonce?: string;
+}
+
 /**
- * Signs an OAuth state string with user ID, optional next URL, provider, and 10-minute expiry
+ * Signs an OAuth state string with user ID, optional next URL, provider, and
+ * 10-minute expiry.
+ *
+ * The nonce is persisted before the state is returned so the callback can
+ * consume it exactly once. If the nonce cannot be stored the flow fails closed:
+ * a state that cannot be invalidated must never be issued.
  */
-export function signOAuthState(
+export async function signOAuthState(
   userId: string,
   nextUrl?: string,
   provider: MetaAuthProvider = "facebook"
-): string {
+): Promise<string> {
+  if (!hasAdminDb()) {
+    throw new Error(
+      "OAuth state nonce store is not configured. Set NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY."
+    );
+  }
+
+  const nonce = randomUUID();
+  const { error } = await getAdminDb().rpc("store_oauth_state_nonce", {
+    p_nonce: nonce,
+    p_ttl_seconds: OAUTH_STATE_TTL_SECONDS,
+  });
+  if (error) {
+    throw new Error(`Could not persist OAuth state nonce: ${error.message}`);
+  }
+
   const payload = Buffer.from(
     JSON.stringify({
       userId,
       nextUrl: nextUrl || "/dashboard/settings",
       provider,
-      expiresAt: Date.now() + 10 * 60 * 1000,
-      nonce: randomUUID(),
+      expiresAt: Date.now() + OAUTH_STATE_TTL_SECONDS * 1000,
+      nonce,
     })
   ).toString("base64url");
   const signature = createHmac("sha256", getOAuthStateSecret())
@@ -109,9 +143,15 @@ export function signOAuthState(
 }
 
 /**
- * Validates and extracts userId, nextUrl, and provider from OAuth state
+ * Validates and extracts userId, nextUrl, and provider from OAuth state.
+ *
+ * The signature and expiry are checked first, then the nonce is consumed. A
+ * missing, expired or already-consumed nonce returns null, so a captured state
+ * cannot be replayed.
  */
-export function verifyOAuthState(state: string): VerifiedOAuthState | null {
+export async function verifyOAuthState(
+  state: string
+): Promise<VerifiedOAuthState | null> {
   const [payload, signature, extra] = state.split(".");
   if (!payload || !signature || extra || !/^[0-9a-f]+$/i.test(signature)) {
     return null;
@@ -124,46 +164,125 @@ export function verifyOAuthState(state: string): VerifiedOAuthState | null {
   });
   if (!signaturesValid) return null;
 
+  let data: OAuthStatePayload;
   try {
-    const data = JSON.parse(
+    data = JSON.parse(
       Buffer.from(payload, "base64url").toString("utf8")
-    ) as {
-      userId?: string;
-      nextUrl?: string;
-      provider?: MetaAuthProvider;
-      expiresAt?: number;
-    };
-    return data.userId && Number(data.expiresAt) > Date.now()
-      ? {
-          userId: data.userId,
-          nextUrl: data.nextUrl,
-          provider: data.provider === "instagram" ? "instagram" : "facebook",
-        }
-      : null;
+    ) as OAuthStatePayload;
   } catch {
     return null;
+  }
+
+  if (!data.userId || !(Number(data.expiresAt) > Date.now())) return null;
+  if (!data.nonce) return null;
+
+  // Fail closed when the nonce store is unavailable: without it the state
+  // cannot be proven single-use.
+  if (!hasAdminDb()) return null;
+
+  let consumed: boolean | null = null;
+  try {
+    const { data: result, error } = await getAdminDb().rpc(
+      "consume_oauth_state_nonce",
+      { p_nonce: data.nonce }
+    );
+    if (!error) consumed = result === true;
+  } catch {
+    // A nonce store outage must not let a state through.
+    return null;
+  }
+  if (consumed !== true) return null;
+
+  return {
+    userId: data.userId,
+    nextUrl: data.nextUrl,
+    provider: data.provider === "instagram" ? "instagram" : "facebook",
+  };
+}
+
+/**
+ * Result of a Meta Graph API reachability probe.
+ */
+export interface MetaApiLatency {
+  latencyMs: number;
+  status: "operational" | "latency_high" | "offline";
+}
+
+/**
+ * The diagnostics page is reachable by every signed-in user, so an uncached
+ * probe would let any of them generate outbound Graph API traffic by reloading.
+ * Results are shared for five minutes: Redis when configured (so all instances
+ * share one probe), otherwise a per-process cache.
+ */
+const META_LATENCY_CACHE_TTL_MS = 5 * 60 * 1000;
+const META_LATENCY_CACHE_TTL_SECONDS = META_LATENCY_CACHE_TTL_MS / 1000;
+const META_LATENCY_CACHE_KEY = "meta:api-latency";
+
+let metaLatencyCache: { value: MetaApiLatency; expiresAt: number } | null = null;
+
+function isMetaApiLatency(value: unknown): value is MetaApiLatency {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<MetaApiLatency>;
+  return (
+    typeof candidate.latencyMs === "number" &&
+    (candidate.status === "operational" ||
+      candidate.status === "latency_high" ||
+      candidate.status === "offline")
+  );
+}
+
+async function readCachedMetaLatency(): Promise<MetaApiLatency | null> {
+  if (hasUpstashRedis()) {
+    try {
+      const cached = await getRedis().get<MetaApiLatency>(META_LATENCY_CACHE_KEY);
+      if (isMetaApiLatency(cached)) return cached;
+    } catch {
+      // Redis is best effort — fall through to the in-process cache.
+    }
+  }
+  if (metaLatencyCache && metaLatencyCache.expiresAt > Date.now()) {
+    return metaLatencyCache.value;
+  }
+  return null;
+}
+
+async function writeCachedMetaLatency(value: MetaApiLatency): Promise<void> {
+  metaLatencyCache = { value, expiresAt: Date.now() + META_LATENCY_CACHE_TTL_MS };
+  if (!hasUpstashRedis()) return;
+  try {
+    await getRedis().set(META_LATENCY_CACHE_KEY, value, {
+      ex: META_LATENCY_CACHE_TTL_SECONDS,
+    });
+  } catch {
+    // Best effort: the in-process cache still protects this instance.
   }
 }
 
 /**
- * Checks Meta Graph API latency
+ * Checks Meta Graph API latency, reusing a result younger than five minutes.
  */
-export async function checkMetaApiLatency(): Promise<{
-  latencyMs: number;
-  status: "operational" | "latency_high" | "offline";
-}> {
+export async function checkMetaApiLatency(): Promise<MetaApiLatency> {
+  const cached = await readCachedMetaLatency();
+  if (cached) return cached;
+
   const start = Date.now();
+  let result: MetaApiLatency;
   try {
     await fetch(`${META_BASE_URL}/`, {
       method: "GET",
       signal: AbortSignal.timeout(4000),
     });
     const latencyMs = Date.now() - start;
-    const status = latencyMs > 800 ? "latency_high" : "operational";
-    return { latencyMs, status };
+    result = {
+      latencyMs,
+      status: latencyMs > 800 ? "latency_high" : "operational",
+    };
   } catch {
-    return { latencyMs: Date.now() - start, status: "offline" };
+    result = { latencyMs: Date.now() - start, status: "offline" };
   }
+
+  await writeCachedMetaLatency(result);
+  return result;
 }
 
 /**
@@ -185,6 +304,25 @@ export function getMetaAppCredentials(): { appId: string; appSecret: string } {
   }
 
   return { appId, appSecret };
+}
+
+/**
+ * Builds the error thrown when a token exchange returns a non-OK response.
+ *
+ * 403/405 from graph.facebook.com almost always means an egress proxy or WAF
+ * in front of the deployment is blocking POST, so say that explicitly instead
+ * of leaving the caller with an opaque status code.
+ */
+function tokenExchangeError(
+  label: string,
+  status: number,
+  body: string
+): Error {
+  const proxyHint =
+    status === 403 || status === 405
+      ? " The egress proxy/WAF in front of this deployment must allow POST to graph.facebook.com."
+      : "";
+  return new Error(`${label} (${status}): ${body}${proxyHint}`);
 }
 
 /**
@@ -222,6 +360,8 @@ export async function exchangeOAuthCode(
     return (await res.json()) as MetaTokenExchangeResponse;
   }
 
+  // Send the app secret in the POST body, never the query string: query strings
+  // end up in proxy, CDN and platform request logs.
   const params = new URLSearchParams({
     client_id: appId,
     client_secret: appSecret,
@@ -229,13 +369,17 @@ export async function exchangeOAuthCode(
     code,
   });
 
-  const res = await fetch(
-    `${META_BASE_URL}/oauth/access_token?${params.toString()}`
-  );
+  const res = await fetch(`${META_BASE_URL}/oauth/access_token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: params.toString(),
+  });
   if (!res.ok) {
     const errorBody = await res.text();
-    throw new Error(
-      `Meta OAuth code exchange failed (${res.status}): ${errorBody}`
+    throw tokenExchangeError(
+      "Meta OAuth code exchange failed",
+      res.status,
+      errorBody
     );
   }
 
@@ -270,6 +414,8 @@ export async function exchangeForLongLivedToken(
 ): Promise<MetaTokenExchangeResponse> {
   const { appId, appSecret } = getMetaAppCredentials();
 
+  // Send the app secret in the POST body, never the query string: query strings
+  // end up in proxy, CDN and platform request logs.
   const params = new URLSearchParams({
     grant_type: "fb_exchange_token",
     client_id: appId,
@@ -277,13 +423,17 @@ export async function exchangeForLongLivedToken(
     fb_exchange_token: shortLivedToken,
   });
 
-  const res = await fetch(
-    `${META_BASE_URL}/oauth/access_token?${params.toString()}`
-  );
+  const res = await fetch(`${META_BASE_URL}/oauth/access_token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: params.toString(),
+  });
   if (!res.ok) {
     const errorBody = await res.text();
-    throw new Error(
-      `Meta long-lived token exchange failed (${res.status}): ${errorBody}`
+    throw tokenExchangeError(
+      "Meta long-lived token exchange failed",
+      res.status,
+      errorBody
     );
   }
 
@@ -303,14 +453,35 @@ export async function getLongLivedToken(
   url.searchParams.set("client_secret", appSecret);
   url.searchParams.set("access_token", shortLivedToken);
 
-  const res = await fetch(url.toString());
-  if (!res.ok) {
-    // Fall back to facebook graph exchange
+  // SECURITY: Meta's Instagram endpoint only supports GET here — a POST returns
+  // 400 "Unsupported request". The app secret therefore has to travel in the
+  // query string. Never log this URL (or the error body that echoes it), and
+  // never surface it in an error message.
+  const fallbackToFacebook = async () => {
     const fbRes = await exchangeForLongLivedToken(shortLivedToken);
     return {
       accessToken: fbRes.access_token,
       expiresIn: fbRes.expires_in ?? 5184000,
     };
+  };
+
+  let res: Response;
+  try {
+    res = await fetch(url.toString(), {
+      method: "GET",
+      redirect: "error",
+      cache: "no-store",
+    });
+  } catch {
+    // A rejected fetch (DNS, TLS, redirect: "error") can carry the request URL
+    // — and therefore client_secret — in its message or cause. Swallow it and
+    // use the Facebook exchange, whose errors never contain the URL.
+    return fallbackToFacebook();
+  }
+
+  if (!res.ok) {
+    // Fall back to facebook graph exchange
+    return fallbackToFacebook();
   }
 
   const data = await res.json();
@@ -696,14 +867,17 @@ export async function subscribeInstagramAccountToWebhooks(
     ];
 
     for (const base of [primaryBase, fallbackBase]) {
-      const res = await fetch(`${base}/${instagramAccountId}/subscribed_apps`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({ subscribed_fields: fields }),
-      });
+      const res = await fetch(
+        `${base}/${encodeURIComponent(instagramAccountId)}/subscribed_apps`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({ subscribed_fields: fields }),
+        }
+      );
       if (res.ok) {
         const data = await res.json();
         if (data.success) return { success: true };

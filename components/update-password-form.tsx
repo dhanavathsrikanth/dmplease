@@ -4,15 +4,21 @@ import { useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, CheckCircle2 } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
+import { ArrowLeft, ArrowRight, CheckCircle2, ShieldCheck } from "lucide-react";
+
+import { updateRecoveredPassword } from "@/app/auth/update-password/actions";
 import { checkAuthRateLimit } from "@/lib/auth-guard";
 import { passwordPolicyHint, validatePassword } from "@/lib/password-policy";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-export function UpdatePasswordForm() {
+interface UpdatePasswordFormProps {
+  /** Email of the account being recovered, shown so the user can confirm it. */
+  email?: string | null;
+}
+
+export function UpdatePasswordForm({ email }: UpdatePasswordFormProps) {
   const router = useRouter();
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -55,25 +61,28 @@ export function UpdatePasswordForm() {
     }
 
     try {
-      const supabase = createClient();
-      const { error } = await supabase.auth.updateUser({
+      const result = await updateRecoveredPassword({
         password,
+        confirmPassword,
       });
 
-      if (error) {
-        throw error;
+      if (!result.success) {
+        setErrorInfo({
+          title: "Update failed",
+          description: result.error || "Failed to update password.",
+        });
+        return;
       }
 
       setIsSuccess(true);
       setTimeout(() => {
         router.push("/dashboard");
         router.refresh();
-      }, 1500);
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Failed to update password";
+      }, 1800);
+    } catch {
       setErrorInfo({
         title: "Update failed",
-        description: message,
+        description: "Network error while updating your password. Please try again.",
       });
     } finally {
       setIsLoading(false);
@@ -99,7 +108,13 @@ export function UpdatePasswordForm() {
       {/* Heading */}
       <h1 className="text-3xl font-semibold tracking-tight text-foreground">Update password</h1>
       <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-        Set a new secure password for your account.
+        {email ? (
+          <>
+            Set a new secure password for <span className="font-medium text-foreground">{email}</span>.
+          </>
+        ) : (
+          "Set a new secure password for your account."
+        )}
       </p>
 
       {/* Error Info Box */}
@@ -118,8 +133,9 @@ export function UpdatePasswordForm() {
             <CheckCircle2 className="h-5 w-5" />
           </div>
           <h2 className="mt-3 text-base font-medium text-foreground">Password updated</h2>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Your password was changed successfully. Redirecting you to your account...
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            Your password was changed and your other devices were signed out. Redirecting you to
+            your account...
           </p>
         </div>
       ) : (
@@ -155,10 +171,27 @@ export function UpdatePasswordForm() {
             />
           </div>
 
+          <div className="flex items-start gap-2 rounded-lg border border-border/70 bg-muted/40 px-3 py-2.5">
+            <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              For your security, all other sessions will be signed out after the change.
+            </p>
+          </div>
+
           <Button type="submit" size="lg" className="w-full h-10 font-medium" disabled={isLoading}>
             {isLoading ? "Saving..." : "Update Password"}
             {!isLoading && <ArrowRight className="ml-2 h-4 w-4" />}
           </Button>
+
+          <div className="pt-1 text-center">
+            <Link
+              href="/auth/login"
+              className="inline-flex items-center text-xs text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <ArrowLeft className="mr-1.5 h-3.5 w-3.5" />
+              Back to sign in
+            </Link>
+          </div>
         </form>
       )}
 

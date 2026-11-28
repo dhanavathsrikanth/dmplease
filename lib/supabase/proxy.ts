@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { hasEnvVars } from "../utils";
+import { safeNextPath } from "../safe-redirect";
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({
@@ -99,12 +100,9 @@ export async function updateSession(request: NextRequest) {
     isAuthenticated &&
     (pathname === "/auth/login" || pathname === "/auth/sign-up" || pathname === "/login")
   ) {
-    const nextParam = request.nextUrl.searchParams.get("next") || "/dashboard";
-    const nextPath = nextParam.startsWith("/") ? nextParam : `/${nextParam}`;
-    const url = request.nextUrl.clone();
-    url.pathname = nextPath;
-    url.search = "";
-    return NextResponse.redirect(url);
+    const nextParam = request.nextUrl.searchParams.get("next");
+    const nextPath = safeNextPath(nextParam, request.nextUrl.origin, "/dashboard");
+    return NextResponse.redirect(new URL(nextPath, request.nextUrl.origin));
   }
 
   return supabaseResponse;

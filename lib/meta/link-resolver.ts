@@ -89,7 +89,11 @@ async function cacheSet<T>(key: string, value: T): Promise<void> {
 
 async function loadTrackedLink(code: string): Promise<TrackedLinkRow | null> {
   const cached = await cacheGet<TrackedLinkRow>(`shortlink:${code}`);
-  if (cached?.destination_url) return cached;
+  if (cached?.destination_url) {
+    // A deactivated link must stop resolving immediately, even if the cache
+    // still holds the row from before it was switched off.
+    return cached.active === true ? cached : null;
+  }
   if (!hasAdminDb()) return null;
   const { data } = await getAdminDb()
     .from("tracked_links")
@@ -98,8 +102,42 @@ async function loadTrackedLink(code: string): Promise<TrackedLinkRow | null> {
     .eq("active", true)
     .maybeSingle();
   const row = (data as TrackedLinkRow | null) ?? null;
-  if (row) await cacheSet(`shortlink:${row.short_code}`, row);
+  if (row?.active === true) await cacheSet(`shortlink:${row.short_code}`, row);
   return row;
+}
+
+/** Drops a short link from the Redis cache. Best effort: the cache is optional. */
+export async function invalidateTrackedLink(code: string): Promise<void> {
+  if (!hasUpstashRedis()) return;
+  try {
+    await getRedis().del(`shortlink:${code}`);
+  } catch {
+    // Cache is an optimisation.
+  }
+}
+
+/**
+ * Activates or deactivates a tracked link and clears its cache entry.
+ *
+ * Deactivation lives here because the campaign UI does not currently write to
+ * `tracked_links`; callers that retire a link should use this helper so the
+ * redirect stops resolving without waiting for the cache TTL.
+ */
+export async function setTrackedLinkActive(
+  code: string,
+  active: boolean
+): Promise<void> {
+  if (hasAdminDb()) {
+    try {
+      await getAdminDb()
+        .from("tracked_links")
+        .update({ active })
+        .eq("short_code", code);
+    } catch (error) {
+      console.warn("[tracking] Could not update tracked link state:", error);
+    }
+  }
+  await invalidateTrackedLink(code);
 }
 
 async function loadRotator(
@@ -152,6 +190,9 @@ async function getOrCreateLink(input: {
   if (existing?.destination_url === input.destination) return existing.short_code;
 
   if (hasAdminDb()) {
+    // The code is stable per (scope, recipient), so a changed destination must
+    // overwrite the existing row rather than be ignored on conflict.
+    await invalidateTrackedLink(code);
     await getAdminDb()
       .from("tracked_links")
       .upsert(
@@ -169,7 +210,7 @@ async function getOrCreateLink(input: {
           sequence_step: input.sequenceStep ?? null,
           active: true,
         },
-        { onConflict: "short_code", ignoreDuplicates: true }
+        { onConflict: "short_code" }
       );
     const row = await loadTrackedLink(code);
     if (row) return row.short_code;
@@ -287,6 +328,13 @@ export interface ClickRecord {
 const CLICK_BUFFER_KEY = "link_clicks:buffer";
 
 /**
+ * Hard cap on the Redis click buffer. `flush-link-clicks` is the only drain, so
+ * a sustained database outage would otherwise grow the list without bound.
+ * Trimming keeps the newest clicks and drops the oldest overflow.
+ */
+export const MAX_BUFFER = 10_000;
+
+/**
  * Records a click. Returns true when it is durably stored. If the database
  * write fails, the event is pushed to a Redis buffer so the cron flusher can
  * replay it — a click is never silently lost.
@@ -330,10 +378,30 @@ export async function recordTrackedLinkClick(input: {
   if (hasUpstashRedis()) {
     try {
       await getRedis().lpush(CLICK_BUFFER_KEY, JSON.stringify(row));
-      return true;
     } catch (error) {
       console.warn("[tracking] Could not buffer click:", error);
+      return false;
     }
+    // The click is buffered at this point, so trimming is best effort: a failed
+    // trim must not turn a stored click into a reported failure.
+    try {
+      const redis = getRedis();
+      let length: number | null = null;
+      try {
+        length = await redis.llen(CLICK_BUFFER_KEY);
+      } catch {
+        // The length is only used for the warning below.
+      }
+      await redis.ltrim(CLICK_BUFFER_KEY, 0, MAX_BUFFER - 1);
+      if (length !== null && length > MAX_BUFFER) {
+        console.warn(
+          `[tracking] Click buffer exceeded ${MAX_BUFFER} entries (${length}); trimmed oldest.`
+        );
+      }
+    } catch (error) {
+      console.warn("[tracking] Could not trim click buffer:", error);
+    }
+    return true;
   }
   return false;
 }

@@ -4,7 +4,9 @@ import {
   matchesRuleKeyword,
   matchesRuleKeywords,
   normalizeFallbackReply,
+  pickDispatchableCandidate,
   selectInboundRule,
+  selectInboundRuleCandidates,
   type DispatchRule,
 } from "@/lib/dm-rules";
 
@@ -40,9 +42,12 @@ describe("DM keyword matching", () => {
     expect(matchesRuleKeyword("list of prices", "price list")).toBe(false);
   });
 
-  it("treats blank keywords as match-all", () => {
+  it("never matches an empty or whitespace keyword", () => {
+    expect(matchesRuleKeyword("anything", "")).toBe(false);
+    expect(matchesRuleKeyword("anything", "   ")).toBe(false);
+    expect(matchesRuleKeywords(["  "], "anything")).toBe(false);
+    // An empty keyword list is still the explicit catch-all signal.
     expect(matchesRuleKeywords([], "anything")).toBe(true);
-    expect(matchesRuleKeyword("anything", "  ")).toBe(true);
   });
 
   it("handles regex characters safely", () => {
@@ -78,6 +83,43 @@ describe("deterministic inbound rule selection", () => {
 
   it("returns no rule when nothing is configured", () => {
     expect(selectInboundRule([], "hello").rule).toBeNull();
+  });
+
+  it("returns every matching rule in dispatch order", () => {
+    const candidates = selectInboundRuleCandidates(rules, "vip and guide");
+    expect(candidates.map((candidate) => candidate.rule.id)).toEqual([
+      "specific-high",
+      "specific-low",
+      "catch",
+      "catch-low",
+    ]);
+    expect(candidates[0].matchedKeyword).toBe("vip");
+    expect(candidates[2].catchAll).toBe(true);
+  });
+
+  it("tries the next candidate when the current rule is throttled", () => {
+    const candidates = selectInboundRuleCandidates(rules, "vip and guide");
+    const blocked = new Set(["specific-high"]);
+
+    const selection = pickDispatchableCandidate(candidates, blocked);
+    expect(selection?.rule.id).toBe("specific-low");
+    expect(selection?.matchedKeyword).toBe("guide");
+  });
+
+  it("falls through to the catch-all when every keyword rule is blocked", () => {
+    const candidates = selectInboundRuleCandidates(rules, "vip and guide");
+    const blocked = new Set(["specific-high", "specific-low"]);
+
+    const selection = pickDispatchableCandidate(candidates, blocked);
+    expect(selection?.rule.id).toBe("catch");
+    expect(selection?.catchAll).toBe(true);
+  });
+
+  it("returns null when every candidate is blocked", () => {
+    const candidates = selectInboundRuleCandidates(rules, "vip and guide");
+    const blocked = new Set(candidates.map((candidate) => candidate.rule.id));
+
+    expect(pickDispatchableCandidate(candidates, blocked)).toBeNull();
   });
 });
 

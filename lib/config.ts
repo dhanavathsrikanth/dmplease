@@ -6,11 +6,9 @@
  * All environment reads that affect security go through this module.
  */
 
-const DEV_ONLY_SECRET = "dmplease-local-development-only-change-me";
+import { createHmac } from "crypto";
 
-/** The key that older installs used when TOKEN_VAULT_SECRET was not configured. */
-export const LEGACY_VAULT_SECRET =
-  "a8b3e9447c231791a826477bfa9c338290eef219a5c814df39c4a8563a45c291";
+const DEV_ONLY_SECRET = "dmplease-local-development-only-change-me";
 
 export function isProduction(): boolean {
   return process.env.NODE_ENV === "production";
@@ -94,42 +92,97 @@ export function getVaultSecret(): string {
 }
 
 /**
+ * Derives a purpose-specific key from the vault secret.
+ *
+ * The vault secret is the root key for several unrelated HMACs (workspace
+ * tokens, tracked links, short codes). Deriving a separate key per purpose
+ * means a signature minted for one purpose can never be replayed against
+ * another, and rotating a single purpose does not require re-encrypting the
+ * vault. The vault encryption key itself is unchanged.
+ */
+export function getPurposeSecret(purpose: string): string {
+  return createHmac("sha256", getVaultSecret())
+    .update(`dmplease:${purpose}`)
+    .digest("hex");
+}
+
+/**
  * Keys accepted when decrypting tokens written by older versions.
- * The legacy constant is never used to encrypt new tokens.
+ *
+ * There is no hardcoded fallback in any environment: a legacy key must be
+ * supplied explicitly through TOKEN_VAULT_LEGACY_SECRET.
  */
 export function getLegacyVaultSecrets(): string[] {
   const configured = process.env.TOKEN_VAULT_LEGACY_SECRET?.trim();
-  return configured && configured !== LEGACY_VAULT_SECRET
-    ? [configured, LEGACY_VAULT_SECRET]
-    : [LEGACY_VAULT_SECRET];
+  return configured ? [configured] : [];
 }
 
+/**
+ * HMAC key for OAuth state values.
+ *
+ * Production requires a dedicated OAUTH_STATE_SECRET: the vault key must never
+ * double as the state-signing key, so a vault compromise cannot forge state.
+ * Local development and tests fall back to TOKEN_VAULT_SECRET, then the
+ * clearly-labelled dev constant.
+ */
 export function getOAuthStateSecret(): string {
   const dedicated = process.env.OAUTH_STATE_SECRET?.trim();
   if (dedicated) return dedicated;
+
+  if (isProduction()) {
+    throw new Error("OAUTH_STATE_SECRET must be configured in production.");
+  }
+
+  // Only local development and tests may use a fallback. Any other runtime
+  // (staging, preview) fails closed rather than signing state with a public
+  // constant.
+  const nodeEnv = process.env.NODE_ENV;
+  if (nodeEnv !== "development" && nodeEnv !== "test") {
+    throw new Error("OAUTH_STATE_SECRET must be configured in production.");
+  }
+
   const vault = process.env.TOKEN_VAULT_SECRET?.trim();
   if (vault) return vault;
-  return requireSecret("OAUTH_STATE_SECRET", DEV_ONLY_SECRET);
+
+  return DEV_ONLY_SECRET;
 }
 
 /** All keys accepted when validating in-flight OAuth state values. */
 export function getOAuthStateSecrets(): string[] {
   const current = getOAuthStateSecret();
-  const extras = [process.env.TOKEN_VAULT_SECRET, LEGACY_VAULT_SECRET, DEV_ONLY_SECRET]
-    .map((value) => value?.trim())
-    .filter((value): value is string => Boolean(value && value !== current));
-  return [current, ...new Set(extras)];
+  const previous = process.env.OAUTH_STATE_SECRET_PREVIOUS?.trim();
+  return previous && previous !== current ? [current, previous] : [current];
 }
 
-/** Meta app secrets accepted for webhook signature verification. */
+/**
+ * Signing key for the short-lived password-recovery grant.
+ *
+ * A dedicated key is preferred so rotating OAuth state does not invalidate
+ * in-flight recovery links. Falls back to the OAuth state key, which requires
+ * OAUTH_STATE_SECRET in production.
+ */
+export function getRecoveryGrantSecret(): string {
+  const dedicated = cleanEnv("RECOVERY_GRANT_SECRET");
+  if (dedicated) return dedicated;
+  return getOAuthStateSecret();
+}
+
+/**
+ * Meta app secret accepted for webhook signature verification.
+ *
+ * Only the app that owns the webhook endpoint may sign its payloads, so at most
+ * one secret is ever returned. META_APP_SECRET is authoritative; the legacy
+ * INSTAGRAM_APP_SECRET / FACEBOOK_APP_SECRET names are read only when it is
+ * unset. Treating them as independent identities would let a second app's
+ * secret sign payloads for this endpoint.
+ */
 export function getWebhookSecrets(): string[] {
-  return [
-    process.env.META_APP_SECRET,
-    process.env.INSTAGRAM_APP_SECRET,
-    process.env.FACEBOOK_APP_SECRET,
-  ]
-    .map((value) => value?.trim())
-    .filter((value): value is string => Boolean(value));
+  const primary = cleanEnv("META_APP_SECRET");
+  if (primary) return [primary];
+
+  const alias =
+    cleanEnv("INSTAGRAM_APP_SECRET") || cleanEnv("FACEBOOK_APP_SECRET");
+  return alias ? [alias] : [];
 }
 
 export function getWebhookVerifyToken(): string {
@@ -142,4 +195,22 @@ export function getWebhookVerifyToken(): string {
 
 export function getCronSecret(): string {
   return requireSecret("CRON_SECRET");
+}
+
+/**
+ * Secret for privileged admin actions (manual delivery, webhook replay, DLQ
+ * operations, profile sync, schedule setup).
+ *
+ * This is deliberately separate from CRON_SECRET: a leaked cron token must not
+ * grant arbitrary DM sending or webhook replay. Production fails closed when
+ * the dedicated secret is missing; local development falls back to the cron
+ * secret so a fresh checkout still boots.
+ */
+export function getAdminApiSecret(): string {
+  const dedicated = process.env.ADMIN_API_SECRET?.trim();
+  if (dedicated) return dedicated;
+  if (isProduction()) {
+    throw new Error("ADMIN_API_SECRET must be configured in production.");
+  }
+  return getCronSecret();
 }

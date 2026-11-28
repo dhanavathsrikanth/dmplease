@@ -9,6 +9,7 @@ function input(overrides: Partial<PublicReportInput> = {}): PublicReportInput {
   return {
     workspaceName: "Acme",
     days: 30,
+    reportKey: "report-token-1",
     dms: [
       {
         automation_id: "a1",
@@ -101,7 +102,6 @@ describe("summarizePublicReport", () => {
   it("builds per-campaign and per-account breakdowns", () => {
     const report = summarizePublicReport(input());
     expect(report.campaigns[0]).toMatchObject({
-      id: "a1",
       name: "Guide campaign",
       dms: 2,
       clicks: 1,
@@ -109,17 +109,61 @@ describe("summarizePublicReport", () => {
       revenueMinor: 49900,
     });
     expect(report.accounts[0]).toMatchObject({
-      id: "acc1",
       username: "acme",
       dms: 2,
       deliveryRate: 100,
       conversions: 1,
     });
     expect(report.accounts[1]).toMatchObject({
-      id: "acc2",
       dms: 0,
       deliveryRate: 0,
     });
+  });
+
+  it("never exposes raw automation or account ids", () => {
+    const report = summarizePublicReport(input());
+    const rawIds = ["a1", "a2", "acc1", "acc2"];
+    const exposed = [
+      ...report.campaigns.map((row) => row.id),
+      ...report.accounts.map((row) => row.id),
+    ];
+
+    for (const id of exposed) {
+      expect(rawIds).not.toContain(id);
+      expect(id).toMatch(/^[A-Za-z0-9_-]{16}$/);
+    }
+    expect(new Set(exposed).size).toBe(exposed.length);
+  });
+
+  it("derives stable opaque ids for the same token", () => {
+    const first = summarizePublicReport(input());
+    const second = summarizePublicReport(input());
+
+    expect(second.campaigns.map((row) => row.id)).toEqual(
+      first.campaigns.map((row) => row.id)
+    );
+    expect(second.accounts.map((row) => row.id)).toEqual(
+      first.accounts.map((row) => row.id)
+    );
+  });
+
+  it("derives different opaque ids for a different token", () => {
+    const first = summarizePublicReport(input());
+    const second = summarizePublicReport(
+      input({ reportKey: "report-token-2" })
+    );
+
+    expect(second.campaigns.map((row) => row.id)).not.toEqual(
+      first.campaigns.map((row) => row.id)
+    );
+    expect(second.accounts.map((row) => row.id)).not.toEqual(
+      first.accounts.map((row) => row.id)
+    );
+  });
+
+  it("does not include is_verified_manual anywhere in the payload", () => {
+    const report = summarizePublicReport(input());
+    expect(JSON.stringify(report)).not.toContain("is_verified_manual");
   });
 
   it("handles an empty report", () => {

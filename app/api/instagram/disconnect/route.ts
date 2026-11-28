@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { decryptToken } from "@/lib/meta/vault";
 import { unsubscribeInstagramAccountFromWebhooks } from "@/lib/meta/client";
 import { hasDatabaseUrl } from "@/lib/config";
+import { getAdminDb, hasAdminDb } from "@/lib/db-admin";
 
 export async function POST() {
   const user = await getCurrentUser();
@@ -23,6 +24,7 @@ export async function POST() {
       .eq("owner_id", user.id);
 
     const workspaceIds = (workspaces || []).map((w) => w.id);
+    let accountIds: string[] = [];
 
     // 2. Attempt to unsubscribe from Meta webhooks before deleting
     if (workspaceIds.length > 0) {
@@ -32,6 +34,9 @@ export async function POST() {
         .in("workspace_id", workspaceIds);
 
       if (accounts && accounts.length > 0) {
+        accountIds = accounts
+          .map((acc) => acc.instagram_id)
+          .filter((id): id is string => Boolean(id));
         for (const acc of accounts) {
           if (acc.access_token && acc.instagram_id) {
             try {
@@ -63,6 +68,24 @@ export async function POST() {
         .from("instagram_accounts")
         .delete()
         .in("workspace_id", workspaceIds);
+    }
+
+    // 4b. Purge the webhook ledger for the disconnected accounts. The ledger
+    // has no workspace column, so it is keyed by the Instagram account id.
+    // This is the tenant-cascade path that keeps payloads from outliving the
+    // connection they were collected for.
+    if (hasAdminDb() && accountIds.length > 0) {
+      try {
+        await getAdminDb()
+          .from("webhook_events")
+          .delete()
+          .in("instagram_account_id", accountIds);
+      } catch (error) {
+        console.warn(
+          "[Instagram Disconnect] Could not purge webhook ledger:",
+          error
+        );
+      }
     }
 
     // 5. Erase from Prisma database if direct connection is available

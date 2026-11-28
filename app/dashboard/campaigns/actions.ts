@@ -303,8 +303,35 @@ export async function updateCampaign(
   }
 }
 
+/**
+ * Toggles a campaign's active flag. Ownership is checked explicitly (RLS is a
+ * second line of defence) before the write.
+ */
 export async function toggleCampaignActive(id: string, active: boolean) {
   const supabase = await createClient();
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+  if (authError || !user) return { success: false, error: "Not authenticated" };
+
+  const { data: campaign } = await supabase
+    .from("automations")
+    .select("id, workspace_id")
+    .eq("id", id)
+    .maybeSingle();
+  if (!campaign) return { success: false, error: "Campaign not found" };
+
+  const { data: ownedWorkspace } = await supabase
+    .from("workspaces")
+    .select("id")
+    .eq("id", campaign.workspace_id)
+    .eq("owner_id", user.id)
+    .maybeSingle();
+  if (!ownedWorkspace) {
+    return { success: false, error: "Not authorized to edit this campaign" };
+  }
+
   const { error } = await supabase
     .from("automations")
     .update({ active, updated_at: new Date().toISOString() })
@@ -338,7 +365,12 @@ export async function drainDmQueueAction() {
   }
 
   try {
-    const result = await runDmQueueDrain(getAdminDb());
+    // Scope the manual drain to the caller's workspaces. The cron and QStash
+    // workers still drain globally; a tenant button must not spend another
+    // tenant's send budget or report a global queue depth.
+    const result = await runDmQueueDrain(getAdminDb(), {
+      workspaceIds: workspaces.map((workspace) => workspace.id),
+    });
     revalidatePath("/dashboard/overview");
     return { success: true, ...result };
   } catch (error) {
@@ -376,8 +408,35 @@ export async function setSafetyPausedAction(accountId: string, paused: boolean) 
   return { success: true };
 }
 
+/**
+ * Deletes a campaign. Ownership is checked explicitly (RLS is a second line of
+ * defence) before the delete.
+ */
 export async function deleteCampaign(id: string) {
   const supabase = await createClient();
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+  if (authError || !user) return { success: false, error: "Not authenticated" };
+
+  const { data: campaign } = await supabase
+    .from("automations")
+    .select("id, workspace_id")
+    .eq("id", id)
+    .maybeSingle();
+  if (!campaign) return { success: false, error: "Campaign not found" };
+
+  const { data: ownedWorkspace } = await supabase
+    .from("workspaces")
+    .select("id")
+    .eq("id", campaign.workspace_id)
+    .eq("owner_id", user.id)
+    .maybeSingle();
+  if (!ownedWorkspace) {
+    return { success: false, error: "Not authorized to edit this campaign" };
+  }
+
   const { error } = await supabase.from("automations").delete().eq("id", id);
 
   if (error) {

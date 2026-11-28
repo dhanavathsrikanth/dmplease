@@ -41,7 +41,14 @@ function backoffMs(attempts: number): number {
   return Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * Math.pow(2, attempts - 1));
 }
 
-/** Upserts a queued overflow row; idempotent per (automation, recipient, comment). */
+/**
+ * Upserts a queued overflow row; idempotent per (automation, recipient, comment).
+ *
+ * The dedupe index is partial (`WHERE kind = 'queued'`), and PostgREST's
+ * `on_conflict` cannot express an index predicate. The RPC performs the
+ * `ON CONFLICT ... WHERE kind = 'queued'` upsert atomically, so a retried
+ * webhook refreshes the parked row instead of failing silently.
+ */
 export async function enqueueQueuedDm(input: {
   workspaceId: string;
   automationId: string;
@@ -53,25 +60,21 @@ export async function enqueueQueuedDm(input: {
   buttonUrl?: string | null;
 }): Promise<void> {
   if (!hasAdminDb()) return;
-  const db = getAdminDb();
-  await db.from("pending_dms").upsert(
-    {
-      workspace_id: input.workspaceId,
-      kind: "queued",
-      automation_id: input.automationId,
-      instagram_account_id: input.instagramAccountId,
-      recipient_id: input.recipientId,
-      comment_id: input.commentId,
-      message: input.message,
-      button_text: input.buttonText ?? null,
-      button_url: input.buttonUrl ?? null,
-      status: "pending",
-      next_attempt_at: new Date().toISOString(),
-      attempts: 0,
-      last_error: null,
-    },
-    { onConflict: "automation_id,recipient_id,comment_id", ignoreDuplicates: false }
-  );
+  const { error } = await getAdminDb().rpc("enqueue_queued_dm", {
+    p_workspace_id: input.workspaceId,
+    p_automation_id: input.automationId,
+    p_instagram_account_id: input.instagramAccountId,
+    p_recipient_id: input.recipientId,
+    p_comment_id: input.commentId,
+    p_message: input.message,
+    p_button_text: input.buttonText ?? null,
+    p_button_url: input.buttonUrl ?? null,
+  });
+  if (error) {
+    // A parked DM that cannot be written is a lost DM. Surface it instead of
+    // letting the caller believe the overflow was queued.
+    console.error("[dm-queue] Could not enqueue overflow DM:", error);
+  }
 }
 
 export async function getQueueStats(
@@ -112,8 +115,18 @@ export async function getQueueStats(
   };
 }
 
+export interface DmQueueDrainOptions {
+  /**
+   * When provided, only rows in these workspaces are drained. The cron and
+   * QStash workers drain globally; a tenant-triggered "Drain now" passes its
+   * own workspace ids so one tenant cannot spend another tenant's send budget.
+   */
+  workspaceIds?: string[];
+}
+
 export async function runDmQueueDrain(
-  db: SupabaseClient = getAdminDb()
+  db: SupabaseClient = getAdminDb(),
+  options: DmQueueDrainOptions = {}
 ): Promise<QueueSummary> {
   const summary: QueueSummary = {
     processed: 0,
@@ -125,16 +138,34 @@ export async function runDmQueueDrain(
   };
   if (!hasAdminDb()) return summary;
 
-  const locked = await withCronLock("dmplease:dmqueue:drain", 55, async () => {
+  const workspaceIds = options.workspaceIds;
+  // An explicit empty scope means "this tenant has no workspaces"; do not fall
+  // through to a global drain.
+  if (workspaceIds && workspaceIds.length === 0) return summary;
+
+  // A tenant-triggered drain must not hold the global worker lock: otherwise a
+  // tenant could repeatedly block the cron/QStash drain. Scope the lock to the
+  // workspace set so tenant drains only serialize with themselves.
+  const lockKey = workspaceIds
+    ? `dmplease:dmqueue:drain:${[...workspaceIds].sort().join(",")}`
+    : "dmplease:dmqueue:drain";
+
+  const locked = await withCronLock(lockKey, 55, async () => {
     const now = new Date().toISOString();
-    const { data: rows } = await db
+    let batchQuery = db
       .from("pending_dms")
       .select(
         "id, workspace_id, automation_id, instagram_account_id, recipient_id, comment_id, attempts"
       )
       .eq("kind", "queued")
       .eq("status", "pending")
-      .lte("next_attempt_at", now)
+      .lte("next_attempt_at", now);
+    if (workspaceIds) batchQuery = batchQuery.in("workspace_id", workspaceIds);
+    // Order by readiness, then creation. This matches idx_pending_dms_drain
+    // (kind, status, next_attempt_at, created_at), so a large queue is read in
+    // index order instead of sorting every ready row.
+    const { data: rows } = await batchQuery
+      .order("next_attempt_at", { ascending: true })
       .order("created_at", { ascending: true })
       .limit(BATCH_SIZE);
 
@@ -147,6 +178,7 @@ export async function runDmQueueDrain(
           last_attempt_at: now,
         })
         .eq("id", row.id)
+        .eq("workspace_id", row.workspace_id)
         .eq("status", "pending")
         .select("id")
         .maybeSingle();
@@ -161,16 +193,22 @@ export async function runDmQueueDrain(
         .eq("workspace_id", row.workspace_id)
         .eq("external_id", row.comment_id)
         .maybeSingle();
+      // Bind the automation to the row's workspace. Without this predicate a
+      // forged pending_dms row could render another tenant's campaign copy and
+      // write contacts/logs into that tenant.
       const { data: automationRow } = await db
         .from("automations")
         .select("*")
         .eq("id", row.automation_id)
+        .eq("workspace_id", row.workspace_id)
+        .eq("trigger_type", "COMMENT")
         .maybeSingle();
       const { data: accountRow } = commentEvent?.instagram_account_id
         ? await db
             .from("instagram_accounts")
             .select("instagram_id, access_token")
             .eq("id", commentEvent.instagram_account_id)
+            .eq("workspace_id", row.workspace_id)
             .maybeSingle()
         : { data: null };
 
@@ -182,7 +220,8 @@ export async function runDmQueueDrain(
             last_error: "Missing automation, comment or account",
             last_attempt_at: new Date().toISOString(),
           })
-          .eq("id", row.id);
+          .eq("id", row.id)
+          .eq("workspace_id", row.workspace_id);
         summary.failed++;
         summary.errors.push(`Queued DM ${row.id} failed: missing data`);
         continue;
@@ -202,13 +241,21 @@ export async function runDmQueueDrain(
       try {
         const outcome = await processCommentEventForAutomation(event, auto, attempts);
         if (outcome.sent) {
-          await db.from("pending_dms").delete().eq("id", row.id);
+          await db
+            .from("pending_dms")
+            .delete()
+            .eq("id", row.id)
+            .eq("workspace_id", row.workspace_id);
           summary.sent++;
         } else if (outcome.error) {
           throw outcome.error;
         } else {
           // Skipped (already contacted etc.) — drop the queue row.
-          await db.from("pending_dms").delete().eq("id", row.id);
+          await db
+            .from("pending_dms")
+            .delete()
+            .eq("id", row.id)
+            .eq("workspace_id", row.workspace_id);
           summary.skipped++;
         }
       } catch (error) {
@@ -223,7 +270,8 @@ export async function runDmQueueDrain(
               last_error: message.slice(0, 500),
               last_attempt_at: new Date().toISOString(),
             })
-            .eq("id", row.id);
+            .eq("id", row.id)
+            .eq("workspace_id", row.workspace_id);
         } else {
           await db
             .from("pending_dms")
@@ -235,17 +283,24 @@ export async function runDmQueueDrain(
                 Date.now() + backoffMs(attempts)
               ).toISOString(),
             })
-            .eq("id", row.id);
+            .eq("id", row.id)
+            .eq("workspace_id", row.workspace_id);
         }
       }
     }
 
-    const { count } = await db
+    // Bounded existence check instead of COUNT(*). The only consumer asks
+    // "is there more work?", and an exact count over a large queue is O(n) and
+    // would expose the global queue depth to a tenant-triggered drain.
+    let moreQuery = db
       .from("pending_dms")
-      .select("id", { count: "exact", head: true })
+      .select("id")
       .eq("kind", "queued")
-      .eq("status", "pending");
-    summary.remaining = count ?? 0;
+      .eq("status", "pending")
+      .lte("next_attempt_at", new Date().toISOString());
+    if (workspaceIds) moreQuery = moreQuery.in("workspace_id", workspaceIds);
+    const { data: more } = await moreQuery.limit(1);
+    summary.remaining = more && more.length > 0 ? 1 : 0;
     return summary;
   });
 

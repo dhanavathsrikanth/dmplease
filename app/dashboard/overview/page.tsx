@@ -114,13 +114,11 @@ async function OverviewContent({ searchParams }: PageProps) {
   const range = resolvedParams?.range || "all";
 
   await connection();
-  const [profile, health] = await Promise.all([
-    getCurrentProfile(),
-    getWebhookHealth(24 * 7),
-  ]);
+  const profile = await getCurrentProfile();
   const supabase = await createClient();
 
   const workspaceIds = (profile?.ownedWorkspaces || []).map((w) => w.id);
+  const health = await getWebhookHealth(24 * 7, workspaceIds);
   const reportLink = workspaceIds[0]
     ? await getReportLink(workspaceIds[0])
     : null;

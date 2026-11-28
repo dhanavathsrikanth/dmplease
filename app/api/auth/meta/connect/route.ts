@@ -2,29 +2,55 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/profile";
 import { signOAuthState } from "@/lib/meta/client";
 import { cleanEnv } from "@/lib/config";
+import { getOAuthOrigin } from "@/lib/meta/oauth-origin";
+import { safeNextPath } from "@/lib/safe-redirect";
+
+/**
+ * Redirects to the local /auth/error page with a relative Location header.
+ * NextResponse.redirect() requires an absolute URL, and building one from the
+ * request would reintroduce the header-trust problem this route avoids.
+ */
+function authErrorRedirect(message: string): NextResponse {
+  return new NextResponse(null, {
+    status: 307,
+    headers: { Location: `/auth/error?error=${encodeURIComponent(message)}` },
+  });
+}
 
 export async function GET(request: NextRequest) {
-  const nextParam = request.nextUrl.searchParams.get("next") || "/dashboard/settings";
+  const rawNext = request.nextUrl.searchParams.get("next");
   const provider = request.nextUrl.searchParams.get("provider");
+
+  // The redirect_uri must come from configuration, never from request
+  // headers: a forged Host / X-Forwarded-Host would move it off-site.
+  let origin: string;
+  try {
+    origin = getOAuthOrigin();
+  } catch {
+    return authErrorRedirect(
+      "APP_URL or NEXT_PUBLIC_SITE_URL must be configured for OAuth."
+    );
+  }
+
+  // A tunnel or localhost origin means we are testing locally, so a custom
+  // META_LOGIN_URL template's redirect_uri must be overridden to match.
+  const tunnelOrigin = (
+    cleanEnv("TUNNEL_URL") || cleanEnv("CLOUDFLARE_TUNNEL_URL")
+  ).replace(/\/$/, "");
+  const isLocalOrigin =
+    (Boolean(tunnelOrigin) && origin === tunnelOrigin) ||
+    /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+
+  // Validate at mint time so the signed state never carries an off-origin
+  // target. The callback validates again at redirect time.
+  const nextParam = safeNextPath(rawNext, origin, "/dashboard/settings");
+
   const user = await getCurrentUser();
   if (!user) {
     const loginUrl = new URL("/auth/login", request.url);
     loginUrl.searchParams.set("next", nextParam);
     return NextResponse.redirect(loginUrl);
   }
-
-  // Determine correct public origin (handles Vercel production domains, custom domains, and local tunnels)
-  const host = request.headers.get("x-forwarded-host") || request.nextUrl.host;
-  const proto = request.headers.get("x-forwarded-proto") || (request.nextUrl.protocol.replace(":", "") || "https");
-  const isLocal = host.includes("localhost") || host.includes("127.0.0.1");
-
-  const rawOrigin = (isLocal && (process.env.TUNNEL_URL || process.env.CLOUDFLARE_TUNNEL_URL))
-    ? (process.env.TUNNEL_URL || process.env.CLOUDFLARE_TUNNEL_URL)!
-    : (cleanEnv("APP_URL") || `${proto}://${host}`);
-
-  const origin = rawOrigin
-    .replace(/^[\uFEFF\u200B-\u200D\s]+|[\uFEFF\u200B-\u200D\s]+$/g, "")
-    .replace(/\/$/, "");
 
   const redirectUri = `${origin}/api/auth/meta/callback`;
 
@@ -46,7 +72,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(errorUrl);
     }
 
-    const state = signOAuthState(user.id, nextParam, "instagram");
+    const state = await signOAuthState(user.id, nextParam, "instagram");
     const igParams = new URLSearchParams({
       client_id: igAppId,
       redirect_uri: redirectUri,
@@ -69,7 +95,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(errorUrl);
   }
 
-  const state = signOAuthState(user.id, nextParam, "facebook");
+  const state = await signOAuthState(user.id, nextParam, "facebook");
 
   // If a full custom META_LOGIN_URL template is provided in environment variables
   if (process.env.META_LOGIN_URL) {
@@ -77,8 +103,8 @@ export async function GET(request: NextRequest) {
       const template = process.env.META_LOGIN_URL.trim();
       const loginUrl = new URL(template);
       loginUrl.searchParams.set("state", state);
-      // If testing locally with a tunnel, route callback to the active local tunnel
-      if (isLocal && (process.env.TUNNEL_URL || process.env.CLOUDFLARE_TUNNEL_URL)) {
+      // If testing locally with a tunnel, route callback to the pinned origin
+      if (isLocalOrigin) {
         loginUrl.searchParams.set("redirect_uri", redirectUri);
       }
       return NextResponse.redirect(loginUrl.toString());

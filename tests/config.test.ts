@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { hasDatabaseUrl, hasSecret, requireSecret } from "@/lib/config";
+import {
+  getWebhookSecrets,
+  hasDatabaseUrl,
+  hasSecret,
+  requireSecret,
+} from "@/lib/config";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -36,5 +41,47 @@ describe("runtime configuration", () => {
     vi.stubEnv("NODE_ENV", "development");
     vi.stubEnv("CRON_SECRET", "");
     expect(requireSecret("CRON_SECRET", "dev-only")).toBe("dev-only");
+  });
+});
+
+describe("getWebhookSecrets", () => {
+  it("prefers META_APP_SECRET over the legacy aliases", () => {
+    vi.stubEnv("META_APP_SECRET", "meta-secret");
+    vi.stubEnv("INSTAGRAM_APP_SECRET", "instagram-secret");
+    vi.stubEnv("FACEBOOK_APP_SECRET", "facebook-secret");
+
+    expect(getWebhookSecrets()).toEqual(["meta-secret"]);
+  });
+
+  it("uses INSTAGRAM_APP_SECRET only when META_APP_SECRET is unset", () => {
+    vi.stubEnv("META_APP_SECRET", "");
+    vi.stubEnv("INSTAGRAM_APP_SECRET", "instagram-secret");
+    vi.stubEnv("FACEBOOK_APP_SECRET", "facebook-secret");
+
+    expect(getWebhookSecrets()).toEqual(["instagram-secret"]);
+  });
+
+  it("uses FACEBOOK_APP_SECRET only when the other names are unset", () => {
+    vi.stubEnv("META_APP_SECRET", "");
+    vi.stubEnv("INSTAGRAM_APP_SECRET", "");
+    vi.stubEnv("FACEBOOK_APP_SECRET", "facebook-secret");
+
+    expect(getWebhookSecrets()).toEqual(["facebook-secret"]);
+  });
+
+  it("returns at most one secret even when every name is configured", () => {
+    vi.stubEnv("META_APP_SECRET", "meta-secret");
+    vi.stubEnv("INSTAGRAM_APP_SECRET", "instagram-secret");
+    vi.stubEnv("FACEBOOK_APP_SECRET", "facebook-secret");
+
+    expect(getWebhookSecrets()).toHaveLength(1);
+  });
+
+  it("returns no secret when nothing is configured", () => {
+    vi.stubEnv("META_APP_SECRET", "");
+    vi.stubEnv("INSTAGRAM_APP_SECRET", "");
+    vi.stubEnv("FACEBOOK_APP_SECRET", "");
+
+    expect(getWebhookSecrets()).toEqual([]);
   });
 });

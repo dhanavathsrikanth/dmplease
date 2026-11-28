@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { csvCell } from "@/lib/csv";
 
 interface ContactExportRow {
   id: string;
@@ -34,14 +35,6 @@ const HEADERS = [
   "last_interaction_at",
   "created_at",
 ];
-
-/** Quote every value and double embedded quotes so spreadsheets parse reliably. */
-function csvCell(value: unknown): string {
-  if (value === null || value === undefined) return "";
-  const raw =
-    typeof value === "object" ? JSON.stringify(value) : String(value);
-  return `"${raw.replace(/"/g, '""')}"`;
-}
 
 export async function GET(request: NextRequest) {
   const supabase = await createClient();

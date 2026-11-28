@@ -41,9 +41,11 @@ export function DmQueueCard({
           sent: number;
           skipped: number;
           failed: number;
+          remaining?: number;
         };
         setMessage(
-          `Processed ${r.processed}: ${r.sent} sent, ${r.skipped} skipped, ${r.failed} failed.`
+          `Processed ${r.processed}: ${r.sent} sent, ${r.skipped} skipped, ${r.failed} failed.` +
+            (r.remaining ? " More are queued — run again to continue." : "")
         );
       } catch {
         setError("Network error while draining the queue.");

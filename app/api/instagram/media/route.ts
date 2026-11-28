@@ -14,6 +14,8 @@ export async function GET() {
     const workspaceIds = (profile?.ownedWorkspaces || []).map((w) => w.id);
 
     let accountId: string | null = null;
+    let accountRowId: string | null = null;
+    let accountWorkspaceId: string | null = null;
     let accessToken: string | null = null;
     let username: string | null = null;
     let profilePictureUrl: string | null = null;
@@ -24,12 +26,14 @@ export async function GET() {
       const { data: accounts } = await supabase
         .from("instagram_accounts")
         .select(
-          "instagram_id, access_token, username, profile_picture_url, followers_count, is_verified, is_verified_manual"
+          "id, workspace_id, instagram_id, access_token, username, profile_picture_url, followers_count, is_verified, is_verified_manual"
         )
         .in("workspace_id", workspaceIds)
         .limit(1);
 
       if (accounts && accounts.length > 0) {
+        accountRowId = accounts[0].id;
+        accountWorkspaceId = accounts[0].workspace_id;
         accountId = accounts[0].instagram_id;
         username = accounts[0].username;
         profilePictureUrl = accounts[0].profile_picture_url ?? null;
@@ -65,7 +69,10 @@ export async function GET() {
     }
 
     // Best-effort refresh of the real avatar / verified signal for the preview.
-    const synced = await syncInstagramProfile();
+    const synced =
+      accountRowId && accountWorkspaceId
+        ? await syncInstagramProfile(accountRowId, accountWorkspaceId)
+        : null;
     if (synced) {
       profilePictureUrl = synced.profilePictureUrl ?? profilePictureUrl;
       followersCount = synced.followersCount ?? followersCount;

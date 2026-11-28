@@ -3,7 +3,7 @@ import { connection } from "next/server";
 import { AlertTriangle, Gauge, ShieldAlert } from "lucide-react";
 import { getCurrentUser } from "@/lib/profile";
 import { getAdminDb, hasAdminDb } from "@/lib/db-admin";
-import { ARCHITECTURE_BRIEF, isAdminEmail, THRESHOLDS, type CapacityMetrics } from "@/lib/alerts/capacity";
+import { ARCHITECTURE_BRIEF, isVerifiedAdmin, THRESHOLDS, type CapacityMetrics } from "@/lib/alerts/capacity";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -36,7 +36,7 @@ async function AdminAlertsContent() {
   await connection();
   const user = await getCurrentUser();
 
-  if (!isAdminEmail(user?.email)) {
+  if (!isVerifiedAdmin(user)) {
     return (
       <main className="max-w-3xl space-y-3">
         <h1 className="text-2xl font-semibold">Admin only</h1>

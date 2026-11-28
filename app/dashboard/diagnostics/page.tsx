@@ -20,14 +20,21 @@ import { getWebhookHealth } from "@/lib/meta/webhook-events";
 import { getQueueStats } from "@/lib/dm-queue";
 import { hasWebhookSigningSecret } from "@/lib/meta/webhook";
 import { hasDatabaseUrl, hasSecret } from "@/lib/config";
-import { getCurrentProfile } from "@/lib/profile";
+import { isVerifiedAdmin } from "@/lib/alerts/capacity";
+import { visibleChecks } from "@/lib/diagnostics/checks";
+import { getCurrentProfile, getCurrentUser } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata = {
   title: "Diagnostics - dmplease",
 };
 
-type HealthStatus = "operational" | "degraded" | "unconfigured" | "no-data";
+type HealthStatus =
+  | "operational"
+  | "degraded"
+  | "unconfigured"
+  | "no-data"
+  | "managed";
 
 interface HealthCheck {
   id: string;
@@ -57,6 +64,7 @@ const STATUS_LABEL: Record<HealthStatus, string> = {
   degraded: "Needs attention",
   unconfigured: "Not configured",
   "no-data": "No data yet",
+  managed: "Managed by admin",
 };
 
 function DiagnosticsSkeleton() {
@@ -86,13 +94,17 @@ async function DiagnosticsContent() {
 
   // The Meta latency probe can take seconds on its own — start it alongside
   // the profile and ledger reads instead of after them.
-  const [profile, metaHealth, webhookHealth] = await Promise.all([
+  const [profile, user, metaHealth] = await Promise.all([
     getCurrentProfile(),
+    getCurrentUser(),
     checkMetaApiLatency(),
-    getWebhookHealth(24 * 7),
   ]);
+  // Deployment configuration state is operator information: only verified
+  // admins may see whether the env vars behind it are set.
+  const isAdmin = isVerifiedAdmin(user);
   const supabase = await createClient();
   const workspaceIds = (profile?.ownedWorkspaces || []).map((workspace) => workspace.id);
+  const webhookHealth = await getWebhookHealth(24 * 7, workspaceIds);
 
   // Real 24h safety / tracking counts for this user's workspaces.
   const last24Hours = new Date(Date.now() - 24 * 3600000).toISOString();
@@ -189,9 +201,13 @@ async function DiagnosticsContent() {
       status: dbError ? "degraded" : dbConfigured ? "operational" : "unconfigured",
       value: dbError ? "Error" : `${dbLatencyMs} ms`,
       hint: dbError
-        ? "Check NEXT_PUBLIC_SUPABASE_URL and the publishable key in Settings → Environment."
+        ? isAdmin
+          ? "Check NEXT_PUBLIC_SUPABASE_URL and the publishable key in Settings → Environment."
+          : "The database could not be reached. Contact your administrator."
         : !dbConfigured
-          ? "Add DATABASE_URL to connect the automations engine."
+          ? isAdmin
+            ? "Add DATABASE_URL to connect the automations engine."
+            : "The automations engine is not connected. Contact your administrator."
           : undefined,
       icon: Database,
     },
@@ -255,7 +271,11 @@ async function DiagnosticsContent() {
             ? "degraded"
             : "operational",
       value: webhookHealth.available && webhookHealth.total > 0
-        ? `${webhookHealth.successRate ?? 0}% success · ${webhookHealth.avgDurationMs ?? "—"} ms avg`
+        ? `${webhookHealth.successRate ?? 0}% success · ${webhookHealth.avgDurationMs ?? "—"} ms avg${
+            webhookHealth.duplicates > 0
+              ? ` · ${webhookHealth.duplicates} duplicate(s) suppressed`
+              : ""
+          }`
         : "Awaiting first delivery",
       hint:
         webhookHealth.failed > 0
@@ -268,7 +288,9 @@ async function DiagnosticsContent() {
                   )
                   .join(" · ")
               : "Check the delivery logs for details."}`
-          : undefined,
+          : webhookHealth.topSkipReasons.length > 0
+            ? `${webhookHealth.skipped} skipped. Top reason: ${webhookHealth.topSkipReasons[0].reason} (${webhookHealth.topSkipReasons[0].count}).`
+            : undefined,
       link:
         webhookHealth.failed > 0
           ? { href: "/dashboard/logs", label: "View delivery logs" }
@@ -277,7 +299,22 @@ async function DiagnosticsContent() {
     },
   ];
 
-  const attentionCount = checks.filter(
+  // Non-admins see the operational checks plus one generic card in place of the
+  // deployment-configuration checks, which would otherwise disclose which
+  // environment variables are set.
+  const managedConfigurationCheck: HealthCheck = {
+    id: "managed-configuration",
+    name: "Deployment configuration",
+    description:
+      "Webhook signing, handshake, token encryption and scheduled refresh are managed by your administrator.",
+    status: "managed",
+    value: "Managed",
+    icon: ShieldCheck,
+  };
+
+  const visible = visibleChecks(isAdmin, checks, managedConfigurationCheck);
+
+  const attentionCount = visible.filter(
     (check) => check.status === "degraded" || check.status === "unconfigured"
   ).length;
 
@@ -397,7 +434,7 @@ async function DiagnosticsContent() {
       </Card>
 
       <ul className="grid gap-3.5" aria-label="System health checks">
-        {checks.map((check) => {
+        {visible.map((check) => {
           const Icon = check.icon;
           const isGood = check.status === "operational";
           const isAttention = check.status === "degraded";
@@ -445,7 +482,11 @@ async function DiagnosticsContent() {
                     <div className="text-right">
                       <p className="text-xs font-mono font-medium text-foreground">{check.value}</p>
                       <p className="text-[10px] font-mono text-[#6b6f7e]">
-                        {check.id === "delivery" ? "last 7 days" : "measured now"}
+                        {check.id === "delivery"
+                          ? "last 7 days"
+                          : check.id === "managed-configuration"
+                            ? "set by admin"
+                            : "measured now"}
                       </p>
                     </div>
                     <Badge

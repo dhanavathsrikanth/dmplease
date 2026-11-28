@@ -1,11 +1,15 @@
 "use client";
 
-import { useState } from "react";
-import { Check, Copy } from "lucide-react";
+import { useState, useTransition } from "react";
+import { Check, Copy, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { rotateConversionToken } from "@/app/dashboard/settings/conversion-token-actions";
 
-export function ConversionToken({ token }: { token: string }) {
+export function ConversionToken({ token: initialToken }: { token: string }) {
+  const [token, setToken] = useState(initialToken);
   const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [rotating, startRotation] = useTransition();
 
   const copy = async () => {
     try {
@@ -15,6 +19,19 @@ export function ConversionToken({ token }: { token: string }) {
     } catch {
       setCopied(false);
     }
+  };
+
+  const rotate = () => {
+    setError(null);
+    startRotation(async () => {
+      const result = await rotateConversionToken();
+      if (result.success) {
+        setToken(result.token);
+        setCopied(false);
+      } else {
+        setError(result.error);
+      }
+    });
   };
 
   return (
@@ -32,7 +49,24 @@ export function ConversionToken({ token }: { token: string }) {
         <Button variant="outline" size="icon" className="size-8 shrink-0" onClick={copy} aria-label="Copy conversion token">
           {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
         </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-8 shrink-0 gap-1.5 text-[10px]"
+          onClick={rotate}
+          disabled={rotating}
+        >
+          <RefreshCw className={rotating ? "size-3.5 animate-spin" : "size-3.5"} />
+          {rotating ? "Rotating…" : "Rotate token"}
+        </Button>
       </div>
+      <p className="text-[10px] leading-relaxed text-muted-foreground">
+        Rotating invalidates the current token immediately. Update your checkout
+        or pixel with the new token.
+      </p>
+      {error && (
+        <p className="text-[10px] font-medium text-destructive">{error}</p>
+      )}
     </div>
   );
 }

@@ -5,9 +5,26 @@
  * figure is derived from stored rows — no Redis, no fabricated numbers.
  */
 
+import { createHmac } from "crypto";
+
 import { getAdminDb, hasAdminDb } from "@/lib/db-admin";
 import { getWorkspacePreferences } from "@/lib/workspace-preferences";
 import { DEFAULT_TIMEZONE, getDayKey } from "@/lib/timezone";
+
+/**
+ * Stable, non-reversible identifier for a public report.
+ *
+ * The public payload must never leak internal `automations.id` or
+ * `instagram_accounts.id` UUIDs. Keying the HMAC with the report token means
+ * the same row gets a stable id within one report, while a different token
+ * yields a different id for the same row.
+ */
+function opaqueId(reportKey: string, kind: string, id: string): string {
+  return createHmac("sha256", reportKey)
+    .update(`${kind}:${id}`)
+    .digest("base64url")
+    .slice(0, 16);
+}
 
 export interface PublicReportTotals {
   dmsSent: number;
@@ -88,6 +105,8 @@ export interface PublicReportConversionRow {
 export interface PublicReportInput {
   workspaceName: string;
   days: number;
+  /** Report token, used only to derive opaque per-report ids. */
+  reportKey: string;
   dms: PublicReportDmRow[];
   clicks: PublicReportClickRow[];
   conversions: PublicReportConversionRow[];
@@ -189,7 +208,11 @@ export function summarizePublicReport(input: PublicReportInput): PublicReport {
   }
   const campaigns = [...campaignMap.values()]
     .sort((a, b) => b.dms - a.dms || b.conversions - a.conversions)
-    .slice(0, 10);
+    .slice(0, 10)
+    .map((campaign) => ({
+      ...campaign,
+      id: opaqueId(input.reportKey, "campaign", campaign.id),
+    }));
 
   const accountNames = new Map(
     input.accounts.map((row) => [row.id, row.username])
@@ -219,7 +242,7 @@ export function summarizePublicReport(input: PublicReportInput): PublicReport {
   }
   const accounts: PublicReportAccount[] = [...accountMap.entries()]
     .map(([id, value]) => ({
-      id,
+      id: opaqueId(input.reportKey, "account", id),
       username: accountNames.get(id) ?? null,
       dms: value.dms,
       deliveryRate:
@@ -328,6 +351,7 @@ export async function loadPublicReport(
   return summarizePublicReport({
     workspaceName: String(workspaceRes.data?.name ?? "Workspace"),
     days: windowDays,
+    reportKey: token,
     timeZone: preferences.timezone,
     dms: (dmRes.data ?? []) as PublicReportDmRow[],
     clicks: (clickRes.data ?? []) as PublicReportClickRow[],

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getAdminDb, hasAdminDb } from "@/lib/db-admin";
 import { parseWorkspaceToken } from "@/lib/conversions";
+import { getRateLimiterFor, hasUpstashRedis } from "@/lib/upstash";
 
 const conversionSchema = z.object({
   event_type: z.enum(["lead", "checkout", "purchase", "subscribe"]),
@@ -14,8 +15,15 @@ const conversionSchema = z.object({
   post_id: z.string().trim().max(255).optional(),
   keyword: z.string().trim().max(100).optional(),
   occurred_at: z.string().datetime().optional(),
-  metadata: z.record(z.string(), z.unknown()).optional(),
+  metadata: z
+    .record(z.string().max(64), z.unknown())
+    .refine((v) => Object.keys(v).length <= 20, "Too many metadata keys")
+    .refine((v) => JSON.stringify(v).length <= 4096, "Metadata too large")
+    .optional(),
 });
+
+/** Hard cap on the raw request body, before JSON parsing. */
+const MAX_BODY_BYTES = 16_384;
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -65,14 +73,16 @@ export async function POST(
   context: { params: Promise<{ workspaceToken: string }> }
 ) {
   const { workspaceToken } = await context.params;
-  const workspaceId = parseWorkspaceToken(workspaceToken);
+  const token = parseWorkspaceToken(workspaceToken);
 
-  if (!workspaceId) {
+  if (!token) {
     return NextResponse.json(
       { error: "Invalid workspace token" },
       { status: 401, headers: CORS_HEADERS }
     );
   }
+  const { workspaceId, version } = token;
+
   if (!hasAdminDb()) {
     return NextResponse.json(
       { error: "Conversion tracking unavailable" },
@@ -80,9 +90,18 @@ export async function POST(
     );
   }
 
+  // Read with an explicit byte cap so a huge body cannot be buffered or parsed.
+  const rawText = await request.text();
+  if (rawText.length > MAX_BODY_BYTES) {
+    return NextResponse.json(
+      { error: "Payload too large" },
+      { status: 413, headers: CORS_HEADERS }
+    );
+  }
+
   let raw: unknown;
   try {
-    raw = await request.json();
+    raw = JSON.parse(rawText);
   } catch {
     return NextResponse.json(
       { error: "Invalid JSON" },
@@ -108,7 +127,7 @@ export async function POST(
   const db = getAdminDb();
   const { data: workspace } = await db
     .from("workspaces")
-    .select("id")
+    .select("id, conversion_token_version")
     .eq("id", workspaceId)
     .maybeSingle();
   if (!workspace) {
@@ -116,6 +135,34 @@ export async function POST(
       { error: "Workspace not found" },
       { status: 404, headers: CORS_HEADERS }
     );
+  }
+
+  // A rotated token bumps the workspace version, which invalidates every
+  // previously issued token. Legacy (version 0) tokens only work while the
+  // workspace is still on version 0.
+  const currentVersion = Number(workspace.conversion_token_version ?? 1);
+  if (version !== currentVersion) {
+    return NextResponse.json(
+      { error: "Invalid workspace token" },
+      { status: 401, headers: CORS_HEADERS }
+    );
+  }
+
+  // Public ingest is token-authenticated but unauthenticated by session; cap
+  // per-workspace write volume so a leaked token cannot flood the table.
+  if (hasUpstashRedis()) {
+    try {
+      const limiter = getRateLimiterFor("conversions", 120);
+      const { success } = await limiter.limit(workspaceId);
+      if (!success) {
+        return NextResponse.json(
+          { error: "Too many conversion events. Try again shortly." },
+          { status: 429, headers: CORS_HEADERS }
+        );
+      }
+    } catch {
+      // Fail open: a limiter outage must not drop legitimate conversions.
+    }
   }
 
   // Resolve the person we can attribute to.
@@ -180,28 +227,24 @@ export async function POST(
   const revenueMinor =
     typeof body.revenue === "number" ? Math.round(body.revenue * 100) : 0;
 
-  const { data: row, error } = await db
-    .from("conversions")
-    .upsert(
-      {
-        workspace_id: workspaceId,
-        contact_id: contactId,
-        automation_id: automationId,
-        post_id: postId,
-        keyword: keyword ? keyword.toUpperCase() : null,
-        sequence_step: sequenceStep,
-        type: body.event_type,
-        revenue_minor: revenueMinor,
-        currency: body.currency ?? "INR",
-        external_event_id: body.external_event_id,
-        source: "webhook",
-        occurred_at: body.occurred_at ?? new Date().toISOString(),
-        metadata: body.metadata ?? {},
-      },
-      { onConflict: "workspace_id,external_event_id", ignoreDuplicates: true }
-    )
-    .select("id, contact_id, post_id, keyword")
-    .maybeSingle();
+  const { error } = await db.from("conversions").upsert(
+    {
+      workspace_id: workspaceId,
+      contact_id: contactId,
+      automation_id: automationId,
+      post_id: postId,
+      keyword: keyword ? keyword.toUpperCase() : null,
+      sequence_step: sequenceStep,
+      type: body.event_type,
+      revenue_minor: revenueMinor,
+      currency: body.currency ?? "INR",
+      external_event_id: body.external_event_id,
+      source: "webhook",
+      occurred_at: body.occurred_at ?? new Date().toISOString(),
+      metadata: body.metadata ?? {},
+    },
+    { onConflict: "workspace_id,external_event_id", ignoreDuplicates: true }
+  );
 
   if (error) {
     console.error("[conversions] Insert failed:", error);
@@ -211,12 +254,8 @@ export async function POST(
     );
   }
 
-  return NextResponse.json(
-    {
-      success: true,
-      duplicate: !row,
-      attributed: Boolean(contactId || automationId || postId || keyword),
-    },
-    { headers: CORS_HEADERS }
-  );
+  // Deliberately opaque: reporting whether the event was a duplicate or
+  // whether it matched a contact would let a token holder probe the workspace
+  // for known emails and Instagram ids.
+  return NextResponse.json({ success: true }, { headers: CORS_HEADERS });
 }

@@ -31,6 +31,10 @@
 
 ## 📦 Getting Started
 
+### Prerequisites
+- Node.js 24.x (see `engines` in `package.json`)
+- npm 11+
+
 ### 1. Clone repository
 ```bash
 git clone https://github.com/dhanavathsrikanth/dmplease.git
@@ -39,8 +43,13 @@ cd dmplease
 
 ### 2. Install dependencies
 ```bash
-npm install
+npm ci
 ```
+
+`npm ci` installs exactly the versions and integrity hashes in
+`package-lock.json` and fails if the lockfile is out of sync. Use
+`npm install <pkg>` only when intentionally changing dependencies; `.npmrc`
+saves exact versions so a new package cannot float to a mutable dist-tag.
 
 ### 3. Environment Variables
 Create `.env.local` and configure your credentials:

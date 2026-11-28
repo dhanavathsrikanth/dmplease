@@ -151,10 +151,26 @@ export function getAdminEmails(): string[] {
     .filter(Boolean);
 }
 
+/**
+ * Email matcher only. Do NOT use this directly for authorization: an
+ * unverified signup can claim an allowlisted address. Use `isVerifiedAdmin`,
+ * which also requires `email_confirmed_at`, for every access decision.
+ */
 export function isAdminEmail(email?: string | null): boolean {
   if (!email) return false;
   const normalized = email.toLowerCase();
   return getAdminEmails().some((admin) => admin.toLowerCase() === normalized);
+}
+
+/**
+ * Admin identity for session-based access. Requires a confirmed email so a
+ * self-service signup cannot claim an allowlisted address before verification.
+ */
+export function isVerifiedAdmin(
+  user?: { email?: string | null; email_confirmed_at?: string | null } | null
+): boolean {
+  if (!user?.email || !user.email_confirmed_at) return false;
+  return isAdminEmail(user.email);
 }
 
 async function sendEmail(subject: string, body: string) {

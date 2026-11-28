@@ -87,6 +87,24 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // The conversation must belong to this workspace before we write anything
+  // against it (follow prompt, pending DM, or mirrored message).
+  if (input.conversationId) {
+    const { data: conversation } = await supabase
+      .from("conversations")
+      .select("id")
+      .eq("id", input.conversationId)
+      .eq("workspace_id", input.workspaceId)
+      .maybeSingle();
+
+    if (!conversation) {
+      return NextResponse.json(
+        { error: "Conversation not found" },
+        { status: 404 }
+      );
+    }
+  }
+
   let token: string;
   try {
     token = decryptToken(account.access_token);

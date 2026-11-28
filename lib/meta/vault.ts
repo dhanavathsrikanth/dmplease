@@ -63,17 +63,16 @@ export function encryptToken(token: string): string {
 /**
  * Decrypts a stored AES-256-GCM encrypted token.
  *
+ * Only authenticated ciphertext is accepted. Plaintext values are rejected so a
+ * caller cannot smuggle an arbitrary token into storage through this function;
+ * use readStoredTokenForMigration() for the one-time legacy migration path.
+ *
  * Legacy keys are accepted for decryption only, so existing accounts survive
  * a key rotation. `needsReEncryption()` tells callers when to rewrite a token.
  */
 export function decryptToken(encryptedString: string): string {
-  // Legacy plaintext tokens (EAA… / IG…) are tolerated with a loud warning.
-  // They should be rewritten with encryptToken() on next refresh.
-  if (!encryptedString.includes(":") && /^(EAA|IG)/.test(encryptedString)) {
-    console.warn(
-      "[vault] Stored token is plaintext. Re-encrypt it with TOKEN_VAULT_SECRET."
-    );
-    return encryptedString;
+  if (!encryptedString.includes(":")) {
+    throw new Error("Stored token is not a vault ciphertext");
   }
 
   const parts = parseEncrypted(encryptedString);
@@ -92,9 +91,20 @@ export function decryptToken(encryptedString: string): string {
   );
 }
 
+/** True when a stored value is an unencrypted legacy Meta token. */
+export function isLegacyPlaintext(value: string): boolean {
+  return !value.includes(":") && /^(EAA|IG)/.test(value);
+}
+
+/** Migration-only reader: accepts legacy plaintext, otherwise decrypts. */
+export function readStoredTokenForMigration(value: string): string {
+  if (isLegacyPlaintext(value)) return value;
+  return decryptToken(value);
+}
+
 /** True when a stored token is not encrypted with the current vault key. */
 export function needsReEncryption(stored: string): boolean {
-  if (!stored.includes(":") && /^(EAA|IG)/.test(stored)) return true;
+  if (isLegacyPlaintext(stored)) return true;
   try {
     decryptWithKey(parseEncrypted(stored), keyFromSecret(getVaultSecret()));
     return false;

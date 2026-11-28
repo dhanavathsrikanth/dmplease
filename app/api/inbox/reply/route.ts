@@ -113,6 +113,7 @@ export async function POST(request: NextRequest) {
       .from("messages")
       .select("created_at")
       .eq("conversation_id", input.conversationId)
+      .eq("workspace_id", input.workspaceId)
       .eq("direction", "inbound")
       .order("created_at", { ascending: false })
       .limit(1)

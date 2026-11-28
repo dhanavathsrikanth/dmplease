@@ -43,10 +43,9 @@ export async function GET(request: NextRequest) {
     const summary = await refreshInsightsForWorkspaces(workspaceIds);
     return NextResponse.json({ success: true, ...summary });
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Insights cron failed" },
-      { status: 500 }
-    );
+    // Log the detail server-side; never leak database or provider messages.
+    console.error("[cron/insights] refresh failed:", error);
+    return NextResponse.json({ error: "Insights cron failed" }, { status: 500 });
   }
   });
 

@@ -112,16 +112,33 @@ export async function runRerunBatch(
  * A worker can crash after claiming an item but before writing its result.
  * Reset those abandoned claims so the job can finish instead of hanging.
  */
-async function recoverStuckItems(db: SupabaseClient, jobId: string): Promise<void> {
+export async function recoverStuckItems(db: SupabaseClient, jobId: string): Promise<void> {
   const cutoff = new Date(Date.now() - STUCK_ITEM_MS).toISOString();
-  const { data: stuck } = await db
-    .from("rerun_job_items")
-    .select("id, attempts")
-    .eq("job_id", jobId)
-    .eq("status", "processing")
-    .lt("created_at", cutoff)
-    .limit(100);
-  for (const item of stuck ?? []) {
+
+  // Two explicit queries instead of an `or` filter: a timestamp value contains
+  // dots, and keeping the predicates separate avoids PostgREST filter parsing
+  // ambiguity. The second query covers rows claimed before the claimed_at
+  // column existed.
+  const [{ data: claimedStuck }, { data: legacyStuck }] = await Promise.all([
+    db
+      .from("rerun_job_items")
+      .select("id, attempts")
+      .eq("job_id", jobId)
+      .eq("status", "processing")
+      .lt("claimed_at", cutoff)
+      .limit(100),
+    db
+      .from("rerun_job_items")
+      .select("id, attempts")
+      .eq("job_id", jobId)
+      .eq("status", "processing")
+      .is("claimed_at", null)
+      .lt("created_at", cutoff)
+      .limit(100),
+  ]);
+
+  const stuck = [...(claimedStuck ?? []), ...(legacyStuck ?? [])];
+  for (const item of stuck) {
     const attempts = Number(item.attempts ?? 0);
     await db
       .from("rerun_job_items")
@@ -131,8 +148,9 @@ async function recoverStuckItems(db: SupabaseClient, jobId: string): Promise<voi
               status: "failed",
               error_message: "Worker stopped before this item finished",
               processed_at: new Date().toISOString(),
+              claimed_at: null,
             }
-          : { status: "pending" }
+          : { status: "pending", claimed_at: null }
       )
       .eq("id", item.id)
       .eq("status", "processing");
@@ -196,13 +214,21 @@ async function processBatch(
     return result;
   }
 
+  // Bind the lookup to the job's workspace: a job row must never be able to
+  // drive an automation that belongs to a different tenant.
   const { data: automationRow } = await db
     .from("automations")
     .select("*")
     .eq("id", job.automation_id)
+    .eq("workspace_id", job.workspace_id)
     .maybeSingle();
   if (!automationRow) {
-    await finishJob(db, job, "failed", "Campaign no longer exists");
+    await finishJob(db, job, "failed", "Campaign no longer exists in this workspace");
+    result.status = "failed";
+    return result;
+  }
+  if ((automationRow as { trigger_type?: string }).trigger_type !== "COMMENT") {
+    await finishJob(db, job, "failed", "Only comment campaigns can be re-run");
     result.status = "failed";
     return result;
   }
@@ -255,7 +281,11 @@ async function processBatch(
     // Compare-and-set claim: a duplicate QStash delivery cannot send twice.
     const { data: claimed } = await db
       .from("rerun_job_items")
-      .update({ status: "processing", attempts: raw.attempts + 1 })
+      .update({
+        status: "processing",
+        attempts: raw.attempts + 1,
+        claimed_at: new Date().toISOString(),
+      })
       .eq("id", raw.id)
       .eq("status", "pending")
       .select("id")

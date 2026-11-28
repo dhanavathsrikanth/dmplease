@@ -12,6 +12,7 @@ The folders are numbered so they sort in a sensible reading order, like a deskto
 | --- | --- |
 | [Production Launch Checklist](00-overview/PRODUCTION_LAUNCH_CHECKLIST.md) | End-to-end pre-launch checklist: webhook security, Redis/QStash reliability, R2/analytics pipeline, and smoke tests. |
 | [External Actions Before Launch](00-overview/EXTERNAL_ACTIONS_BEFORE_LAUNCH.md) | **Start here.** Dashboard/console actions that cannot be done in code — Meta webhook field subscriptions (`message_reactions`, `story_insights`), Supabase/Vercel/Upstash/QStash checks, and production smoke tests. |
+| [Live Supabase migrations — 2026-11-28](supabase-live-migrations-2026-11-28.md) | Record of the migrations applied to the live project, the auth-confirmation check, the validated queue constraint, and the post-apply verification. |
 
 ## 01 — Auth & Tokens
 

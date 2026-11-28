@@ -11,16 +11,20 @@ import {
 } from "@/lib/meta/safety";
 import { ensureContact } from "@/lib/meta/webhook-processor";
 import { recordSendOutcome } from "@/lib/meta/account-health";
-import { recordMetricEvent } from "@/lib/metrics";
+import { ACCOUNT_HOURLY_CEILING } from "@/lib/meta/limits";
+import { isUuid, recordMetricEvent } from "@/lib/metrics";
 import { getWorkspaceTimeZone } from "@/lib/workspace-preferences";
 
 /**
  * POST /api/instagram/send-dm
- * Body: { recipientId; recipientUsername?; message; url? }
+ * Body: { recipientId; recipientUsername?; message; url?; workspaceId? }
  *
  * Manual DMs now go through the same safety guards as automated ones:
  * hourly cap, recipient cooldown, 24h dedupe and logging. The previous
  * implementation bypassed all of them, which could violate Meta's limits.
+ *
+ * `workspaceId` lets a multi-workspace owner choose which account sends. When
+ * it is omitted we fall back to the first owned workspace for compatibility.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -37,11 +41,18 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { recipientId, recipientUsername, message, url } = body as {
+    const {
+      recipientId,
+      recipientUsername,
+      message,
+      url,
+      workspaceId: requestedWorkspaceId,
+    } = body as {
       recipientId: string;
       recipientUsername?: string;
       message: string;
       url?: string;
+      workspaceId?: string;
     };
 
     if (!recipientId || !message?.trim()) {
@@ -51,18 +62,46 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { data: workspaces } = await supabase
-      .from("workspaces")
-      .select("id")
-      .eq("owner_id", user.id)
-      .limit(1);
-    const workspaceId = workspaces?.[0]?.id;
-    if (!workspaceId) {
+    // Resolve the workspace before touching any tenant-scoped table. An explicit
+    // workspaceId must be a UUID owned by the caller; otherwise we keep the
+    // legacy "first owned workspace" behaviour.
+    let resolvedWorkspaceId: string | undefined;
+    if (requestedWorkspaceId !== undefined && requestedWorkspaceId !== null) {
+      if (typeof requestedWorkspaceId !== "string" || !isUuid(requestedWorkspaceId)) {
+        return NextResponse.json(
+          { success: false, error: "Workspace not found or access denied" },
+          { status: 403 }
+        );
+      }
+      const { data: workspace } = await supabase
+        .from("workspaces")
+        .select("id")
+        .eq("id", requestedWorkspaceId)
+        .eq("owner_id", user.id)
+        .maybeSingle();
+      if (!workspace) {
+        return NextResponse.json(
+          { success: false, error: "Workspace not found or access denied" },
+          { status: 403 }
+        );
+      }
+      resolvedWorkspaceId = workspace.id as string;
+    } else {
+      const { data: workspaces } = await supabase
+        .from("workspaces")
+        .select("id")
+        .eq("owner_id", user.id)
+        .limit(1);
+      resolvedWorkspaceId = workspaces?.[0]?.id;
+    }
+
+    if (!resolvedWorkspaceId) {
       return NextResponse.json(
         { success: false, error: "No workspace found" },
         { status: 400 }
       );
     }
+    const workspaceId = resolvedWorkspaceId;
 
     const { data: accounts } = await supabase
       .from("instagram_accounts")
@@ -84,14 +123,30 @@ export async function POST(request: NextRequest) {
       token = account.access_token;
     }
 
-    // Safety: hourly cap and recipient cooldown apply to manual sends too.
-    const capResult = await acquireSendSlot(`${account.instagram_id}:manual`, 30);
-    if (!capResult.allowed) {
+    // Safety: manual sends draw from the same per-account hourly budget as
+    // automations, then apply a stricter manual-only cap on top.
+    const accountSlot = await acquireSendSlot(
+      `${account.instagram_id}:account`,
+      ACCOUNT_HOURLY_CEILING
+    );
+    if (!accountSlot.allowed) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Account hourly ceiling reached. Try again later.",
+          retryAfterMs: accountSlot.retryAfterMs,
+        },
+        { status: 429 }
+      );
+    }
+
+    const manualSlot = await acquireSendSlot(`${account.instagram_id}:manual`, 30);
+    if (!manualSlot.allowed) {
       return NextResponse.json(
         {
           success: false,
           error: "Manual DM limit reached. Try again later.",
-          retryAfterMs: capResult.retryAfterMs,
+          retryAfterMs: manualSlot.retryAfterMs,
         },
         { status: 429 }
       );
@@ -112,15 +167,24 @@ export async function POST(request: NextRequest) {
     // 24h dedupe: never re-DM the same person twice in a day.
     if (hasAdminDb()) {
       const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-      const { data: existing } = await getAdminDb()
+      const { data: existing, error: dedupeError } = await getAdminDb()
         .from("dm_logs")
         .select("id")
-        .eq("automation_id", null)
+        .eq("workspace_id", workspaceId)
+        .eq("instagram_account_id", account.id)
+        .is("automation_id", null)
         .eq("recipient_id", recipientId)
         .eq("status", "SENT")
         .gte("sent_at", since)
         .limit(1)
         .maybeSingle();
+      if (dedupeError) {
+        console.error("[send-dm] Dedupe query failed:", dedupeError);
+        return NextResponse.json(
+          { success: false, error: "Could not verify recent sends. Try again." },
+          { status: 503 }
+        );
+      }
       if (existing) {
         return NextResponse.json(
           { success: false, error: "Already messaged this person in the last 24 hours." },
@@ -210,7 +274,9 @@ export async function POST(request: NextRequest) {
       await recordMetricEvent({
         kind: "dm_sent",
         creatorId: workspaceId,
-        targetId: "manual",
+        // daily_creator_metrics.target_id is a UUID; use the workspace id so a
+        // manual send cannot poison the shared metrics flush.
+        targetId: workspaceId,
         timeZone: await getWorkspaceTimeZone(workspaceId),
       });
     }

@@ -94,6 +94,12 @@ export async function POST(request: NextRequest) {
       { status: 409 }
     );
   }
+  if ((automationRow as { trigger_type?: string }).trigger_type !== "COMMENT") {
+    return NextResponse.json(
+      { error: "Only comment campaigns can be re-run." },
+      { status: 400 }
+    );
+  }
   const auto = toAutomationLike(automationRow as Parameters<typeof toAutomationLike>[0]);
 
   const { data: accountRow } = await db

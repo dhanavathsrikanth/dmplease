@@ -2,7 +2,7 @@ import { timingSafeEqual } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { getCronSecret } from "@/lib/config";
 import { getCurrentUser } from "@/lib/profile";
-import { isAdminEmail, runCapacityCheck } from "@/lib/alerts/capacity";
+import { isVerifiedAdmin, runCapacityCheck } from "@/lib/alerts/capacity";
 import { withCronLock } from "@/lib/redis-lock";
 import { captureServerEvent } from "@/lib/posthog-server";
 
@@ -23,7 +23,7 @@ function hasCronToken(request: NextRequest): boolean {
 async function isAdminSession(): Promise<boolean> {
   try {
     const user = await getCurrentUser();
-    return isAdminEmail(user?.email);
+    return isVerifiedAdmin(user);
   } catch {
     return false;
   }

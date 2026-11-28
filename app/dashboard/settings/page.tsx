@@ -92,6 +92,20 @@ async function SettingsContent({
   const reportLink = workspace.id
     ? await getReportLink(String(workspace.id))
     : null;
+
+  // The conversion token embeds the workspace's current token version so a
+  // rotation in Settings invalidates every previously issued token.
+  let conversionTokenVersion = 1;
+  if (workspace.id) {
+    const { data: tokenWorkspace } = await supabase
+      .from("workspaces")
+      .select("conversion_token_version")
+      .eq("id", workspace.id)
+      .maybeSingle();
+    conversionTokenVersion = Number(
+      tokenWorkspace?.conversion_token_version ?? 1
+    );
+  }
   const preferences = workspace.id
     ? await getWorkspacePreferences(String(workspace.id))
     : { timezone: "Asia/Kolkata", weekStartsOn: 1 };
@@ -291,7 +305,12 @@ async function SettingsContent({
               </CardDescription>
             </CardHeader>
             <CardContent className="pt-5">
-              <ConversionToken token={createWorkspaceToken(String(workspace.id))} />
+              <ConversionToken
+                token={createWorkspaceToken(
+                  String(workspace.id),
+                  conversionTokenVersion
+                )}
+              />
             </CardContent>
           </Card>
         )}
@@ -402,7 +421,10 @@ async function SettingsContent({
         </Card>
 
         {/* ── Password Card ── */}
-        <Card className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 shadow-subtle bg-card">
+        <Card
+          id="password"
+          className="rounded-2xl border border-[#e0e2e8] dark:border-border/80 shadow-subtle bg-card"
+        >
           <CardHeader className="pb-3 border-b border-[#e0e2e8] dark:border-border/60">
             <div className="flex items-center gap-2.5">
               <KeyRound className="size-4 text-foreground" />
@@ -415,7 +437,11 @@ async function SettingsContent({
             </div>
           </CardHeader>
           <CardContent className="pt-5">
-            <ChangePasswordForm />
+            <ChangePasswordForm
+              hasPasswordIdentity={(user?.identities ?? []).some(
+                (identity) => identity.provider === "email"
+              )}
+            />
           </CardContent>
         </Card>
       </div>

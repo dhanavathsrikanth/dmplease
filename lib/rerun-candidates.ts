@@ -155,12 +155,18 @@ export async function findRerunCandidates(
   }
 
   const total = eligible.length;
-  const limited = eligible.slice(0, limit);
-  const recipientIds = limited.map((candidate) => candidate.commenterId);
 
+  // Duplicate suppression must consider every eligible recipient, not just the
+  // newest `limit` of them. Otherwise, once the newest window has been
+  // contacted, the re-run reports zero candidates and older eligible
+  // commenters can never be reached. Query in chunks to stay well under
+  // PostgREST's URL length limits.
   const alreadyContacted = new Set<string>();
   const optedOut = new Set<string>();
-  if (recipientIds.length > 0) {
+  const recipientIds = eligible.map((candidate) => candidate.commenterId);
+  const CHUNK_SIZE = 500;
+  for (let start = 0; start < recipientIds.length; start += CHUNK_SIZE) {
+    const chunk = recipientIds.slice(start, start + CHUNK_SIZE);
     const [priorLogsRes, contactsRes] = await Promise.all([
       db
         .from("dm_logs")
@@ -169,12 +175,12 @@ export async function findRerunCandidates(
         .eq("automation_id", automation.id)
         .eq("status", "SENT")
         .gte("sent_at", duplicateCutoff)
-        .in("recipient_id", recipientIds),
+        .in("recipient_id", chunk),
       db
         .from("contacts")
         .select("instagram_id, opted_out_at")
         .eq("workspace_id", workspaceId)
-        .in("instagram_id", recipientIds),
+        .in("instagram_id", chunk),
     ]);
     for (const log of priorLogsRes.data ?? []) {
       if (log.recipient_id) alreadyContacted.add(String(log.recipient_id));
@@ -186,21 +192,31 @@ export async function findRerunCandidates(
     }
   }
 
-  const candidates = limited.filter(
+  // Filter first, then slice: the limit applies to deliverable candidates.
+  const remaining = eligible.filter(
     (candidate) =>
       !alreadyContacted.has(candidate.commenterId) &&
       !optedOut.has(candidate.commenterId)
   );
+  const candidates = remaining.slice(0, limit);
   const sample = candidates
     .slice(0, 5)
     .map((candidate) => candidate.commenterUsername || candidate.commenterId);
+
+  // Counts describe the whole eligible set, not just the returned window.
+  let alreadyContactedCount = 0;
+  let optedOutCount = 0;
+  for (const candidate of eligible) {
+    if (alreadyContacted.has(candidate.commenterId)) alreadyContactedCount++;
+    if (optedOut.has(candidate.commenterId)) optedOutCount++;
+  }
 
   return {
     candidates,
     sample,
     total,
-    alreadyContacted: alreadyContacted.size,
-    optedOut: optedOut.size,
+    alreadyContacted: alreadyContactedCount,
+    optedOut: optedOutCount,
     accountUnavailable,
   };
 }

@@ -1,7 +1,9 @@
 {
   "private": true,
+  "packageManager": "npm@11.16.0",
   "engines": {
-    "node": "24.x"
+    "node": "24.x",
+    "npm": ">=11"
   },
   "scripts": {
     "dev": "next dev",
@@ -32,8 +34,8 @@
     "@radix-ui/react-switch": "^1.4.1",
     "@radix-ui/react-tabs": "^1.2.1",
     "@radix-ui/react-tooltip": "^1.4.1",
-    "@supabase/ssr": "latest",
-    "@supabase/supabase-js": "latest",
+    "@supabase/ssr": "0.12.7",
+    "@supabase/supabase-js": "2.119.2",
     "@tabler/icons-react": "^3.52.0",
     "@upstash/qstash": "^2.13.0",
     "@upstash/ratelimit": "^2.2.2",
@@ -41,7 +43,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^0.511.0",
-    "next": "latest",
+    "next": "16.4.6",
     "next-themes": "^0.4.6",
     "posthog-js": "^1.455.1",
     "posthog-node": "^6.1.0",

@@ -15,16 +15,26 @@ export async function fetchInstagramProfile(
   instagramId: string,
   token: string,
   facebookPageId?: string | null
-): Promise<InstagramProfile> {
+): Promise<InstagramProfile | null> {
   const profileUrl = `https://graph.facebook.com/${instagramId}?fields=id,username,name,profile_picture_url,followers_count&access_token=${encodeURIComponent(token)}`;
   const response = await fetch(profileUrl, {
     signal: AbortSignal.timeout(8000),
     next: { revalidate: 300 },
   });
+  if (!response.ok) {
+    console.warn(
+      `[profile-sync] Meta profile request failed: ${response.status}`
+    );
+    return null;
+  }
   const json = (await response.json().catch(() => ({}))) as Record<
     string,
     unknown
   >;
+  if (json.error) {
+    console.warn("[profile-sync] Meta profile error:", json.error);
+    return null;
+  }
 
   let isVerified: boolean | null = null;
   if (facebookPageId) {
@@ -62,18 +72,22 @@ export async function fetchInstagramProfile(
  * Refreshes the connected account's profile signals in Postgres so the campaign
  * preview uses the creator's real avatar and verified state.
  */
-export async function syncInstagramProfile(accountId?: string) {
-  if (!hasAdminDb()) return null;
+export async function syncInstagramProfile(
+  accountId: string,
+  workspaceId: string
+) {
+  if (!hasAdminDb() || !accountId || !workspaceId) return null;
 
-  let query = getAdminDb()
+  // The service-role client bypasses RLS, so both predicates are mandatory:
+  // an account id alone could name another tenant's row.
+  const { data: rows } = await getAdminDb()
     .from("instagram_accounts")
     .select(
-      "id, instagram_id, access_token, profile_picture_url, followers_count, is_verified, is_verified_manual, updated_at"
+      "id, workspace_id, instagram_id, access_token, profile_picture_url, followers_count, is_verified, is_verified_manual, updated_at"
     )
-    .order("updated_at", { ascending: false })
+    .eq("id", accountId)
+    .eq("workspace_id", workspaceId)
     .limit(1);
-  if (accountId) query = query.eq("id", accountId);
-  const { data: rows } = await query;
   const account = rows?.[0];
   if (!account?.access_token) return null;
 
@@ -89,6 +103,9 @@ export async function syncInstagramProfile(accountId?: string) {
       String(account.instagram_id),
       token
     );
+    // A non-OK Meta response returns null; never overwrite stored fields with
+    // the nulls from a failed request.
+    if (!profile) return null;
     // Keep a signal that came from Meta over a stale one, but never wipe a
     // previously stored verification with a null from an unauthorised token.
     const verified =
@@ -106,7 +123,8 @@ export async function syncInstagramProfile(accountId?: string) {
         is_verified: verified,
         updated_at: new Date().toISOString(),
       })
-      .eq("id", account.id);
+      .eq("id", account.id)
+      .eq("workspace_id", workspaceId);
 
     return {
       profilePictureUrl: profile.profilePictureUrl,

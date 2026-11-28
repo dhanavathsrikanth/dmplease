@@ -4,6 +4,7 @@ import Link from "next/link";
 import { AlertCircle, ArrowLeft } from "lucide-react";
 import { AuthSidePanel } from "@/components/auth/auth-side-panel";
 import { Button } from "@/components/ui/button";
+import { safeDecodeURIComponent } from "@/lib/safe-decode";
 
 export const metadata = {
   title: "Authentication Error - dmplease",
@@ -17,7 +18,7 @@ async function ErrorContent({
 }) {
   const params = await searchParams;
   const errorMsg = params?.error
-    ? decodeURIComponent(params.error)
+    ? safeDecodeURIComponent(params.error)
     : "An unspecified authentication error occurred.";
 
   return (
@@ -62,6 +63,17 @@ async function ErrorContent({
           </Link>
         </Button>
       </div>
+
+      <p className="mt-4 text-center text-xs text-muted-foreground">
+        Resetting your password?{" "}
+        <Link
+          href="/auth/forgot-password"
+          className="underline underline-offset-2 hover:text-foreground"
+        >
+          Request a new link
+        </Link>
+        .
+      </p>
     </div>
   );
 }

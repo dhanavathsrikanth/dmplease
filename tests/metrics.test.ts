@@ -4,25 +4,37 @@ import { getStartDayUtc } from "@/lib/analytics";
 import { mergeDbAndLiveMetrics } from "@/lib/merge-metrics";
 
 describe("metric keys", () => {
+  const creatorId = "11111111-1111-4111-8111-111111111111";
+  const targetId = "22222222-2222-4222-8222-222222222222";
+
   it("round-trips a daily key", () => {
     const key = buildMetricKey({
       kind: "dm_sent",
-      creatorId: "creator-1",
-      targetId: "rule-9",
+      creatorId,
+      targetId,
       day: "2026-11-26",
     });
-    expect(key).toBe("metric:2026-11-26:dm_sent:creator-1:rule-9");
+    expect(key).toBe(`metric:2026-11-26:dm_sent:${creatorId}:${targetId}`);
     expect(parseMetricKey(key)).toMatchObject({
       day: "2026-11-26",
       kind: "dm_sent",
-      creatorId: "creator-1",
-      targetId: "rule-9",
+      creatorId,
+      targetId,
     });
   });
 
   it("rejects invalid keys", () => {
     expect(parseMetricKey("garbage")).toBeNull();
     expect(parseMetricKey("metric:2026-11-26:unknown:creator:rule")).toBeNull();
+  });
+
+  it("rejects non-UUID creator or target ids", () => {
+    expect(
+      parseMetricKey("metric:2026-11-26:dm_sent:creator-1:rule-9")
+    ).toBeNull();
+    expect(
+      parseMetricKey(`metric:2026-11-26:dm_sent:${creatorId}:manual`)
+    ).toBeNull();
   });
 
   it("computes an inclusive UTC start day", () => {
