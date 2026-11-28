@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { Suspense } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -12,35 +12,23 @@ import {
   IconTimeline,
   IconAdjustmentsHorizontal,
   IconActivityHeartbeat,
-  IconSelector,
-  IconCheck,
   IconAddressBook,
-  IconGauge,
-  IconSparkles,
   IconShieldCheck,
+  IconSparkles,
 } from "@tabler/icons-react";
 import { cn } from "@/lib/utils";
-import { useWorkspace } from "@/lib/workspace-context";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 
 interface AppSidebarProps {
-  isAdmin?: boolean;
   collapsed: boolean;
-  onToggleCollapse: () => void;
   mobileOpen: boolean;
   onCloseMobile: () => void;
+  /** Streamed slot: workspace switcher in the sidebar footer. */
+  workspaceSwitcher: React.ReactNode;
+  /** Streamed slot: admin-only nav entry. */
+  adminNavItem?: React.ReactNode;
 }
 
-function getNavSections(isAdmin: boolean) {
-  return [
+const NAV_SECTIONS = [
   {
     label: "Workspace",
     items: [
@@ -65,32 +53,101 @@ function getNavSections(isAdmin: boolean) {
     items: [
       { label: "Settings", href: "/dashboard/settings", icon: IconAdjustmentsHorizontal },
       { label: "System Health", href: "/dashboard/diagnostics", icon: IconActivityHeartbeat },
-      ...(isAdmin
-        ? [{ label: "Platform Capacity", href: "/dashboard/admin/alerts", icon: IconGauge }]
-        : []),
     ],
   },
-  ];
+];
+
+interface NavSectionsProps {
+  collapsed: boolean;
+  /**
+   * `null` renders the static shell version (no active link). The active
+   * version is rendered by `ActiveNavSections` once the pathname is available.
+   */
+  activeHref: string | null;
+  onCloseMobile: () => void;
+  adminNavItem?: React.ReactNode;
 }
 
-function getWorkspaceInitials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "WS";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[1][0]).toUpperCase();
+function NavSections({
+  collapsed,
+  activeHref,
+  onCloseMobile,
+  adminNavItem,
+}: NavSectionsProps) {
+  return (
+    <>
+      {NAV_SECTIONS.map((section) => (
+        <div key={section.label} className="space-y-1">
+          {!collapsed && (
+            <p className="px-2.5 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-wider mb-1.5">
+              {section.label}
+            </p>
+          )}
+          <div className="space-y-0.5">
+            {section.items.map((item) => {
+              const isActive =
+                activeHref !== null &&
+                (activeHref === item.href ||
+                  (item.href !== "/dashboard" && activeHref.startsWith(item.href)));
+              const Icon = item.icon;
+
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={onCloseMobile}
+                  title={collapsed ? item.label : undefined}
+                  className={cn(
+                    "flex items-center gap-2.5 px-3 py-2 rounded-full text-xs font-medium transition-all group relative",
+                    isActive
+                      ? "bg-[#1c1c1e] text-white font-semibold shadow-xs liquid-sheen dark:bg-white dark:text-[#1c1c1e]"
+                      : "text-[#555a6a] dark:text-muted-foreground hover:text-foreground hover:bg-[#f7f8fa] dark:hover:bg-muted/50"
+                  )}
+                >
+                  <Icon
+                    stroke={1.8}
+                    className={cn(
+                      "size-4 shrink-0 transition-colors",
+                      isActive
+                        ? "text-[#ffd02f] dark:text-[#1c1c1e]"
+                        : "text-[#6b6f7e] dark:text-muted-foreground group-hover:text-foreground"
+                    )}
+                  />
+                  {!collapsed && <span className="truncate">{item.label}</span>}
+                </Link>
+              );
+            })}
+            {section.label === "Platform" && adminNavItem}
+          </div>
+        </div>
+      ))}
+    </>
+  );
+}
+
+/**
+ * `usePathname` is URL data: on a route with a dynamic param it cannot resolve
+ * during prerendering, so it must sit behind its own Suspense boundary. The
+ * fallback is the same navigation without an active highlight, which keeps all
+ * sidebar links in the static shell.
+ */
+function ActiveNavSections(props: Omit<NavSectionsProps, "activeHref">) {
+  const pathname = usePathname();
+  return <NavSections {...props} activeHref={pathname} />;
 }
 
 export function AppSidebar({
-  isAdmin = false,
   collapsed,
   mobileOpen,
   onCloseMobile,
+  workspaceSwitcher,
+  adminNavItem,
 }: AppSidebarProps) {
-  const pathname = usePathname();
-  const { currentWorkspace, workspaces, switchWorkspace } = useWorkspace();
-
   const sidebarContent = (
-    <div className="flex h-full flex-col justify-between bg-card text-card-foreground border-r border-border/80 select-none antialiased">
+    <div
+      data-collapsed={collapsed}
+      className="group/sidebar flex h-full flex-col justify-between bg-card text-card-foreground border-r border-border/80 select-none antialiased overflow-x-hidden"
+    >
       {/* ── Miro Chrome Brand Header ── */}
       <div className="h-14 flex items-center px-4 border-b border-[#e0e2e8] dark:border-border/80">
         <Link
@@ -116,109 +173,27 @@ export function AppSidebar({
 
       {/* ── Navigation Sections ── */}
       <div className="flex-1 overflow-y-auto py-3 px-2 space-y-5">
-        {getNavSections(isAdmin).map((section) => (
-          <div key={section.label} className="space-y-1">
-            {!collapsed && (
-              <p className="px-2.5 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-wider mb-1.5">
-                {section.label}
-              </p>
-            )}
-            <div className="space-y-0.5">
-              {section.items.map((item) => {
-                const isActive =
-                  pathname === item.href ||
-                  (item.href !== "/dashboard" && pathname.startsWith(item.href));
-                const Icon = item.icon;
-
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    onClick={onCloseMobile}
-                    title={collapsed ? item.label : undefined}
-                    className={cn(
-                      "flex items-center gap-2.5 px-3 py-2 rounded-full text-xs font-medium transition-all group relative",
-                      isActive
-                        ? "bg-[#1c1c1e] text-white font-semibold shadow-xs liquid-sheen dark:bg-white dark:text-[#1c1c1e]"
-                        : "text-[#555a6a] dark:text-muted-foreground hover:text-foreground hover:bg-[#f7f8fa] dark:hover:bg-muted/50"
-                    )}
-                  >
-                    <Icon
-                      stroke={1.8}
-                      className={cn(
-                        "size-4 shrink-0 transition-colors",
-                        isActive
-                          ? "text-[#ffd02f] dark:text-[#1c1c1e]"
-                          : "text-[#6b6f7e] dark:text-muted-foreground group-hover:text-foreground"
-                      )}
-                    />
-                    {!collapsed && <span className="truncate">{item.label}</span>}
-                  </Link>
-                );
-              })}
-            </div>
-          </div>
-        ))}
+        <Suspense
+          fallback={
+            <NavSections
+              collapsed={collapsed}
+              activeHref={null}
+              onCloseMobile={onCloseMobile}
+              adminNavItem={adminNavItem}
+            />
+          }
+        >
+          <ActiveNavSections
+            collapsed={collapsed}
+            onCloseMobile={onCloseMobile}
+            adminNavItem={adminNavItem}
+          />
+        </Suspense>
       </div>
 
       {/* ── Workspace Switcher Footer (Miro Style) ── */}
       <div className="p-3 border-t border-[#e0e2e8] dark:border-border/80">
-        <DropdownMenu>
-          <DropdownMenuTrigger className="w-full flex items-center justify-between p-2 rounded-xl hover:bg-[#f7f8fa] dark:hover:bg-muted/60 transition-colors text-left outline-none group border border-transparent hover:border-[#e0e2e8]">
-            <div className="flex items-center gap-2.5 truncate">
-              <Avatar className="size-7 rounded-lg bg-[#fff8e0] text-[#746019] border border-[#ffd02f]/40 dark:bg-[#746019]/30 dark:text-[#ffd02f]">
-                <AvatarFallback className="text-[10px] font-bold">
-                  {getWorkspaceInitials(currentWorkspace?.name || "My Workspace")}
-                </AvatarFallback>
-              </Avatar>
-              {!collapsed && (
-                <div className="truncate">
-                  <p className="text-xs font-semibold text-foreground truncate">
-                    {currentWorkspace?.name || "Personal Workspace"}
-                  </p>
-                  <p className="text-[10px] text-[#6b6f7e] dark:text-[#9aa0ad] truncate capitalize font-medium">
-                    {currentWorkspace?.role?.toLowerCase() || "Owner"}
-                  </p>
-                </div>
-              )}
-            </div>
-            {!collapsed && (
-              <IconSelector stroke={1.8} className="size-3.5 text-muted-foreground shrink-0 ml-1 group-hover:text-foreground" />
-            )}
-          </DropdownMenuTrigger>
-
-          <DropdownMenuContent
-            align="start"
-            side="top"
-            className="w-56 rounded-2xl border border-[#e0e2e8] dark:border-border shadow-modal p-1.5 bg-card"
-          >
-            <DropdownMenuLabel className="text-[10px] font-semibold text-[#6b6f7e] px-2 py-1 uppercase tracking-wider">
-              Workspaces ({workspaces.length})
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator className="my-1" />
-
-            {workspaces.map((ws) => {
-              const isSelected = ws.id === currentWorkspace?.id;
-              return (
-                <DropdownMenuItem
-                  key={ws.id}
-                  onClick={() => switchWorkspace(ws.id)}
-                  className="flex items-center justify-between px-2.5 py-1.5 rounded-lg cursor-pointer text-xs font-medium"
-                >
-                  <div className="flex items-center gap-2 truncate">
-                    <Avatar className="size-5 rounded-md">
-                      <AvatarFallback className="text-[9px] font-bold">
-                        {getWorkspaceInitials(ws.name)}
-                      </AvatarFallback>
-                    </Avatar>
-                    <span className="truncate">{ws.name}</span>
-                  </div>
-                  {isSelected && <IconCheck stroke={2.5} className="size-3.5 text-[#00b473] shrink-0" />}
-                </DropdownMenuItem>
-              );
-            })}
-          </DropdownMenuContent>
-        </DropdownMenu>
+        {workspaceSwitcher}
       </div>
     </div>
   );

@@ -1,14 +1,8 @@
 "use client";
 
-import React from "react";
-import Link from "next/link";
+import React, { Suspense } from "react";
 import { usePathname } from "next/navigation";
-import {
-  PanelLeft,
-  Instagram,
-  LogOut,
-  ExternalLink,
-} from "lucide-react";
+import { PanelLeft, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { ThemeSwitcher } from "@/components/theme-switcher";
@@ -18,7 +12,6 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { useWorkspace } from "@/lib/workspace-context";
 import posthog from "posthog-js";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
@@ -26,7 +19,8 @@ import { useRouter } from "next/navigation";
 interface TopBarProps {
   onToggleCollapse: () => void;
   onOpenMobile: () => void;
-  userEmail?: string | null;
+  /** Streamed slot: Instagram status pill or connect link. */
+  instagramPill: React.ReactNode;
 }
 
 const pageTitles: Record<string, { title: string; category: string }> = {
@@ -43,15 +37,45 @@ const pageTitles: Record<string, { title: string; category: string }> = {
   "/dashboard/safety": { title: "Safety", category: "Platform" },
 };
 
+function Breadcrumb({
+  title,
+  category,
+}: {
+  title: string;
+  category: string;
+}) {
+  return (
+    <div className="flex items-center gap-1.5 text-xs">
+      <span className="text-[#6b6f7e] dark:text-[#9aa0ad] hidden sm:inline font-medium">
+        {category}
+      </span>
+      <span className="text-[#c7cad5] hidden sm:inline">/</span>
+      <h1 className="font-semibold text-xs sm:text-sm tracking-tight text-foreground truncate">
+        {title}
+      </h1>
+    </div>
+  );
+}
+
+/**
+ * `usePathname` is URL data and must sit behind Suspense so the rest of the
+ * top bar can prerender into the static shell.
+ */
+function ActiveBreadcrumb() {
+  const pathname = usePathname();
+  const pageInfo = pageTitles[pathname] || {
+    title: "Dashboard",
+    category: "Workspace",
+  };
+  return <Breadcrumb title={pageInfo.title} category={pageInfo.category} />;
+}
+
 export function TopBar({
   onToggleCollapse,
   onOpenMobile,
-  userEmail,
+  instagramPill,
 }: TopBarProps) {
-  const pathname = usePathname();
   const router = useRouter();
-  const { instagramUsername } = useWorkspace();
-  const pageInfo = pageTitles[pathname] || { title: "Dashboard", category: "Workspace" };
 
   const handleSignOut = async () => {
     posthog.reset();
@@ -102,49 +126,14 @@ export function TopBar({
           <Separator orientation="vertical" className="h-4 hidden sm:block" />
 
           {/* Breadcrumb Display */}
-          <div className="flex items-center gap-1.5 text-xs">
-            <span className="text-[#6b6f7e] dark:text-[#9aa0ad] hidden sm:inline font-medium">
-              {pageInfo.category}
-            </span>
-            <span className="text-[#c7cad5] hidden sm:inline">/</span>
-            <h1 className="font-semibold text-xs sm:text-sm tracking-tight text-foreground truncate">
-              {pageInfo.title}
-            </h1>
-          </div>
+          <Suspense fallback={<Breadcrumb title="Dashboard" category="Workspace" />}>
+            <ActiveBreadcrumb />
+          </Suspense>
         </div>
 
         {/* ── Right: Instagram Status Pill, Theme, User Signout ── */}
         <div className="flex items-center gap-2 sm:gap-3">
-          {instagramUsername ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <a
-                  href={`https://instagram.com/${instagramUsername}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1.5 px-3 py-1 rounded-full glass-pill border border-[#0fbcb0]/30 text-foreground text-xs font-semibold hover:border-[#0fbcb0] transition-colors shadow-xs"
-                >
-                  <span className="size-1.5 rounded-full bg-[#00b473] animate-pulse" />
-                  <Instagram className="size-3 text-rose-500" />
-                  <span className="truncate max-w-[120px]">@{instagramUsername}</span>
-                  <ExternalLink className="size-2.5 text-muted-foreground ml-0.5" />
-                </a>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">Active Instagram Profile</TooltipContent>
-            </Tooltip>
-          ) : (
-            <Button
-              asChild
-              size="sm"
-              variant="outline"
-              className="h-8 rounded-full text-xs font-medium gap-1.5 border-[#c7cad5] hover:bg-[#f7f8fa]"
-            >
-              <Link href="/dashboard/settings">
-                <Instagram className="size-3.5 text-rose-500" />
-                <span className="hidden sm:inline">Connect</span> Instagram
-              </Link>
-            </Button>
-          )}
+          {instagramPill}
 
           <ThemeSwitcher />
 
@@ -162,7 +151,7 @@ export function TopBar({
                 <LogOut className="size-3.5" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="bottom">Sign out ({userEmail || "user"})</TooltipContent>
+            <TooltipContent side="bottom">Sign out</TooltipContent>
           </Tooltip>
         </div>
       </TooltipProvider>
