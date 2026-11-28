@@ -38,18 +38,18 @@ interface FormState {
   onUnavailable: FollowGateUnavailablePolicy;
 }
 
-function toForm(fallback: FallbackReplyConfig): FormState {
+function toForm(fallback?: Partial<FallbackReplyConfig>): FormState {
   return {
-    enabled: fallback.enabled,
-    message: fallback.message,
-    variants: fallback.variants.join("\n"),
-    oncePerDays: fallback.oncePerDays,
-    buttonText: fallback.buttonText || "",
-    buttonUrl: fallback.buttonUrl || "",
-    followGateEnabled: fallback.followGateEnabled,
-    openingMessage: fallback.openingMessage || FOLLOW_GATE_DEFAULTS.openingMessage,
-    buttonLabel: fallback.buttonLabel || FOLLOW_GATE_DEFAULTS.buttonLabel,
-    onUnavailable: fallback.onUnavailable,
+    enabled: Boolean(fallback?.enabled),
+    message: fallback?.message ?? "",
+    variants: (fallback?.variants ?? []).join("\n"),
+    oncePerDays: fallback?.oncePerDays ?? 45,
+    buttonText: fallback?.buttonText || "",
+    buttonUrl: fallback?.buttonUrl || "",
+    followGateEnabled: Boolean(fallback?.followGateEnabled),
+    openingMessage: fallback?.openingMessage || FOLLOW_GATE_DEFAULTS.openingMessage,
+    buttonLabel: fallback?.buttonLabel || FOLLOW_GATE_DEFAULTS.buttonLabel,
+    onUnavailable: fallback?.onUnavailable ?? "hold",
   };
 }
 
@@ -60,8 +60,8 @@ export function FallbackReplySettings({
   accounts: FallbackAccountOption[];
 }) {
   const [selectedId, setSelectedId] = useState(accounts[0]?.id || "");
-  const [form, setForm] = useState<FormState>(
-    toForm(accounts[0]?.fallback ?? ({} as FallbackReplyConfig))
+  const [form, setForm] = useState<FormState>(() =>
+    toForm(accounts[0]?.fallback)
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
